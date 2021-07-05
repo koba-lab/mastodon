@@ -1,3 +1,7 @@
+// * このファイルは未参照 *//
+// 変数部分はvariables.scssで読み込ませる形に移植したい
+// 色自体の指定は検討項目
+
 @import 'image';
 
 $gray_stripe: repeating-linear-gradient(45deg, #C9C7C5, #C9C7C5 10px, #BDBBB9 0, #BDBBB9 20px);

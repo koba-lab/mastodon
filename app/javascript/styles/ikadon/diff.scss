@@ -1,0 +1,433 @@
+/* general*/
+
+// 背景色
+.ui {
+  background: $gray_stripe;
+}
+
+// 他Themeに追従して変更
+.column-inline-form,
+.error-column {
+  background: $dark_stripe;
+}
+
+// scrollbar
+::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb:hover {
+  background: $white_05;
+}
+::-webkit-scrollbar:active {
+  width: 8px;
+  background: $bg_opacity_0;
+  &:hover {
+    background: $bg_opacity_0;
+  }
+}
+
+/* component */
+
+// アバターアイコン
+.account__avatar {
+  border-radius: 5px;
+}
+
+// search
+.search {
+  &__input {
+    border-radius: 15px;
+    background: $dark_stripe;
+    &:focus {
+      background: $dark_stripe;
+    }
+  }
+}
+
+// 入力欄
+.compose-form {
+  .reply-indicator {
+    background: $white_01;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    .reply-indicator__display-name,
+    .reply-indicator__content {
+      color: $white_1
+    }
+    .reply-indicator__content a {
+      color: $gray_1;
+    }
+  }
+  .spoiler-input__input {
+    border-radius: 11px;
+  }
+  .emoji-button {
+    padding: 7px 7px 2px 2px;
+  }
+  .autosuggest-textarea__textarea {
+    border-radius: 15px 15px 0 0;
+  }
+  & &__autosuggest-wrapper {
+    border-radius: 15px 15px 0 0;
+  }
+  & &__buttons-wrapper {
+    border-radius: 0 0 15px 15px;
+  }
+  button.button--block {
+    background: $orange_1;
+    border-radius: 15px;
+    &:hover {
+      background: $purple_1;
+    }
+  }
+}
+
+/* icon and button */
+.compose-form__buttons {
+  background: $gray_1;
+  box-shadow: none;
+  border-radius: 5px;
+}
+.icon-button,
+.icon-button.inverted,
+.text-icon-button {
+  color: $white_1;
+  &:hover, &:active, &:focus {
+    color: $orange_1;
+  }
+  &.active {
+    color: $orange_1 !important;
+  }
+  i.fa-retweet {
+    background-image: $boost-white !important;
+    &:hover, &:active, &:focus {
+      background-image: $boost-orange !important;
+    }
+  }
+}
+.reply-indicator__cancel {
+  .icon-button.inverted {
+    color: $white_1;
+    &:hover, &:active, &:focus {
+      color: $orange_1
+    }
+  }
+}
+.notification__message {
+  .fa-star {
+    color: $yellow_1;
+  }
+  .fa-user-plus {
+    color: $lightblue_1;
+  }
+  .fa-retweet {
+    color: $green_1;
+  }
+}
+.floating-action-button {
+  background: $orange_2;
+}
+
+/* layout-multiple-columns */
+
+// drawer
+.drawer {
+  &__tab {
+    color: $black_1;
+  }
+  &__header {
+    background: $pink_jagged;
+    border-radius: 15px;
+    overflow: hidden;
+    a:hover {
+      background: $black_05;
+      color: $white_1;
+    }
+  }
+  &__inner {
+    background: $dark_stripe;
+    &__mastodon {
+      background: $ink bottom  / contain no-repeat;
+      img {
+        display: none;
+      }
+    }
+  }
+  &__pager {
+    border-radius: 15px;
+  }
+}
+
+// column全般
+.column-header {
+  background: $gray_jagged;
+  border-radius: 15px 15px 0 0;
+  color: $black_1;
+  a:hover {
+    background: $black_05;
+    color: $white_1;
+  }
+  &__button {
+    background: none;
+    color: $black_1;
+    transition: $transition;
+    &:hover, &:focus {
+      background: $black_05;
+      color: $white_1;
+      outline: none;
+    }
+  }
+  &__back-button {
+    background: none;
+    color: $black_1 !important;
+  }
+  &__collapsible > div {
+    background: $dark_1;
+  }
+  &.active {
+    .column-header__icon {
+      color: $blueGray_1;
+      text-shadow: 0 0 10px rgba($blueGray_1, 0.4);
+    }
+  }
+}
+
+// 配色の上書き
+[aria-label="ホーム"],
+[aria-label="Home"] {
+  .column-header {
+    background: $blue_jagged;
+  }
+}
+[aria-label="ハイカラタイムライン"],
+[aria-label="ローカルタイムライン"],
+[aria-label="Local Time Line"] {
+  .column-header {
+    background: $yellow_jagged;
+  }
+}
+
+.notification__filter-bar {
+  background: $dark_stripe;
+  > button {
+    background: $black_01;
+  }
+  > button.active {
+    ::after {
+      border-bottom-color: $black_1;
+    }
+  }
+}
+
+// 値がないカラムの'column-header'に乗っかるbutton
+.column-back-button {
+  background: $gray_jagged;
+  border-radius: 15px 15px 0 0;
+  color: $black_1;
+}
+
+.getting-started {
+  background: $dark_stripe;
+  border-radius: 0 0 15px 15px;
+  &::-webkit-scrollbar-track {
+    background: none;
+  }
+  &__wrapper {
+    background: none;
+  }
+}
+.column-link {
+  background: $bg_opacity_0;
+  &:hover {
+    background: $orange_stripe;
+  }
+}
+.column-subheading {
+  background: $white_03;
+  color: $black_1;
+}
+.empty-column-indicator {
+  background: $dark_stripe;
+  border-radius: 0 0 15px 15px;
+  color: $white_1;
+}
+.column > .scrollable {
+  background: $dark_stripe;
+  border-radius: 0 0 15px 15px;
+  &::-webkit-scrollbar-track {
+    background: none;
+  }
+}
+
+/* cassette is toot */
+.status {
+  border-bottom-color: $gray_1;
+  &.status-direct:not(.read) {
+    background: $white_01;
+  }
+}
+.focusable:focus {
+  background: $black_03;
+}
+
+// トゥートのアンケートの回答のグラフ部分の装飾
+.poll__chart {
+  background: darken($lightblue_1, 14%);
+  &.leading {
+    background: $lightblue_1;
+  }
+}
+
+// アカウント詳細Column
+.account__header {
+  > div {
+    background: none;
+    button.logo-button {
+      background: $orange_1;
+      border-radius: 15px;
+      &:hover {
+        background: $purple_1;
+      }
+    }
+  }
+  .account__header__image {
+    background: $dark_1;
+  }
+}
+.account__section-headline {
+  background: $dark_stripe;
+  > a {
+    background: $white_01;
+  }
+  > a.active {
+    ::after {
+      border-bottom-color: rgb(0, 0, 0);
+    }
+  }
+}
+
+// toggle
+.react-toggle {
+  &--checked,
+  &--checked:hover:not(.react-toggle--disabled) {
+    .react-toggle-thumb {
+      border-color: $orange_1;
+    }
+    .react-toggle-track {
+      background-color: $orange_1;
+    }
+  }
+}
+
+// regeneration
+.regeneration-indicator {
+  border-radius: 15px;
+  background: $dark_stripe;
+}
+
+// アクティブメッセージ
+.detailed-status, .detailed-status__action-bar {
+  background: none;
+}
+
+// トゥート内のシンタックスハイライトを装飾
+.hljs {
+  background: $black_05;
+  border-radius: 5px;
+  padding: 0.3em;
+  margin: 0.3em;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* layout-single-column */
+// tab
+.tabs-bar__wrapper {
+  background: $dark_1;
+}
+.tabs-bar {
+  background: $pink_jagged;
+  border-radius: 0px;
+  border: none;
+  overflow: hidden;
+  &__link {
+    color: $black_1;
+    border: none;
+    &.active {
+      color: $white_1;
+      border-bottom-color: $white_1;
+    }
+    &:active, &:hover, &:focus {
+      background: $black_05;
+      border: none;
+      color: $white_1;
+    }
+  }
+}
+// シンプルUI用の上書き
+.layout-single-column {
+  .ui {
+    background: $dark_1;
+    .compose-form {
+      button.button--block {
+        border-radius: 0;
+      }
+    }
+  }
+  .column-header {
+    border-radius: 0;
+  }
+  .compose-panel {
+    .search__input {
+      border-radius: 0;
+      background: $dark_stripe;
+    }
+    .navigation-bar,
+    .compose-form,
+    .getting-started__footer {
+      background: none;
+    }
+    // SP対応用の記述
+    .compose-form {
+      .reply-indicator {
+        border-radius: 0;
+      }
+      .compose-form {
+        &__autosuggest-wrapper {
+        border-radius: 0;
+        }
+      }
+    }
+    .compose-form__buttons {
+      border-radius: 0;
+    }
+  }
+  .navigation-panel {
+    .column-link--transparent {
+      border-radius: 0;
+      &.active {
+        color: $orange_1;
+      }
+      &:hover {
+        color: $white_1;
+      }
+    }
+  }
+  .compose-form__buttons-wrapper {
+    border-radius: 0;
+  }
+  // プロフィール編集のボタン
+  .account__header {
+    > div {
+      button.logo-button {
+        border-radius: 4px;
+      }
+    }
+  }
+  // 戻るボタンを上書き
+  .column-back-button {
+    border-radius: 0;
+  }
+  .getting-started {
+    border-radius: 0;
+  }
+}
