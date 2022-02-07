@@ -50,11 +50,14 @@
 #  avatar_storage_schema_version :integer
 #  header_storage_schema_version :integer
 #  devices_url                   :string
+#  sensitized_at                 :datetime
+#  suspension_origin             :integer
 #
 
 class Account < ApplicationRecord
-  USERNAME_RE = /[a-z0-9_]+([a-z0-9_\.-]+[a-z0-9_]+)?/i
-  MENTION_RE  = /(?<=^|[^\/[:word:]])@((#{USERNAME_RE})(?:@[[:word:]\.\-]+[a-z0-9]+)?)/i
+  USERNAME_RE   = /[a-z0-9_]+([a-z0-9_\.-]+[a-z0-9_]+)?/i
+  MENTION_RE    = /(?<=^|[^\/[:word:]])@((#{USERNAME_RE})(?:@[[:word:]\.\-]+[[:word:]]+)?)/i
+  URL_PREFIX_RE = /\Ahttp(s?):\/\/[^\/]+/
 
   include AccountAssociations
   include AccountAvatar
@@ -65,6 +68,8 @@ class Account < ApplicationRecord
   include Paginable
   include AccountCounters
   include DomainNormalizable
+  include DomainMaterializable
+  include AccountMerging
 
   TRUST_LEVELS = {
     untrusted: 0,
@@ -72,6 +77,7 @@ class Account < ApplicationRecord
   }.freeze
 
   enum protocol: [:ostatus, :activitypub]
+  enum suspension_origin: [:local, :remote], _prefix: true
 
   validates :username, presence: true
   validates_with UniqueUsernameValidator, if: -> { will_save_change_to_username? }
@@ -101,13 +107,14 @@ class Account < ApplicationRecord
   scope :partitioned, -> { order(Arel.sql('row_number() over (partition by domain)')) }
   scope :silenced, -> { where.not(silenced_at: nil) }
   scope :suspended, -> { where.not(suspended_at: nil) }
+  scope :sensitized, -> { where.not(sensitized_at: nil) }
   scope :without_suspended, -> { where(suspended_at: nil) }
   scope :without_silenced, -> { where(silenced_at: nil) }
+  scope :without_instance_actor, -> { where.not(id: -99) }
   scope :recent, -> { reorder(id: :desc) }
   scope :bots, -> { where(actor_type: %w(Application Service)) }
   scope :groups, -> { where(actor_type: 'Group') }
   scope :alphabetic, -> { order(domain: :asc, username: :asc) }
-  scope :by_domain_accounts, -> { group(:domain).select(:domain, 'COUNT(*) AS accounts_count').order('accounts_count desc') }
   scope :matches_username, ->(value) { where(arel_table[:username].matches("#{value}%")) }
   scope :matches_display_name, ->(value) { where(arel_table[:display_name].matches("#{value}%")) }
   scope :matches_domain, ->(value) { where(arel_table[:domain].matches("%#{value}%")) }
@@ -226,28 +233,45 @@ class Account < ApplicationRecord
   end
 
   def suspended?
-    suspended_at.present?
+    suspended_at.present? && !instance_actor?
   end
 
-  def suspend!(date = Time.now.utc)
+  def suspended_permanently?
+    suspended? && deletion_request.nil?
+  end
+
+  def suspended_temporarily?
+    suspended? && deletion_request.present?
+  end
+
+  def suspend!(date: Time.now.utc, origin: :local)
     transaction do
-      user&.disable! if local?
-      update!(suspended_at: date)
+      create_deletion_request!
+      update!(suspended_at: date, suspension_origin: origin)
     end
   end
 
   def unsuspend!
     transaction do
-      user&.enable! if local?
-      update!(suspended_at: nil)
+      deletion_request&.destroy!
+      update!(suspended_at: nil, suspension_origin: nil)
     end
   end
 
+  def sensitized?
+    sensitized_at.present?
+  end
+
+  def sensitize!(date = Time.now.utc)
+    update!(sensitized_at: date)
+  end
+
+  def unsensitize!
+    update!(sensitized_at: nil)
+  end
+
   def memorialize!
-    transaction do
-      user&.disable! if local?
-      update!(memorial: true)
-    end
+    update!(memorial: true)
   end
 
   def sign?
@@ -287,7 +311,11 @@ class Account < ApplicationRecord
   end
 
   def fields
-    (self[:fields] || []).map { |f| Field.new(self, f) }
+    (self[:fields] || []).map do |f|
+      Field.new(self, f)
+    rescue
+      nil
+    end.compact
   end
 
   def fields_attributes=(attributes)
@@ -364,6 +392,12 @@ class Account < ApplicationRecord
     shared_inbox_url.presence || inbox_url
   end
 
+  def synchronization_uri_prefix
+    return 'local' if local?
+
+    @synchronization_uri_prefix ||= "#{uri[URL_PREFIX_RE]}/"
+  end
+
   class Field < ActiveModelSerializers::Model
     attributes :name, :value, :verified_at, :account, :errors
 
@@ -415,12 +449,11 @@ class Account < ApplicationRecord
   end
 
   class << self
+    DISALLOWED_TSQUERY_CHARACTERS = /['?\\:‘’]/.freeze
+    TEXTSEARCH = "(setweight(to_tsvector('simple', accounts.display_name), 'A') || setweight(to_tsvector('simple', accounts.username), 'B') || setweight(to_tsvector('simple', coalesce(accounts.domain, '')), 'C'))"
+
     def readonly_attributes
       super - %w(statuses_count following_count followers_count)
-    end
-
-    def domains
-      reorder(nil).pluck(Arel.sql('distinct accounts.domain'))
     end
 
     def inboxes
@@ -429,70 +462,29 @@ class Account < ApplicationRecord
     end
 
     def search_for(terms, limit = 10, offset = 0)
-      textsearch, query = generate_query_for_search(terms)
+      tsquery = generate_query_for_search(terms)
 
       sql = <<-SQL.squish
         SELECT
           accounts.*,
-          ts_rank_cd(#{textsearch}, #{query}, 32) AS rank
+          ts_rank_cd(#{TEXTSEARCH}, to_tsquery('simple', :tsquery), 32) AS rank
         FROM accounts
-        WHERE #{query} @@ #{textsearch}
+        WHERE to_tsquery('simple', :tsquery) @@ #{TEXTSEARCH}
           AND accounts.suspended_at IS NULL
           AND accounts.moved_to_account_id IS NULL
         ORDER BY rank DESC
-        LIMIT ? OFFSET ?
+        LIMIT :limit OFFSET :offset
       SQL
 
-      records = find_by_sql([sql, limit, offset])
+      records = find_by_sql([sql, limit: limit, offset: offset, tsquery: tsquery])
       ActiveRecord::Associations::Preloader.new.preload(records, :account_stat)
       records
     end
 
     def advanced_search_for(terms, account, limit = 10, following = false, offset = 0)
-      textsearch, query = generate_query_for_search(terms)
-
-      if following
-        sql = <<-SQL.squish
-          WITH first_degree AS (
-            SELECT target_account_id
-            FROM follows
-            WHERE account_id = ?
-            UNION ALL
-            SELECT ?
-          )
-          SELECT
-            accounts.*,
-            (count(f.id) + 1) * ts_rank_cd(#{textsearch}, #{query}, 32) AS rank
-          FROM accounts
-          LEFT OUTER JOIN follows AS f ON (accounts.id = f.account_id AND f.target_account_id = ?)
-          WHERE accounts.id IN (SELECT * FROM first_degree)
-            AND #{query} @@ #{textsearch}
-            AND accounts.suspended_at IS NULL
-            AND accounts.moved_to_account_id IS NULL
-          GROUP BY accounts.id
-          ORDER BY rank DESC
-          LIMIT ? OFFSET ?
-        SQL
-
-        records = find_by_sql([sql, account.id, account.id, account.id, limit, offset])
-      else
-        sql = <<-SQL.squish
-          SELECT
-            accounts.*,
-            (count(f.id) + 1) * ts_rank_cd(#{textsearch}, #{query}, 32) AS rank
-          FROM accounts
-          LEFT OUTER JOIN follows AS f ON (accounts.id = f.account_id AND f.target_account_id = ?) OR (accounts.id = f.target_account_id AND f.account_id = ?)
-          WHERE #{query} @@ #{textsearch}
-            AND accounts.suspended_at IS NULL
-            AND accounts.moved_to_account_id IS NULL
-          GROUP BY accounts.id
-          ORDER BY rank DESC
-          LIMIT ? OFFSET ?
-        SQL
-
-        records = find_by_sql([sql, account.id, account.id, limit, offset])
-      end
-
+      tsquery = generate_query_for_search(terms)
+      sql = advanced_search_for_sql_template(following)
+      records = find_by_sql([sql, id: account.id, limit: limit, offset: offset, tsquery: tsquery])
       ActiveRecord::Associations::Preloader.new.preload(records, :account_stat)
       records
     end
@@ -514,12 +506,55 @@ class Account < ApplicationRecord
 
     private
 
-    def generate_query_for_search(terms)
-      terms      = Arel.sql(connection.quote(terms.gsub(/['?\\:]/, ' ')))
-      textsearch = "(setweight(to_tsvector('simple', accounts.display_name), 'A') || setweight(to_tsvector('simple', accounts.username), 'B') || setweight(to_tsvector('simple', coalesce(accounts.domain, '')), 'C'))"
-      query      = "to_tsquery('simple', ''' ' || #{terms} || ' ''' || ':*')"
+    def generate_query_for_search(unsanitized_terms)
+      terms = unsanitized_terms.gsub(DISALLOWED_TSQUERY_CHARACTERS, ' ')
 
-      [textsearch, query]
+      # The final ":*" is for prefix search.
+      # The trailing space does not seem to fit any purpose, but `to_tsquery`
+      # behaves differently with and without a leading space if the terms start
+      # with `./`, `../`, or `.. `. I don't understand why, so, in doubt, keep
+      # the same query.
+      "' #{terms} ':*"
+    end
+
+    def advanced_search_for_sql_template(following)
+      if following
+        <<-SQL.squish
+          WITH first_degree AS (
+            SELECT target_account_id
+            FROM follows
+            WHERE account_id = :id
+            UNION ALL
+            SELECT :id
+          )
+          SELECT
+            accounts.*,
+            (count(f.id) + 1) * ts_rank_cd(#{TEXTSEARCH}, to_tsquery('simple', :tsquery), 32) AS rank
+          FROM accounts
+          LEFT OUTER JOIN follows AS f ON (accounts.id = f.account_id AND f.target_account_id = :id)
+          WHERE accounts.id IN (SELECT * FROM first_degree)
+            AND to_tsquery('simple', :tsquery) @@ #{TEXTSEARCH}
+            AND accounts.suspended_at IS NULL
+            AND accounts.moved_to_account_id IS NULL
+          GROUP BY accounts.id
+          ORDER BY rank DESC
+          LIMIT :limit OFFSET :offset
+        SQL
+      else
+        <<-SQL.squish
+          SELECT
+            accounts.*,
+            (count(f.id) + 1) * ts_rank_cd(#{TEXTSEARCH}, to_tsquery('simple', :tsquery), 32) AS rank
+          FROM accounts
+          LEFT OUTER JOIN follows AS f ON (accounts.id = f.account_id AND f.target_account_id = :id) OR (accounts.id = f.target_account_id AND f.account_id = :id)
+          WHERE to_tsquery('simple', :tsquery) @@ #{TEXTSEARCH}
+            AND accounts.suspended_at IS NULL
+            AND accounts.moved_to_account_id IS NULL
+          GROUP BY accounts.id
+          ORDER BY rank DESC
+          LIMIT :limit OFFSET :offset
+        SQL
+      end
     end
   end
 
@@ -562,17 +597,6 @@ class Account < ApplicationRecord
   end
 
   def clean_feed_manager
-    reblog_key       = FeedManager.instance.key(:home, id, 'reblogs')
-    reblogged_id_set = Redis.current.zrange(reblog_key, 0, -1)
-
-    Redis.current.pipelined do
-      Redis.current.del(FeedManager.instance.key(:home, id))
-      Redis.current.del(reblog_key)
-
-      reblogged_id_set.each do |reblogged_id|
-        reblog_set_key = FeedManager.instance.key(:home, id, "reblogs:#{reblogged_id}")
-        Redis.current.del(reblog_set_key)
-      end
-    end
+    FeedManager.instance.clean_feeds!(:home, [id])
   end
 end

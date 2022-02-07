@@ -2,6 +2,8 @@
 
 class Webfinger
   class Error < StandardError; end
+  class GoneError < Error; end
+  class RedirectError < StandardError; end
 
   class Response
     def initialize(body)
@@ -44,9 +46,13 @@ class Webfinger
   def body_from_webfinger(url = standard_url, use_fallback = true)
     webfinger_request(url).perform do |res|
       if res.code == 200
-        res.body_with_limit
+        body = res.body_with_limit
+        raise Webfinger::Error, "Request for #{@uri} returned empty response" if body.empty?
+        body
       elsif res.code == 404 && use_fallback
         body_from_host_meta
+      elsif res.code == 410
+        raise Webfinger::GoneError, "#{@uri} is gone from the server"
       else
         raise Webfinger::Error, "Request for #{@uri} returned HTTP #{res.code}"
       end

@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 class Auth::SessionsController < Devise::SessionsController
-  include Devise::Controllers::Rememberable
-
   layout 'auth'
 
   skip_before_action :require_no_authentication, only: [:create]
@@ -26,7 +24,6 @@ class Auth::SessionsController < Devise::SessionsController
   def create
     super do |resource|
       resource.update_sign_in!(request, new_sign_in: true)
-      remember_me(resource)
       flash.delete(:notice)
     end
   end
@@ -39,21 +36,41 @@ class Auth::SessionsController < Devise::SessionsController
     store_location_for(:user, tmp_stored_location) if continue_after?
   end
 
-  protected
+  def webauthn_options
+    user = User.find_by(id: session[:attempt_user_id])
 
-  def find_user
-    if session[:attempt_user_id]
-      User.find_by(id: session[:attempt_user_id])
+    if user.webauthn_enabled?
+      options_for_get = WebAuthn::Credential.options_for_get(
+        allow: user.webauthn_credentials.pluck(:external_id)
+      )
+
+      session[:webauthn_challenge] = options_for_get.challenge
+
+      render json: options_for_get, status: :ok
     else
-      user   = User.authenticate_with_ldap(user_params) if Devise.ldap_authentication
-      user ||= User.authenticate_with_pam(user_params) if Devise.pam_authentication
-      user ||= User.find_for_authentication(email: user_params[:email])
-      user
+      render json: { error: t('webauthn_credentials.not_enabled') }, status: :unauthorized
     end
   end
 
+  protected
+
+  def find_user
+    if user_params[:email].present?
+      find_user_from_params
+    elsif session[:attempt_user_id]
+      User.find_by(id: session[:attempt_user_id])
+    end
+  end
+
+  def find_user_from_params
+    user   = User.authenticate_with_ldap(user_params) if Devise.ldap_authentication
+    user ||= User.authenticate_with_pam(user_params) if Devise.pam_authentication
+    user ||= User.find_for_authentication(email: user_params[:email])
+    user
+  end
+
   def user_params
-    params.require(:user).permit(:email, :password, :otp_attempt, :sign_in_token_attempt)
+    params.require(:user).permit(:email, :password, :otp_attempt, :sign_in_token_attempt, credential: {})
   end
 
   def after_sign_in_path_for(resource)

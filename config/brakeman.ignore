@@ -103,6 +103,37 @@
       "note": ""
     },
     {
+      "warning_type": "Dynamic Render Path",
+      "warning_code": 15,
+      "fingerprint": "4704e8093e3e0561bf705f892e8fc6780419f8255f4440b1c0afd09339bd6446",
+      "check_name": "Render",
+      "message": "Render path contains parameter value",
+      "file": "app/views/admin/instances/index.html.haml",
+      "line": 39,
+      "link": "https://brakemanscanner.org/docs/warning_types/dynamic_render_path/",
+      "code": "render(action => filtered_instances.page(params[:page]), {})",
+      "render_path": [
+        {
+          "type": "controller",
+          "class": "Admin::InstancesController",
+          "method": "index",
+          "line": 10,
+          "file": "app/controllers/admin/instances_controller.rb",
+          "rendered": {
+            "name": "admin/instances/index",
+            "file": "app/views/admin/instances/index.html.haml"
+          }
+        }
+      ],
+      "location": {
+        "type": "template",
+        "template": "admin/instances/index"
+      },
+      "user_input": "params[:page]",
+      "confidence": "Weak",
+      "note": ""
+    },
+    {
       "warning_type": "Redirect",
       "warning_code": 18,
       "fingerprint": "5fad11cd67f905fab9b1d5739d01384a1748ebe78c5af5ac31518201925265a7",
@@ -123,26 +154,6 @@
       "note": ""
     },
     {
-      "warning_type": "SQL Injection",
-      "warning_code": 0,
-      "fingerprint": "6f075c1484908e3ec9bed21ab7cf3c7866be8da3881485d1c82e13093aefcbd7",
-      "check_name": "SQL",
-      "message": "Possible SQL injection",
-      "file": "app/models/status.rb",
-      "line": 105,
-      "link": "https://brakemanscanner.org/docs/warning_types/sql_injection/",
-      "code": "result.joins(\"LEFT OUTER JOIN statuses_tags t#{id} ON t#{id}.status_id = statuses.id AND t#{id}.tag_id = #{id}\")",
-      "render_path": null,
-      "location": {
-        "type": "method",
-        "class": "Status",
-        "method": null
-      },
-      "user_input": "id",
-      "confidence": "Weak",
-      "note": ""
-    },
-    {
       "warning_type": "Mass Assignment",
       "warning_code": 105,
       "fingerprint": "7631e93d0099506e7c3e5c91ba8d88523b00a41a0834ae30031a5a4e8bb3020a",
@@ -157,26 +168,6 @@
         "type": "method",
         "class": "Api::V2::SearchController",
         "method": "search_params"
-      },
-      "user_input": ":account_id",
-      "confidence": "High",
-      "note": ""
-    },
-    {
-      "warning_type": "Mass Assignment",
-      "warning_code": 105,
-      "fingerprint": "8f63dec68951d9bcf7eddb15af9392b2e1333003089c41fb76688dfd3579f394",
-      "check_name": "PermitAttributes",
-      "message": "Potentially dangerous key allowed for mass assignment",
-      "file": "app/controllers/api/v1/crypto/deliveries_controller.rb",
-      "line": 23,
-      "link": "https://brakemanscanner.org/docs/warning_types/mass_assignment/",
-      "code": "params.require(:device).permit(:account_id, :device_id, :type, :body, :hmac)",
-      "render_path": null,
-      "location": {
-        "type": "method",
-        "class": "Api::V1::Crypto::DeliveriesController",
-        "method": "resource_params"
       },
       "user_input": ":account_id",
       "confidence": "High",
@@ -294,6 +285,6 @@
       "note": ""
     }
   ],
-  "updated": "2020-06-01 18:18:02 +0200",
-  "brakeman_version": "4.8.0"
+  "updated": "2020-12-07 01:17:13 +0100",
+  "brakeman_version": "4.10.0"
 }

@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 class NotifyService < BaseService
-  def call(recipient, activity)
+  def call(recipient, type, activity)
     @recipient    = recipient
     @activity     = activity
-    @notification = Notification.new(account: @recipient, activity: @activity)
+    @notification = Notification.new(account: @recipient, type: type, activity: @activity)
 
     return if recipient.user.nil? || blocked?
 
@@ -13,13 +13,17 @@ class NotifyService < BaseService
     push_to_conversation! if direct_message?
     send_email! if email_enabled?
   rescue ActiveRecord::RecordInvalid
-    return
+    nil
   end
 
   private
 
   def blocked_mention?
-    FeedManager.instance.filter?(:mentions, @notification.mention.status, @recipient.id)
+    FeedManager.instance.filter?(:mentions, @notification.mention.status, @recipient)
+  end
+
+  def blocked_status?
+    false
   end
 
   def blocked_favourite?
@@ -63,8 +67,53 @@ class NotifyService < BaseService
     message? && @notification.target_status.direct_visibility?
   end
 
+  # Returns true if the sender has been mentionned by the recipient up the thread
   def response_to_recipient?
-    @notification.target_status.in_reply_to_account_id == @recipient.id && @notification.target_status.thread&.direct_visibility?
+    return false if @notification.target_status.in_reply_to_id.nil?
+
+    # Using an SQL CTE to avoid unneeded back-and-forth with SQL server in case of long threads
+    !Status.count_by_sql([<<-SQL.squish, id: @notification.target_status.in_reply_to_id, recipient_id: @recipient.id, sender_id: @notification.from_account.id]).zero?
+      WITH RECURSIVE ancestors(id, in_reply_to_id, replying_to_sender, path) AS (
+          SELECT
+            s.id,
+            s.in_reply_to_id,
+            (CASE
+              WHEN s.account_id = :recipient_id THEN
+                EXISTS (
+                  SELECT *
+                  FROM mentions m
+                  WHERE m.silent = FALSE AND m.account_id = :sender_id AND m.status_id = s.id
+                )
+              ELSE
+                FALSE
+             END),
+            ARRAY[s.id]
+          FROM statuses s
+          WHERE s.id = :id
+        UNION ALL
+          SELECT
+            s.id,
+            s.in_reply_to_id,
+            (CASE
+              WHEN s.account_id = :recipient_id THEN
+                EXISTS (
+                  SELECT *
+                  FROM mentions m
+                  WHERE m.silent = FALSE AND m.account_id = :sender_id AND m.status_id = s.id
+                )
+              ELSE
+                FALSE
+             END),
+            st.path || s.id
+          FROM ancestors st
+          JOIN statuses s ON s.id = st.in_reply_to_id
+          WHERE st.replying_to_sender IS FALSE AND NOT s.id = ANY(path)
+      )
+      SELECT COUNT(*)
+      FROM ancestors st
+      JOIN statuses s ON s.id = st.id
+      WHERE st.replying_to_sender IS TRUE AND s.visibility = 3
+    SQL
   end
 
   def from_staff?

@@ -219,6 +219,7 @@ class Formatter
 
     html
   end
+  # rubocop:enable Metrics/BlockNesting
 
   def rewrite(text, entities)
     text = text.to_s
