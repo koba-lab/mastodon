@@ -1,13 +1,60 @@
-version: '2'
+version: '3'
 services:
   db:
     restart: always
     image: postgres:9.6-alpine
-    ports:
-      - "5432:5432"
+    shm_size: 256mb
+    networks:
+      - internal_network
+    healthcheck:
+      # test: ["CMD", "pg_isready", "-U", "mastodon_development"]
+      test: ["CMD", "pg_isready", "-U", "mastodon", "-d", "mastodon_development"]
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: mastodon
+      POSTGRES_DB: mastodon_development
+      POSTGRES_PASSWORD: Mastodon
 
   redis:
     restart: always
-    image: redis:4.0-alpine
+    image: redis:6.0-alpine
+    networks:
+      - internal_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+    volumes:
+      - ./redis:/data
+
+  web:
+    depends_on:
+      - db
+      - redis
+
+  streaming:
+    depends_on:
+      - db
+      - redis
+
+  sidekiq:
+    depends_on:
+      - db
+      - redis
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    env_file: .env.production
+    volumes:
+      - ./tmp/nginx/html:/usr/share/nginx/html
+      - ./tmp/nginx/templates:/etc/nginx/templates
+      - ./tmp/nginx/ssl:/etc/nginx/ssl
     ports:
-      - "6379:6379"
+      - "80:80"
+      - "443:443"
+    networks:
+      - external_network
+      - internal_network
+    depends_on:
+      - web
+      - streaming
