@@ -5,6 +5,37 @@ RSpec.describe Account, type: :model do
     let(:bob) { Fabricate(:account, username: 'bob') }
     subject { Fabricate(:account) }
 
+    describe '#suspend!' do
+      it 'marks the account as suspended' do
+        subject.suspend!
+        expect(subject.suspended?).to be true
+      end
+
+      it 'creates a deletion request' do
+        subject.suspend!
+        expect(AccountDeletionRequest.where(account: subject).exists?).to be true
+      end
+
+      context 'when the account is of a local user' do
+        let!(:subject) { Fabricate(:account, user: Fabricate(:user, email: 'foo+bar@domain.org')) }
+
+        it 'creates a canonical domain block' do
+          subject.suspend!
+          expect(CanonicalEmailBlock.block?(subject.user_email)).to be true
+        end
+
+        context 'when a canonical domain block already exists for that email' do
+          before do
+            Fabricate(:canonical_email_block, email: subject.user_email)
+          end
+
+          it 'does not raise an error' do
+            expect { subject.suspend! }.not_to raise_error
+          end
+        end
+      end
+    end
+
     describe '#follow!' do
       it 'creates a follow' do
         follow = subject.follow!(bob)
@@ -131,18 +162,6 @@ RSpec.describe Account, type: :model do
         expect(account.avatar_file_name).to  eq nil
         expect(account.header_file_name).to  eq nil
       end
-    end
-  end
-
-  describe '#subscribed?' do
-    it 'returns false when no subscription expiration information is present' do
-      account = Fabricate(:account, subscription_expires_at: nil)
-      expect(account.subscribed?).to be false
-    end
-
-    it 'returns true when subscription expiration has been set' do
-      account = Fabricate(:account, subscription_expires_at: 30.days.from_now)
-      expect(account.subscribed?).to be true
     end
   end
 
@@ -704,21 +723,6 @@ RSpec.describe Account, type: :model do
       it 'does not return partially matching domains' do
         account = Fabricate(:account, domain: 'grexample.com')
         expect(Account.by_domain_and_subdomains('example.com')).to_not eq [account]
-      end
-    end
-
-    describe 'expiring' do
-      it 'returns remote accounts with followers whose subscription expiration date is past or not given' do
-        local = Fabricate(:account, domain: nil)
-        matches = [
-          { domain: 'remote', subscription_expires_at: '2000-01-01T00:00:00Z' },
-        ].map(&method(:Fabricate).curry(2).call(:account))
-        matches.each(&local.method(:follow!))
-        Fabricate(:account, domain: 'remote', subscription_expires_at: nil)
-        local.follow!(Fabricate(:account, domain: 'remote', subscription_expires_at: '2000-01-03T00:00:00Z'))
-        local.follow!(Fabricate(:account, domain: nil, subscription_expires_at: nil))
-
-        expect(Account.expiring('2000-01-02T00:00:00Z').recent).to eq matches.reverse
       end
     end
 
