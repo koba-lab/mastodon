@@ -7,13 +7,12 @@ services:
     networks:
       - internal_network
     healthcheck:
-      # test: ["CMD", "pg_isready", "-U", "mastodon_development"]
-      test: ["CMD", "pg_isready", "-U", "mastodon", "-d", "mastodon_development"]
+      test: ["CMD", "pg_isready", "-U", "mastodon", "-d", "mastodon"]
     volumes:
       - ./postgres:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: mastodon
-      POSTGRES_DB: mastodon_development
+      POSTGRES_DB: mastodon
       POSTGRES_PASSWORD: Mastodon
 
   redis:
