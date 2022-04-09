@@ -1,27 +1,27 @@
 version: '3'
 services:
-  db:
-    restart: always
-    image: postgres:14-alpine
-    shm_size: 256mb
-    networks:
-      - internal_network
-    healthcheck:
-      test: ['CMD', 'pg_isready', '-U', 'postgres']
-    volumes:
-      - ./postgres14:/var/lib/postgresql/data
-    environment:
-      - 'POSTGRES_HOST_AUTH_METHOD=trust'
+  # db:
+  #   restart: always
+  #   image: postgres:14-alpine
+  #   shm_size: 256mb
+  #   networks:
+  #     - internal_network
+  #   healthcheck:
+  #     test: ['CMD', 'pg_isready', '-U', 'postgres']
+  #   volumes:
+  #     - ./postgres14:/var/lib/postgresql/data
+  #   environment:
+  #     - 'POSTGRES_HOST_AUTH_METHOD=trust'
 
-  redis:
-    restart: always
-    image: redis:6-alpine
-    networks:
-      - internal_network
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-    volumes:
-      - ./redis:/data
+  # redis:
+  #   restart: always
+  #   image: redis:6-alpine
+  #   networks:
+  #     - internal_network
+  #   healthcheck:
+  #     test: ['CMD', 'redis-cli', 'ping']
+  #   volumes:
+  #     - ./redis:/data
 
   # es:
   #   restart: always
