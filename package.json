@@ -100,7 +100,7 @@
     "font-awesome": "^4.7.0",
     "glob": "^7.2.0",
     "history": "^4.10.1",
-    "highlight.js": "^9.12.0",
+    "highlight.js": "^11.5.1",
     "http-link-header": "^1.0.4",
     "immutable": "^4.0.0",
     "imports-loader": "^1.2.0",
