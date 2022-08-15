@@ -104,6 +104,7 @@ eo:
       confirm: Konfirmi
       confirmed: Konfirmita
       confirming: Konfirmante
+      custom: Kutimo
       delete: Forigi datumojn
       deleted: Forigita
       demote: Degradi
@@ -185,8 +186,11 @@ eo:
       silenced: Silentigita
       statuses: Mesaĝoj
       subscribe: Aboni
+      suspend: Haltigu
       suspended: Haltigita
       title: Kontoj
+      unblock_email: Malbloki retpoŝtadresojn
+      unblocked_email_msg: Sukcese malblokis la retpoŝtadreson de %{username}
       unconfirmed_email: Nekonfirmita retadreso
       undo_sensitized: Malfari sentema
       undo_silenced: Malfari kaŝon
@@ -388,6 +392,7 @@ eo:
     instances:
       availability:
         title: Disponebleco
+        warning: La lasta provo por konektiĝi al ĉi tiu servilo estis malsukcesa
       back_to_all: Ĉiuj
       back_to_limited: Limigita
       back_to_warning: Averta
@@ -395,6 +400,8 @@ eo:
       content_policies:
         policies:
           reject_reports: Malakcepti raportojn
+          silence: Kaŝu
+        policy: Politiko
       dashboard:
         instance_accounts_dimension: Plej sekvataj kontoj
         instance_accounts_measure: konservitaj kontoj
@@ -412,6 +419,7 @@ eo:
         title: Kontrolo
       private_comment: Privata komento
       public_comment: Publika komento
+      purge: Purigu
       title: Federacio
       total_blocked_by_us: Blokitaj de ni
       total_followed_by_them: Sekvataj de ili
@@ -499,10 +507,12 @@ eo:
       skip_to_actions: Salti al agoj
       status: Mesaĝoj
       statuses: Raportita enhavo
+      target_origin: Origino de raportita konto
       title: Signaloj
       unassign: Malasigni
       unresolved: Nesolvitaj
       updated_at: Ĝisdatigita
+      view_profile: Vidi profilon
     rules:
       add_new: Aldoni regulon
       delete: Forigi
@@ -590,14 +600,23 @@ eo:
         title: Furoraj kradvortoj
     site_uploads:
       delete: Forigi elŝutitan dosieron
+      destroyed_msg: Reteja alŝuto sukcese forigita!
     statuses:
       back_to_account: Reveni al konta paĝo
+      batch:
+        remove_from_report: Forigi de raporto
+        report: Raporti
       deleted: Forigita
       media:
         title: Aŭdovidaĵoj
       no_status_selected: Neniu mesaĝo estis ŝanĝita ĉar neniu estis elektita
       title: Mesaĝoj de la konto
       with_media: Kun aŭdovidaĵoj
+    strikes:
+      actions:
+        delete_statuses: "%{name} forigis afiŝojn de %{target}"
+        disable: "%{name} malebligis la konton de %{target}"
+      appeal_approved: Apelaciita
     system_checks:
       database_schema_check:
         message_html: Estas pritraktataj datumbazaj migradoj. Bonvolu ekzekuti ilin por certigi, ke la apliko kondutas kiel atendite
@@ -608,12 +627,36 @@ eo:
       review: La statuso de la recenzo
       updated_msg: Kradvorto agordoj ĝisdatigis sukcese
     title: Administrado
+    trends:
+      allow: Permesi
+      disallow: Malpermesi
+      links:
+        allow: Permesi ligilon
+        disallow: Malpermesi ligilon
+        title: Tendencantaj ligiloj
+      pending_review: Atendante revizion
+      statuses:
+        allow: Permesi afiŝon
+        allow_account: Permesi aŭtoron
+        disallow: Malpermesi afiŝon
+        disallow_account: Malpermesi aŭtoron
+        title: Tendencantaj afiŝoj
+      tags:
+        dashboard:
+          tag_accounts_measure: unikaj uzoj
+          tag_servers_measure: malsamaj serviloj
+        not_usable: Ne povas esti uzata
+        title: Tendencantaj kradvortoj
+      title: Tendencoj
     warning_presets:
       add_new: Aldoni novan
       delete: Forigi
       edit_preset: Redakti avertan antaŭagordon
       title: Administri avertajn antaŭagordojn
   admin_mailer:
+    new_appeal:
+      actions:
+        disable: por malebligi ties konton
     new_pending_account:
       body: La detaloj de la nova konto estas sube. Vi povas aprobi aŭ Malakcepti ĉi kandidatiĝo.
       subject: Nova konto atendas por recenzo en %{instance} (%{username})
@@ -621,6 +664,11 @@ eo:
       body: "%{reporter} signalis %{target}"
       body_remote: Iu de %{domain} signalis %{target}
       subject: Nova signalo por %{instance} (#%{id})
+    new_trends:
+      new_trending_links:
+        title: Tendencantaj ligiloj
+      new_trending_tags:
+        title: Tendencantaj kradvortoj
   aliases:
     add_new: Krei alinomon
     created_msg: Kreis novan alinomon sukcese. Vi povas inici la transloki el la malnovan konton nun.
@@ -744,6 +792,12 @@ eo:
     directory: Profilujo
     explanation: Malkovru uzantojn per iliaj interesoj
     explore_mastodon: Esplori %{title}
+  disputes:
+    strikes:
+      created_at: Datita
+      title_actions:
+        delete_statuses: Forigo de afiŝo
+        none: Averto
   domain_validator:
     invalid_domain: ne estas valida domajna nomo
   errors:
@@ -814,6 +868,7 @@ eo:
     changes_saved_msg: Ŝanĝoj sukcese konservitaj!
     copy: Kopii
     delete: Forigi
+    none: Neniu
     order_by: Ordigi de
     save_changes: Konservi ŝanĝojn
     today: hodiaŭ
@@ -893,6 +948,7 @@ eo:
     set_redirect: Agordi alidirekton
     warning:
       only_redirect_html: Alie, vi povas <a href="%{path}">nur aldoni alidirekton en via profilo</a>.
+      other_data: Neniu alia datumo estos movita aŭtomate
   moderation:
     title: Kontrolado
   notification_mailer:
@@ -931,6 +987,8 @@ eo:
       title: Nova diskonigo
     status:
       subject: "%{name} ĵus afiŝita"
+    update:
+      subject: "%{name} redaktis afiŝon"
   notifications:
     email_events: Eventoj por retpoŝtaj sciigoj
     email_events_hint: 'Elekti la eventojn pri kioj vi volas ricevi sciigojn:'
@@ -1133,7 +1191,7 @@ eo:
       '2629746': 1 monato
       '31556952': 1 jaro
       '5259492': 2 monatoj
-      '604800': 1 week
+      '604800': 1 semajno
       '63113904': 2 jaroj
       '7889238': 3 monatoj
   stream_entries:
@@ -1152,6 +1210,7 @@ eo:
     formats:
       default: "%Y-%m-%d %H:%M"
       month: "%b %Y"
+      time: "%H:%M"
   two_factor_authentication:
     add: Aldoni
     disable: Malebligi
@@ -1172,6 +1231,9 @@ eo:
       subject: Via arkivo estas preta por elŝutado
       title: Arkiva elŝuto
     warning:
+      categories:
+        spam: Spamo
+      reason: 'Kialo:'
       subject:
         disable: Via konto %{acct} estas frostigita
         none: Averto por %{acct}
