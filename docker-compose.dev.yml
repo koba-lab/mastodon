@@ -5,6 +5,7 @@ services:
     image: postgres:10.23-alpine
     shm_size: 256mb
     networks:
+      - external_network
       - internal_network
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "mastodon", "-d", "mastodon"]
@@ -14,6 +15,8 @@ services:
       POSTGRES_USER: mastodon
       POSTGRES_DB: mastodon
       POSTGRES_PASSWORD: Mastodon
+    ports: 
+      - "5433:5432"
 
   redis:
     restart: always
