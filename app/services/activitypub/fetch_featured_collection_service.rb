@@ -23,30 +23,37 @@ class ActivityPub::FetchFeaturedCollectionService < BaseService
 
     case collection['type']
     when 'Collection', 'CollectionPage'
-      collection['items']
+      as_array(collection['items'])
     when 'OrderedCollection', 'OrderedCollectionPage'
-      collection['orderedItems']
+      as_array(collection['orderedItems'])
     end
   end
 
   def fetch_collection(collection_or_uri)
     return collection_or_uri if collection_or_uri.is_a?(Hash)
-    return if invalid_origin?(collection_or_uri)
+    return if non_matching_uri_hosts?(@account.uri, collection_or_uri)
 
     fetch_resource_without_id_validation(collection_or_uri, local_follower, true)
   end
 
   def process_items(items)
+    process_note_items(items) if @options[:note]
+    process_hashtag_items(items) if @options[:hashtag]
+  end
+
+  def process_note_items(items)
     status_ids = items.filter_map do |item|
+      next unless item.is_a?(String) || item['type'] == 'Note'
+
       uri = value_or_id(item)
-      next if ActivityPub::TagManager.instance.local_uri?(uri) || invalid_origin?(uri)
+      next if ActivityPub::TagManager.instance.local_uri?(uri) || non_matching_uri_hosts?(@account.uri, uri)
 
       status = ActivityPub::FetchRemoteStatusService.new.call(uri, on_behalf_of: local_follower, expected_actor_uri: @account.uri, request_id: @options[:request_id])
       next unless status&.account_id == @account.id
 
       status.id
     rescue ActiveRecord::RecordInvalid => e
-      Rails.logger.debug "Invalid pinned status #{uri}: #{e.message}"
+      Rails.logger.debug { "Invalid pinned status #{uri}: #{e.message}" }
       nil
     end
 
@@ -65,6 +72,26 @@ class ActivityPub::FetchFeaturedCollectionService < BaseService
 
     to_add.each do |status_id|
       StatusPin.create!(account: @account, status_id: status_id)
+    end
+  end
+
+  def process_hashtag_items(items)
+    names     = items.filter_map { |item| item['type'] == 'Hashtag' && item['name']&.delete_prefix('#') }.map { |name| HashtagNormalizer.new.normalize(name) }
+    to_remove = []
+    to_add    = names
+
+    FeaturedTag.where(account: @account).map(&:name).each do |name|
+      if names.include?(name)
+        to_add.delete(name)
+      else
+        to_remove << name
+      end
+    end
+
+    FeaturedTag.includes(:tag).where(account: @account, tags: { name: to_remove }).delete_all unless to_remove.empty?
+
+    to_add.each do |name|
+      FeaturedTag.create!(account: @account, name: name)
     end
   end
 

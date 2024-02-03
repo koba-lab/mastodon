@@ -1,11 +1,17 @@
 # frozen_string_literal: true
 
 class Auth::SessionsController < Devise::SessionsController
+  include Redisable
+
+  MAX_2FA_ATTEMPTS_PER_HOUR = 10
+
   layout 'auth'
 
   skip_before_action :require_no_authentication, only: [:create]
   skip_before_action :require_functional!
   skip_before_action :update_user_sign_in
+
+  prepend_before_action :check_suspicious!, only: [:create]
 
   include TwoFactorAuthenticationConcern
 
@@ -14,6 +20,11 @@ class Auth::SessionsController < Devise::SessionsController
 
   content_security_policy only: :new do |p|
     p.form_action(false)
+  end
+
+  def check_suspicious!
+    user = find_user
+    @login_is_suspicious = suspicious_sign_in?(user) unless user.nil?
   end
 
   def create
@@ -45,9 +56,9 @@ class Auth::SessionsController < Devise::SessionsController
 
       session[:webauthn_challenge] = options_for_get.challenge
 
-      render json: options_for_get, status: :ok
+      render json: options_for_get, status: 200
     else
-      render json: { error: t('webauthn_credentials.not_enabled') }, status: :unauthorized
+      render json: { error: t('webauthn_credentials.not_enabled') }, status: 401
     end
   end
 
@@ -101,11 +112,9 @@ class Auth::SessionsController < Devise::SessionsController
   end
 
   def home_paths(resource)
-    paths = [about_path]
+    paths = [about_path, '/explore']
 
-    if single_user_mode? && resource.is_a?(User)
-      paths << short_account_path(username: resource.account)
-    end
+    paths << short_account_path(username: resource.account) if single_user_mode? && resource.is_a?(User)
 
     paths
   end
@@ -119,7 +128,7 @@ class Auth::SessionsController < Devise::SessionsController
     redirect_to new_user_session_path, alert: I18n.t('devise.failure.timeout')
   end
 
-  def set_attempt_session(user)
+  def register_attempt_in_session(user)
     session[:attempt_user_id]         = user.id
     session[:attempt_user_updated_at] = user.updated_at.to_s
   end
@@ -129,9 +138,23 @@ class Auth::SessionsController < Devise::SessionsController
     session.delete(:attempt_user_updated_at)
   end
 
+  def clear_2fa_attempt_from_user(user)
+    redis.del(second_factor_attempts_key(user))
+  end
+
+  def check_second_factor_rate_limits(user)
+    attempts, = redis.multi do |multi|
+      multi.incr(second_factor_attempts_key(user))
+      multi.expire(second_factor_attempts_key(user), 1.hour)
+    end
+
+    attempts >= MAX_2FA_ATTEMPTS_PER_HOUR
+  end
+
   def on_authentication_success(user, security_measure)
     @on_authentication_success_called = true
 
+    clear_2fa_attempt_from_user(user)
     clear_attempt_from_session
 
     user.update_sign_in!(new_sign_in: true)
@@ -146,7 +169,7 @@ class Auth::SessionsController < Devise::SessionsController
       user_agent: request.user_agent
     )
 
-    UserMailer.suspicious_sign_in(user, request.remote_ip, request.user_agent, Time.now.utc).deliver_later! if suspicious_sign_in?(user)
+    UserMailer.suspicious_sign_in(user, request.remote_ip, request.user_agent, Time.now.utc).deliver_later! if @login_is_suspicious
   end
 
   def suspicious_sign_in?(user)
@@ -162,5 +185,9 @@ class Auth::SessionsController < Devise::SessionsController
       ip: request.remote_ip,
       user_agent: request.user_agent
     )
+  end
+
+  def second_factor_attempts_key(user)
+    "2fa_auth_attempts:#{user.id}:#{Time.now.utc.hour}"
   end
 end

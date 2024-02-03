@@ -3,11 +3,10 @@
 class Scheduler::UserCleanupScheduler
   include Sidekiq::Worker
 
-  sidekiq_options retry: 0
+  sidekiq_options retry: 0, lock: :until_executed, lock_ttl: 1.day.to_i
 
   def perform
     clean_unconfirmed_accounts!
-    clean_suspended_accounts!
     clean_discarded_statuses!
   end
 
@@ -19,12 +18,6 @@ class Scheduler::UserCleanupScheduler
       AccountModerationNote.where(target_account_id: batch.map(&:account_id)).delete_all
       Account.where(id: batch.map(&:account_id)).delete_all
       User.where(id: batch.map(&:id)).delete_all
-    end
-  end
-
-  def clean_suspended_accounts!
-    AccountDeletionRequest.where('created_at <= ?', AccountDeletionRequest::DELAY_TO_DELETION.ago).reorder(nil).find_each do |deletion_request|
-      Admin::AccountDeletionWorker.perform_async(deletion_request.account_id)
     end
   end
 

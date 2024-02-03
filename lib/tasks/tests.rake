@@ -25,7 +25,7 @@ namespace :tests do
       end
 
       if Account.where(domain: Rails.configuration.x.local_domain).exists?
-        puts 'Faux remote accounts not properly claned up'
+        puts 'Faux remote accounts not properly cleaned up'
         exit(1)
       end
 
@@ -38,11 +38,127 @@ namespace :tests do
         puts 'Instance actor does not have a private key'
         exit(1)
       end
+
+      unless Account.find_by(username: 'user', domain: nil).custom_filters.map { |filter| filter.keywords.pluck(:keyword) } == [['test'], ['take']]
+        puts 'CustomFilterKeyword records not created as expected'
+        exit(1)
+      end
+
+      unless Admin::ActionLog.find_by(target_type: 'DomainBlock', target_id: 1).human_identifier == 'example.org'
+        puts 'Admin::ActionLog domain block records not updated as expected'
+        exit(1)
+      end
+
+      unless Admin::ActionLog.find_by(target_type: 'EmailDomainBlock', target_id: 1).human_identifier == 'example.org'
+        puts 'Admin::ActionLog email domain block records not updated as expected'
+        exit(1)
+      end
+
+      unless User.find(1).settings['notification_emails.favourite'] == true && User.find(1).settings['notification_emails.mention'] == false
+        puts 'User settings not kept as expected'
+        exit(1)
+      end
+
+      unless User.find(1).settings['web.trends'] == false
+        puts 'User settings not kept as expected'
+        exit(1)
+      end
+
+      unless Account.find_remote('bob', 'ActivityPub.com').domain == 'activitypub.com'
+        puts 'Account domains not properly normalized'
+        exit(1)
+      end
+
+      unless Status.find(12).preview_cards.pluck(:url) == ['https://joinmastodon.org/']
+        puts 'Preview cards not deduplicated as expected'
+        exit(1)
+      end
+
+      unless Account.find_local('kmruser').user.chosen_languages == %w(en ku ckb)
+        puts 'Chosen languages not migrated as expected for kmr users'
+        exit(1)
+      end
+
+      unless Account.find_local('kmruser').user.settings['default_language'] == 'ku'
+        puts 'Default posting language not migrated as expected for kmr users'
+        exit(1)
+      end
+    end
+
+    desc 'Populate the database with test data for 2.4.3'
+    task populate_v2_4_3: :environment do # rubocop:disable Naming/VariableNumber
+      user_key = OpenSSL::PKey::RSA.new(2048)
+      user_private_key     = ActiveRecord::Base.connection.quote(user_key.to_pem)
+      user_public_key      = ActiveRecord::Base.connection.quote(user_key.public_key.to_pem)
+
+      ActiveRecord::Base.connection.execute(<<~SQL)
+        INSERT INTO "custom_filters"
+          (id, account_id, phrase, context, whole_word, irreversible, created_at, updated_at)
+        VALUES
+          (1, 2, 'test', '{ "home", "public" }', true, true, now(), now()),
+          (2, 2, 'take', '{ "home" }', false, false, now(), now());
+
+        -- Orphaned admin action logs
+
+        INSERT INTO "admin_action_logs"
+          (account_id, action, target_type, target_id, created_at, updated_at)
+        VALUES
+          (1, 'destroy', 'Account', 1312, now(), now()),
+          (1, 'destroy', 'User', 1312, now(), now()),
+          (1, 'destroy', 'Report', 1312, now(), now()),
+          (1, 'destroy', 'DomainBlock', 1312, now(), now()),
+          (1, 'destroy', 'EmailDomainBlock', 1312, now(), now()),
+          (1, 'destroy', 'Status', 1312, now(), now()),
+          (1, 'destroy', 'CustomEmoji', 1312, now(), now());
+
+        -- Admin action logs with linked objects
+
+        INSERT INTO "domain_blocks"
+          (id, domain, created_at, updated_at)
+        VALUES
+          (1, 'example.org', now(), now());
+
+        INSERT INTO "email_domain_blocks"
+          (id, domain, created_at, updated_at)
+        VALUES
+          (1, 'example.org', now(), now());
+
+        INSERT INTO "admin_action_logs"
+          (account_id, action, target_type, target_id, created_at, updated_at)
+        VALUES
+          (1, 'destroy', 'Account', 1, now(), now()),
+          (1, 'destroy', 'User', 1, now(), now()),
+          (1, 'destroy', 'DomainBlock', 1, now(), now()),
+          (1, 'destroy', 'EmailDomainBlock', 1, now(), now()),
+          (1, 'destroy', 'Status', 1, now(), now()),
+          (1, 'destroy', 'CustomEmoji', 3, now(), now());
+
+        INSERT INTO "settings"
+          (id, thing_type, thing_id, var, value, created_at, updated_at)
+        VALUES
+          (3, 'User', 1, 'notification_emails', E'--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\nfollow: false\nreblog: true\nfavourite: true\nmention: false\nfollow_request: true\ndigest: true\nreport: true\npending_account: false\ntrending_tag: true\nappeal: true\n', now(), now()),
+          (4, 'User', 1, 'trends', E'--- false\n', now(), now());
+
+        INSERT INTO "accounts"
+          (id, username, domain, private_key, public_key, created_at, updated_at)
+        VALUES
+          (10, 'kmruser', NULL, #{user_private_key}, #{user_public_key}, now(), now());
+
+        INSERT INTO "users"
+          (id, account_id, email, created_at, updated_at, admin, locale, chosen_languages)
+        VALUES
+          (4, 10, 'kmruser@localhost', now(), now(), false, 'ku', '{en,kmr,ku,ckb}');
+
+        INSERT INTO "settings"
+          (id, thing_type, thing_id, var, value, created_at, updated_at)
+        VALUES
+          (5, 'User', 4, 'default_language', E'--- kmr\n', now(), now());
+      SQL
     end
 
     desc 'Populate the database with test data for 2.4.0'
-    task populate_v2_4: :environment do
-      ActiveRecord::Base.connection.execute(<<~SQL)
+    task populate_v2_4: :environment do # rubocop:disable Naming/VariableNumber
+      ActiveRecord::Base.connection.execute(<<~SQL.squish)
         INSERT INTO "settings"
           (id, thing_type, thing_id, var, value, created_at, updated_at)
         VALUES
@@ -89,7 +205,7 @@ namespace :tests do
         INSERT INTO "accounts"
           (id, username, domain, private_key, public_key, created_at, updated_at, protocol, inbox_url, outbox_url, followers_url)
         VALUES
-          (6, 'bob', 'activitypub.com', NULL, #{remote_public_key_ap}, now(), now(),
+          (6, 'bob', 'ActivityPub.com', NULL, #{remote_public_key_ap}, now(), now(),
            1, 'https://activitypub.com/users/bob/inbox', 'https://activitypub.com/users/bob/outbox', 'https://activitypub.com/users/bob/followers');
 
         INSERT INTO "accounts"
@@ -116,7 +232,7 @@ namespace :tests do
         INSERT INTO "users"
           (id, account_id, email, created_at, updated_at, admin, locale)
         VALUES
-          (3, 7, 'ptuser@localhost', now(), now(), false, 'pt');
+          (3, 8, 'ptuser@localhost', now(), now(), false, 'pt');
 
         -- conversations
         INSERT INTO "conversations" (id, created_at, updated_at) VALUES (1, now(), now());
@@ -162,6 +278,11 @@ namespace :tests do
           (10, 2, '@admin hey!', NULL, 1, 3, now(), now()),
           (11, 1, '@user hey!', 10, 1, 3, now(), now());
 
+        INSERT INTO "statuses"
+          (id, account_id, text, created_at, updated_at)
+        VALUES
+          (12, 1, 'check out https://joinmastodon.org/', now(), now());
+
         -- mentions (from previous statuses)
 
         INSERT INTO "mentions"
@@ -191,18 +312,18 @@ namespace :tests do
         -- custom emoji
 
         INSERT INTO "custom_emojis"
-          (shortcode, created_at, updated_at)
+          (id, shortcode, created_at, updated_at)
         VALUES
-          ('test', now(), now()),
-          ('Test', now(), now()),
-          ('blobcat', now(), now());
+          (1, 'test', now(), now()),
+          (2, 'Test', now(), now()),
+          (3, 'blobcat', now(), now());
 
         INSERT INTO "custom_emojis"
-          (shortcode, domain, uri, created_at, updated_at)
+          (id, shortcode, domain, uri, created_at, updated_at)
         VALUES
-          ('blobcat', 'remote.org', 'https://remote.org/emoji/blobcat', now(), now()),
-          ('blobcat', 'Remote.org', 'https://remote.org/emoji/blobcat', now(), now()),
-          ('Blobcat', 'remote.org', 'https://remote.org/emoji/Blobcat', now(), now());
+          (4, 'blobcat', 'remote.org', 'https://remote.org/emoji/blobcat', now(), now()),
+          (5, 'blobcat', 'Remote.org', 'https://remote.org/emoji/blobcat', now(), now()),
+          (6, 'Blobcat', 'remote.org', 'https://remote.org/emoji/Blobcat', now(), now());
 
         -- favourites
 
@@ -250,6 +371,21 @@ namespace :tests do
           (1, 6, 2, 'Follow', 2, now(), now()),
           (2, 2, 1, 'Mention', 4, now(), now()),
           (3, 1, 2, 'Mention', 5, now(), now());
+
+        -- preview cards
+
+        INSERT INTO "preview_cards"
+          (id, url, title, created_at, updated_at)
+        VALUES
+          (1, 'https://joinmastodon.org/', 'Mastodon - Decentralized social media', now(), now());
+
+        -- many-to-many association between preview cards and statuses
+
+        INSERT INTO "preview_cards_statuses"
+          (status_id, preview_card_id)
+        VALUES
+          (12, 1),
+          (12, 1);
       SQL
     end
   end

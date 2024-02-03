@@ -44,13 +44,8 @@ describe Api::V1::Timelines::TagController do
     end
 
     context 'when the instance does not allow public preview' do
-      around do |example|
-        timeline_preview = Setting.timeline_preview
-        Setting.timeline_preview = false
-
-        example.run
-
-        Setting.timeline_preview = timeline_preview
+      before do
+        Form::AdminSettings.new(timeline_preview: false).save
       end
 
       context 'when the user is not authenticated' do

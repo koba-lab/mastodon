@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
-RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
+RSpec.describe Api::V1::Admin::AccountsController do
   render_views
 
-  let(:role)   { 'moderator' }
+  let(:role)   { UserRole.find_by(name: 'Moderator') }
   let(:user)   { Fabricate(:user, role: role) }
   let(:scopes) { 'admin:read admin:write' }
   let(:token)  { Fabricate(:accessible_access_token, resource_owner_id: user.id, scopes: scopes) }
@@ -11,22 +13,6 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
 
   before do
     allow(controller).to receive(:doorkeeper_token) { token }
-  end
-
-  shared_examples 'forbidden for wrong scope' do |wrong_scope|
-    let(:scopes) { wrong_scope }
-
-    it 'returns http forbidden' do
-      expect(response).to have_http_status(403)
-    end
-  end
-
-  shared_examples 'forbidden for wrong role' do |wrong_role|
-    let(:role) { wrong_role }
-
-    it 'returns http forbidden' do
-      expect(response).to have_http_status(403)
-    end
   end
 
   describe 'GET #index' do
@@ -46,7 +32,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
     end
 
     it_behaves_like 'forbidden for wrong scope', 'write:statuses'
-    it_behaves_like 'forbidden for wrong role', 'user'
+    it_behaves_like 'forbidden for wrong role', ''
 
     [
       [{ active: 'true', local: 'true', staff: 'true' }, [:admin_account]],
@@ -65,7 +51,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
         it "returns the correct accounts (#{expected_results.inspect})" do
           json = body_as_json
 
-          expect(json.map { |a| a[:id].to_i }).to eq (expected_results.map { |symbol| send(symbol).id })
+          expect(json.map { |a| a[:id].to_i }).to eq(expected_results.map { |symbol| send(symbol).id })
         end
       end
     end
@@ -77,7 +63,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
     end
 
     it_behaves_like 'forbidden for wrong scope', 'write:statuses'
-    it_behaves_like 'forbidden for wrong role', 'user'
+    it_behaves_like 'forbidden for wrong role', ''
 
     it 'returns http success' do
       expect(response).to have_http_status(200)
@@ -91,7 +77,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
     end
 
     it_behaves_like 'forbidden for wrong scope', 'write:statuses'
-    it_behaves_like 'forbidden for wrong role', 'user'
+    it_behaves_like 'forbidden for wrong role', ''
 
     it 'returns http success' do
       expect(response).to have_http_status(200)
@@ -118,7 +104,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
     end
 
     it_behaves_like 'forbidden for wrong scope', 'write:statuses'
-    it_behaves_like 'forbidden for wrong role', 'user'
+    it_behaves_like 'forbidden for wrong role', ''
 
     it 'returns http success' do
       expect(response).to have_http_status(200)
@@ -145,7 +131,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
     end
 
     it_behaves_like 'forbidden for wrong scope', 'write:statuses'
-    it_behaves_like 'forbidden for wrong role', 'user'
+    it_behaves_like 'forbidden for wrong role', ''
 
     it 'returns http success' do
       expect(response).to have_http_status(200)
@@ -163,7 +149,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
     end
 
     it_behaves_like 'forbidden for wrong scope', 'write:statuses'
-    it_behaves_like 'forbidden for wrong role', 'user'
+    it_behaves_like 'forbidden for wrong role', ''
 
     it 'returns http success' do
       expect(response).to have_http_status(200)
@@ -181,7 +167,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
     end
 
     it_behaves_like 'forbidden for wrong scope', 'write:statuses'
-    it_behaves_like 'forbidden for wrong role', 'user'
+    it_behaves_like 'forbidden for wrong role', ''
 
     it 'returns http success' do
       expect(response).to have_http_status(200)
@@ -199,7 +185,7 @@ RSpec.describe Api::V1::Admin::AccountsController, type: :controller do
     end
 
     it_behaves_like 'forbidden for wrong scope', 'write:statuses'
-    it_behaves_like 'forbidden for wrong role', 'user'
+    it_behaves_like 'forbidden for wrong role', ''
 
     it 'returns http success' do
       expect(response).to have_http_status(200)
