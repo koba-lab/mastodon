@@ -1,0 +1,91 @@
+---
+# 新しいPostgreSQLサーバーのセットアップ
+
+- name: PostgreSQL 16のインストール
+  apt:
+    name: 
+      - postgresql-16
+      - postgresql-client-16
+      - postgresql-contrib-16
+    state: present
+    update_cache: yes
+
+- name: PostgreSQLサービスの有効化と起動
+  systemd:
+    name: postgresql
+    enabled: yes
+    state: started
+
+- name: PostgreSQL設定の更新
+  lineinfile:
+    path: '/etc/postgresql/16/main/postgresql.conf'
+    regexp: '^{{ item.key }}'
+    line: '{{ item.key }} = {{ item.value }}'
+    state: present
+  loop:
+    - { key: 'listen_addresses', value: "'*'" }
+    - { key: 'max_connections', value: '500' }
+    - { key: 'shared_buffers', value: '{{ (ansible_memtotal_mb * 0.25)|int }}MB' }
+    - { key: 'effective_cache_size', value: '{{ (ansible_memtotal_mb * 0.5)|int }}MB' }
+    - { key: 'work_mem', value: '{{ (ansible_memtotal_mb * 0.05)|int }}MB' }
+    - { key: 'maintenance_work_mem', value: '{{ (ansible_memtotal_mb * 0.05)|int }}MB' }
+  notify: restart postgresql
+
+- name: pg_hba.confの設定
+  lineinfile:
+    path: '/etc/postgresql/16/main/pg_hba.conf'
+    line: "{{ item }}"
+    state: present
+  loop:
+    - "host all all 0.0.0.0/0 md5"
+    - "host all all ::/0 md5"
+  notify: restart postgresql
+
+- name: データベースユーザーの作成
+  postgresql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+    role_attr_flags: CREATEDB,SUPERUSER
+  become: true
+  become_user: postgres
+
+- name: データベースの作成
+  postgresql_db:
+    name: "{{ db_name }}"
+    owner: "{{ db_user }}"
+    encoding: UTF8
+    lc_collate: "ja_JP.UTF-8"
+    lc_ctype: "ja_JP.UTF-8"
+    template: template0
+  become: true
+  become_user: postgres
+
+- name: 論理レプリケーションのサブスクリプション設定（オプション）
+  postgresql_query:
+    db: "{{ db_name }}"
+    query: >
+      CREATE SUBSCRIPTION mastodon_sub 
+      CONNECTION 'host={{ hostvars[groups['postgresql_servers'][0]]['private_ip'] }} 
+                 dbname={{ db_name }} 
+                 user={{ db_user }} 
+                 password={{ db_password }}' 
+      PUBLICATION mastodon_pub;
+  become: true
+  become_user: postgres
+  register: create_subscription
+  failed_when: create_subscription.failed and "already exists" not in create_subscription.stderr|default('')
+  when: enable_replication | default(false)
+
+- name: レプリケーションの進行状況を確認
+  postgresql_query:
+    db: "{{ db_name }}"
+    query: "SELECT * FROM pg_stat_subscription;"
+  become: true
+  become_user: postgres
+  register: replication_status
+  until: >
+    replication_status.query_result[0].relid == 0 and
+    replication_status.query_result[0].received_lsn == replication_status.query_result[0].latest_end_lsn
+  retries: 60
+  delay: 10
+  when: enable_replication | default(false)
