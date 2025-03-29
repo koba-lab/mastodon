@@ -1,0 +1,27 @@
+# PostgreSQL サーバー
+[postgresql_servers]
+pg01 ansible_host=<PostgreSQLサーバーのIPアドレス> private_ip=<プライベートIPアドレス>
+
+# Webサーバー
+[web_servers]
+web01 ansible_host=<Webサーバー1のIPアドレス> private_ip=<プライベートIPアドレス>
+web02 ansible_host=<Webサーバー2のIPアドレス> private_ip=<プライベートIPアドレス>
+
+# Redisサーバー
+[redis_servers]
+redis01 ansible_host=<RedisサーバーのIPアドレス> private_ip=<プライベートIPアドレス>
+
+# 新しいPostgreSQLサーバー（アップグレード用）
+[new_postgresql_servers]
+pg_new ansible_host=<新PostgreSQLサーバーのIPアドレス> private_ip=<プライベートIPアドレス>
+
+# グループ定義
+[mastodon:children]
+web_servers
+postgresql_servers
+redis_servers
+
+[all:vars]
+ansible_user=mastodon
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_python_interpreter=/usr/bin/python3

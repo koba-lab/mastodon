@@ -1,0 +1,11 @@
+# 本番環境設定例（terraform.tfvarsにコピーして使用）
+conoha_user_name = "your-api-username"
+conoha_tenant_name = "your-tenant-name"
+conoha_password = "your-api-password"
+conoha_region = "tyo1"
+
+image_id = "ubuntu-20.04-amd64"
+flavor_id = "g-4gb"
+network_id = "your-network-id"
+private_network_cidr = "192.168.0.0/24"
+ssh_key_name = "your-ssh-key-name"

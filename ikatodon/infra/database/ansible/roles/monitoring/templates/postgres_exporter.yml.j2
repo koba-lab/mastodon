@@ -1,0 +1,50 @@
+# PostgreSQL Exporter設定
+# {{ ansible_managed }}
+
+DATA_SOURCE_NAME: "postgresql://{{ db_user }}:{{ db_password }}@localhost:5432/{{ db_name }}?sslmode=disable"
+
+# クエリ設定
+queries:
+  - name: "pg_stat_activity"
+    query: "SELECT count(*) as count, state FROM pg_stat_activity GROUP BY state"
+    metrics:
+      - count:
+          usage: "GAUGE"
+          description: "Number of connections in this state"
+      - state:
+          usage: "LABEL"
+          description: "Connection state"
+
+  - name: "pg_stat_database"
+    query: "SELECT datname, xact_commit, xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted FROM pg_stat_database WHERE datname != 'template0' AND datname != 'template1'"
+    metrics:
+      - datname:
+          usage: "LABEL"
+          description: "Database name"
+      - xact_commit:
+          usage: "COUNTER"
+          description: "Number of transactions committed"
+      - xact_rollback:
+          usage: "COUNTER"
+          description: "Number of transactions rolled back"
+      - blks_read:
+          usage: "COUNTER"
+          description: "Number of disk blocks read"
+      - blks_hit:
+          usage: "COUNTER"
+          description: "Number of buffer hits"
+      - tup_returned:
+          usage: "COUNTER"
+          description: "Number of rows returned"
+      - tup_fetched:
+          usage: "COUNTER"
+          description: "Number of rows fetched"
+      - tup_inserted:
+          usage: "COUNTER"
+          description: "Number of rows inserted"
+      - tup_updated:
+          usage: "COUNTER"
+          description: "Number of rows updated"
+      - tup_deleted:
+          usage: "COUNTER"
+          description: "Number of rows deleted"

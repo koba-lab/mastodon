@@ -1,0 +1,50 @@
+---
+# ダンプ/リストアを使用したPostgreSQLアップグレード
+- name: バックアップディレクトリの作成
+  file:
+    path: '{{ backup_dir }}'
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: 0700
+
+- name: データベースのダンプ作成
+  become: true
+  become_user: postgres
+  shell: |
+    pg_dump -Fc -U postgres {{ db_name }} > {{ backup_dir }}/{{ backup_filename }}
+  delegate_to: "{{ groups['postgresql_servers'][0] }}"
+  args:
+    creates: '{{ backup_dir }}/{{ backup_filename }}'
+
+- name: バックアップファイルの転送
+  synchronize:
+    src: '{{ backup_dir }}/{{ backup_filename }}'
+    dest: '{{ backup_dir }}/{{ backup_filename }}'
+    mode: pull
+  delegate_to: "{{ groups['postgresql_servers'][0] }}"
+
+- name: 新しいPostgreSQLでデータベースとユーザーの作成
+  become: true
+  become_user: postgres
+  shell: |
+    dropdb --if-exists {{ db_name }}
+    createdb -T template0 {{ db_name }}
+    psql -c "CREATE USER {{ db_user }} WITH PASSWORD '{{ db_password }}';" postgres
+    psql -c "ALTER USER {{ db_user }} WITH SUPERUSER;" postgres
+  register: create_db
+  failed_when: create_db.rc != 0 and "already exists" not in create_db.stderr
+
+- name: データベースのリストア
+  become: true
+  become_user: postgres
+  shell: |
+    pg_restore -U postgres -d {{ db_name }} --no-owner --role={{ db_user }} {{ backup_dir }}/{{ backup_filename }}
+  register: restore_result
+  failed_when: restore_result.rc > 1
+
+- name: スーパーユーザー権限の削除
+  become: true
+  become_user: postgres
+  shell: |
+    psql -c "ALTER USER {{ db_user }} WITH NOSUPERUSER;" postgres

@@ -1,0 +1,43 @@
+---
+# バックアップタスク
+- name: バックアップディレクトリの作成
+  file:
+    path: '{{ backup_dir }}'
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: 0700
+
+- name: バックアップスクリプトの作成
+  template:
+    src: backup_postgresql.sh.j2
+    dest: /usr/local/bin/backup_postgresql.sh
+    owner: root
+    group: root
+    mode: 0755
+
+- name: cronジョブの設定
+  cron:
+    name: 'PostgreSQLバックアップ'
+    user: postgres
+    job: '/usr/local/bin/backup_postgresql.sh'
+    hour: '1'
+    minute: '0'
+    state: present
+
+- name: バックアップローテーションスクリプトの作成
+  template:
+    src: rotate_backups.sh.j2
+    dest: /usr/local/bin/rotate_backups.sh
+    owner: root
+    group: root
+    mode: 0755
+
+- name: バックアップローテーションのcronジョブ設定
+  cron:
+    name: 'PostgreSQLバックアップローテーション'
+    user: root
+    job: '/usr/local/bin/rotate_backups.sh'
+    hour: '2'
+    minute: '0'
+    state: present

@@ -1,0 +1,84 @@
+---
+# 共通タスク
+- name: システムパッケージの更新
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: 必要なパッケージのインストール
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - python3
+      - python3-pip
+      - python3-psycopg2
+      - htop
+      - iotop
+      - sysstat
+      - net-tools
+      - vim
+      - tmux
+      - rsync
+      - ufw
+    state: present
+
+- name: タイムゾーンの設定
+  timezone:
+    name: Asia/Tokyo
+
+- name: ホスト名の設定
+  hostname:
+    name: '{{ inventory_hostname }}'
+
+- name: ファイアウォールの設定
+  ufw:
+    rule: allow
+    port: '{{ item }}'
+    proto: tcp
+  loop:
+    - 22
+    - 80
+    - 443
+    - 5432
+  when: inventory_hostname in groups['postgresql_servers'] or inventory_hostname in groups['new_postgresql_servers']
+
+- name: ファイアウォールの有効化
+  ufw:
+    state: enabled
+    policy: deny
+
+- name: スワップ設定の最適化
+  sysctl:
+    name: '{{ item.key }}'
+    value: '{{ item.value }}'
+    state: present
+    reload: yes
+  loop:
+    - { key: 'vm.swappiness', value: '10' }
+    - { key: 'vm.dirty_ratio', value: '80' }
+    - { key: 'vm.dirty_background_ratio', value: '5' }
+
+- name: システムリミットの設定
+  pam_limits:
+    domain: '*'
+    limit_type: '{{ item.type }}'
+    limit_item: '{{ item.item }}'
+    value: '{{ item.value }}'
+  loop:
+    - { type: 'soft', item: 'nofile', value: '65536' }
+    - { type: 'hard', item: 'nofile', value: '65536' }
+    - { type: 'soft', item: 'nproc', value: '65536' }
+    - { type: 'hard', item: 'nproc', value: '65536' }
+
+- name: SSHの設定
+  template:
+    src: sshd_config.j2
+    dest: /etc/ssh/sshd_config
+    owner: root
+    group: root
+    mode: 0644
+  notify: restart ssh

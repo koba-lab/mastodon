@@ -1,0 +1,46 @@
+---
+# Mastodonアプリケーション連携タスク
+- name: Mastodonユーザーの存在確認
+  user:
+    name: '{{ mastodon_user }}'
+    state: present
+    shell: /bin/bash
+    home: '{{ mastodon_home }}'
+  check_mode: yes
+  register: mastodon_user_check
+  failed_when: false
+
+- name: Mastodonディレクトリの存在確認
+  stat:
+    path: '{{ mastodon_live_dir }}'
+  register: mastodon_dir_check
+
+- name: Mastodonの.env.productionファイルの存在確認
+  stat:
+    path: '{{ mastodon_live_dir }}/.env.production'
+  register: env_file_check
+  when: mastodon_dir_check.stat.exists
+
+- name: データベース接続設定の更新
+  lineinfile:
+    path: '{{ mastodon_live_dir }}/.env.production'
+    regexp: '^DB_HOST='
+    line: "DB_HOST={{ hostvars[groups['new_postgresql_servers'][0]]['private_ip'] }}"
+  when: env_file_check.stat.exists | default(false)
+
+- name: データベースポート設定の更新
+  lineinfile:
+    path: '{{ mastodon_live_dir }}/.env.production'
+    regexp: '^DB_PORT='
+    line: 'DB_PORT=5432'
+  when: env_file_check.stat.exists | default(false)
+
+- name: Mastodonサービスの再起動
+  systemd:
+    name: '{{ item }}'
+    state: restarted
+  loop:
+    - mastodon-web
+    - mastodon-sidekiq
+    - mastodon-streaming
+  when: env_file_check.stat.exists | default(false)

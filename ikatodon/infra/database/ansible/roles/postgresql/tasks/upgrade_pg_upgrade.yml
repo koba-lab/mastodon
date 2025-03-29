@@ -1,0 +1,50 @@
+---
+# pg_upgradeを使用したPostgreSQLアップグレード
+- name: 古いPostgreSQLサービスの停止
+  systemd:
+    name: '{{ postgresql_service_old }}'
+    state: stopped
+  delegate_to: "{{ groups['postgresql_servers'][0] }}"
+
+- name: 新しいPostgreSQLサービスの停止
+  systemd:
+    name: '{{ postgresql_service_new }}'
+    state: stopped
+
+- name: pg_upgradeの実行
+  become: true
+  become_user: postgres
+  shell: |
+    {{ postgresql_bin_dir_new }}/pg_upgrade \
+    --old-datadir={{ postgresql_data_dir_old }} \
+    --new-datadir={{ postgresql_data_dir_new }} \
+    --old-bindir={{ postgresql_bin_dir_old }} \
+    --new-bindir={{ postgresql_bin_dir_new }} \
+    --old-options "-c config_file={{ postgresql_conf_dir_old }}/postgresql.conf" \
+    --new-options "-c config_file={{ postgresql_conf_dir_new }}/postgresql.conf" \
+    --link
+  args:
+    chdir: /tmp
+    creates: '{{ postgresql_data_dir_new }}/PG_VERSION'
+
+- name: 新しいPostgreSQLサービスの起動
+  systemd:
+    name: '{{ postgresql_service_new }}'
+    state: started
+    enabled: yes
+
+- name: 最適化スクリプトの実行
+  become: true
+  become_user: postgres
+  shell: ./analyze_new_cluster.sh
+  args:
+    chdir: /tmp
+    creates: /tmp/analyze_new_cluster.log
+
+- name: 古いクラスタの削除スクリプトの保存
+  copy:
+    src: /tmp/delete_old_cluster.sh
+    dest: /root/delete_old_cluster.sh
+    remote_src: yes
+    mode: 0700
+  when: ansible_check_mode == false

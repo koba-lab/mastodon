@@ -1,0 +1,69 @@
+---
+# モニタリングタスク
+- name: Prometheusリポジトリの追加
+  apt_repository:
+    repo: 'deb https://packagecloud.io/prometheus-rpm/release/ubuntu/ {{ ansible_distribution_release }} main'
+    state: present
+    filename: prometheus
+  when: prometheus_node_exporter_enabled | bool
+
+- name: Prometheusリポジトリキーの追加
+  apt_key:
+    url: https://packagecloud.io/prometheus-rpm/release/gpgkey
+    state: present
+  when: prometheus_node_exporter_enabled | bool
+
+- name: Node Exporterのインストール
+  apt:
+    name: prometheus-node-exporter
+    state: present
+    update_cache: yes
+  when: prometheus_node_exporter_enabled | bool
+
+- name: Node Exporterサービスの有効化と起動
+  systemd:
+    name: prometheus-node-exporter
+    enabled: yes
+    state: started
+  when: prometheus_node_exporter_enabled | bool
+
+- name: PostgreSQL Exporterのインストール
+  apt:
+    name: prometheus-postgres-exporter
+    state: present
+  when: postgres_exporter_enabled | bool and (inventory_hostname in groups['postgresql_servers'] or inventory_hostname in groups['new_postgresql_servers'])
+
+- name: PostgreSQL Exporter設定ファイルの作成
+  template:
+    src: postgres_exporter.yml.j2
+    dest: /etc/prometheus-postgres-exporter/postgres_exporter.yml
+    owner: postgres
+    group: postgres
+    mode: 0600
+  when: postgres_exporter_enabled | bool and (inventory_hostname in groups['postgresql_servers'] or inventory_hostname in groups['new_postgresql_servers'])
+  notify: restart postgres_exporter
+
+- name: PostgreSQL Exporterサービスの有効化と起動
+  systemd:
+    name: prometheus-postgres-exporter
+    enabled: yes
+    state: started
+  when: postgres_exporter_enabled | bool and (inventory_hostname in groups['postgresql_servers'] or inventory_hostname in groups['new_postgresql_servers'])
+
+- name: モニタリングスクリプトの作成
+  template:
+    src: monitor_postgresql.sh.j2
+    dest: /usr/local/bin/monitor_postgresql.sh
+    owner: root
+    group: root
+    mode: 0755
+  when: inventory_hostname in groups['postgresql_servers'] or inventory_hostname in groups['new_postgresql_servers']
+
+- name: モニタリングcronジョブの設定
+  cron:
+    name: 'PostgreSQLモニタリング'
+    user: root
+    job: '/usr/local/bin/monitor_postgresql.sh'
+    minute: '*/5'
+    state: present
+  when: inventory_hostname in groups['postgresql_servers'] or inventory_hostname in groups['new_postgresql_servers']

@@ -1,0 +1,17 @@
+# PostgreSQL {{ postgresql_version }} クライアント認証設定
+# {{ ansible_managed }}
+
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+
+# "local" is for Unix domain socket connections only
+local   all             all                                     peer
+# IPv4 local connections:
+host    all             all             127.0.0.1/32            md5
+# IPv6 local connections:
+host    all             all             ::1/128                 md5
+# Allow from private network
+host    all             all             {{ private_network_cidr }}           md5
+# Allow replication connections
+host    replication     all             127.0.0.1/32            md5
+host    replication     all             ::1/128                 md5
+host    replication     all             {{ private_network_cidr }}           md5

@@ -1,0 +1,11 @@
+---
+# モニタリングハンドラー
+- name: restart postgres_exporter
+  systemd:
+    name: prometheus-postgres-exporter
+    state: restarted
+
+- name: restart node_exporter
+  systemd:
+    name: prometheus-node-exporter
+    state: restarted

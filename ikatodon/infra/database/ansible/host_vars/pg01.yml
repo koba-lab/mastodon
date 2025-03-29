@@ -1,0 +1,18 @@
+---
+# 現在のPostgreSQLサーバー固有の変数
+ansible_host: "{{ lookup('env', 'PG_OLD_IP') | default('192.168.0.5', true) }}"
+private_ip: "{{ lookup('env', 'PG_OLD_PRIVATE_IP') | default('192.168.0.5', true) }}"
+
+# PostgreSQL設定
+postgresql_version: '{{ postgresql_version_old }}'
+postgresql_data_dir: '{{ postgresql_data_dir_old }}'
+postgresql_conf_dir: '{{ postgresql_conf_dir_old }}'
+postgresql_bin_dir: '{{ postgresql_bin_dir_old }}'
+postgresql_service: '{{ postgresql_service_old }}'
+
+# リソース設定
+postgresql_max_connections: 100
+postgresql_shared_buffers_percent: 25
+postgresql_work_mem: '4MB'
+postgresql_maintenance_work_mem_percent: 5
+postgresql_effective_cache_size_percent: 50

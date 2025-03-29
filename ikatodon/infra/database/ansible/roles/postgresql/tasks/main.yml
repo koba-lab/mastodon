@@ -1,0 +1,62 @@
+---
+# PostgreSQLのインストールと設定
+- name: PostgreSQLリポジトリの追加
+  apt_repository:
+    repo: 'deb http://apt.postgresql.org/pub/repos/apt/ {{ ansible_distribution_release }}-pgdg main'
+    state: present
+    filename: pgdg
+
+- name: PostgreSQLリポジトリキーの追加
+  apt_key:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    state: present
+
+- name: パッケージリストの更新
+  apt:
+    update_cache: yes
+
+- name: PostgreSQL {{ postgresql_version }} のインストール
+  apt:
+    name:
+      - postgresql-{{ postgresql_version }}
+      - postgresql-client-{{ postgresql_version }}
+      - postgresql-contrib-{{ postgresql_version }}
+      - libpq-dev
+      - python3-psycopg2
+    state: present
+
+- name: PostgreSQLサービスの有効化と起動
+  systemd:
+    name: 'postgresql@{{ postgresql_version }}-main'
+    enabled: yes
+    state: started
+
+- name: PostgreSQL設定ファイルのバックアップ
+  copy:
+    src: '{{ postgresql_conf_dir }}/{{ item }}'
+    dest: '{{ postgresql_conf_dir }}/{{ item }}.bak'
+    remote_src: yes
+  loop:
+    - postgresql.conf
+    - pg_hba.conf
+  when: ansible_check_mode == false
+
+- name: PostgreSQL設定ファイルの更新
+  template:
+    src: '{{ item }}.j2'
+    dest: '{{ postgresql_conf_dir }}/{{ item }}'
+    owner: postgres
+    group: postgres
+    mode: 0644
+  loop:
+    - postgresql.conf
+    - pg_hba.conf
+  notify: restart postgresql
+
+- name: pg_stat_statementsの有効化
+  lineinfile:
+    path: '{{ postgresql_conf_dir }}/postgresql.conf'
+    line: "shared_preload_libraries = 'pg_stat_statements'"
+    regexp: '^shared_preload_libraries'
+    state: present
+  notify: restart postgresql

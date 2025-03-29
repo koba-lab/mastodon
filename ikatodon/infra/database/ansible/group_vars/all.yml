@@ -1,0 +1,42 @@
+---
+# 共通変数
+mastodon_user: mastodon
+mastodon_home: /home/mastodon
+mastodon_live_dir: '{{ mastodon_home }}/live'
+
+# PostgreSQL設定
+postgresql_version_old: 10
+postgresql_version_new: 16
+postgresql_data_dir_old: /var/lib/postgresql/{{ postgresql_version_old }}/main
+postgresql_data_dir_new: /var/lib/postgresql/{{ postgresql_version_new }}/main
+postgresql_conf_dir_old: /etc/postgresql/{{ postgresql_version_old }}/main
+postgresql_conf_dir_new: /etc/postgresql/{{ postgresql_version_new }}/main
+postgresql_bin_dir_old: /usr/lib/postgresql/{{ postgresql_version_old }}/bin
+postgresql_bin_dir_new: /usr/lib/postgresql/{{ postgresql_version_new }}/bin
+postgresql_service_old: postgresql@{{ postgresql_version_old }}-main
+postgresql_service_new: postgresql@{{ postgresql_version_new }}-main
+
+# データベース設定
+db_name: mastodon_production
+db_user: mastodon
+db_password: '{{ vault_db_password }}'
+db_host: "{{ hostvars[groups['postgresql_servers'][0]]['private_ip'] }}"
+db_port: 5432
+
+# バックアップ設定
+backup_dir: /var/backups/postgresql
+backup_retention: 7
+backup_filename: '{{ db_name }}_{{ ansible_date_time.date }}.dump'
+
+# アップグレード設定
+max_downtime_minutes: 10
+maintenance_mode: true
+upgrade_method: pg_upgrade # pg_upgrade, logical_replication, or dump_restore
+
+# モニタリング設定
+monitoring_enabled: true
+prometheus_node_exporter_enabled: true
+postgres_exporter_enabled: true
+
+# ネットワーク設定
+private_network_cidr: 192.168.0.0/24

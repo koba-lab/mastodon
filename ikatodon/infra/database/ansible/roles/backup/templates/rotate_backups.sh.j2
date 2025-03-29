@@ -1,0 +1,14 @@
+#!/bin/bash
+# PostgreSQLバックアップローテーションスクリプト
+# {{ ansible_managed }}
+
+# 変数
+BACKUP_DIR="{{ backup_dir }}"
+RETENTION_DAYS="{{ backup_retention }}"
+
+# 古いバックアップファイルの削除
+find "$BACKUP_DIR" -name "*.dump" -type f -mtime +$RETENTION_DAYS -delete
+find "$BACKUP_DIR" -name "backup_*.log" -type f -mtime +$RETENTION_DAYS -delete
+
+echo "$(date): $RETENTION_DAYS日以上経過したバックアップファイルを削除しました。" >> "$BACKUP_DIR/rotation.log"
+exit 0

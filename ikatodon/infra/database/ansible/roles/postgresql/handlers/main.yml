@@ -1,0 +1,17 @@
+---
+# PostgreSQLハンドラー
+- name: restart postgresql
+  systemd:
+    name: 'postgresql@{{ postgresql_version }}-main'
+    state: restarted
+
+- name: restart postgresql old
+  systemd:
+    name: '{{ postgresql_service_old }}'
+    state: restarted
+  delegate_to: "{{ groups['postgresql_servers'][0] }}"
+
+- name: restart postgresql new
+  systemd:
+    name: '{{ postgresql_service_new }}'
+    state: restarted

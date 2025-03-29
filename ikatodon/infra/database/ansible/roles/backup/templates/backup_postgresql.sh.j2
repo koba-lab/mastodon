@@ -1,0 +1,34 @@
+#!/bin/bash
+# PostgreSQLバックアップスクリプト
+# {{ ansible_managed }}
+
+# 変数
+BACKUP_DIR="{{ backup_dir }}"
+DB_NAME="{{ db_name }}"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="${BACKUP_DIR}/${DB_NAME}_${DATE}.dump"
+LOG_FILE="${BACKUP_DIR}/backup_${DATE}.log"
+
+# バックアップディレクトリの確認
+if [ ! -d "$BACKUP_DIR" ]; then
+  mkdir -p "$BACKUP_DIR"
+  chown postgres:postgres "$BACKUP_DIR"
+  chmod 700 "$BACKUP_DIR"
+fi
+
+# バックアップの実行
+echo "PostgreSQLバックアップ開始: $(date)" > "$LOG_FILE"
+pg_dump -Fc -U postgres "$DB_NAME" > "$BACKUP_FILE" 2>> "$LOG_FILE"
+
+# 結果の確認
+if [ $? -eq 0 ]; then
+  echo "バックアップ成功: $BACKUP_FILE" >> "$LOG_FILE"
+  # バックアップファイルの権限設定
+  chmod 600 "$BACKUP_FILE"
+else
+  echo "バックアップ失敗" >> "$LOG_FILE"
+  exit 1
+fi
+
+echo "PostgreSQLバックアップ完了: $(date)" >> "$LOG_FILE"
+exit 0

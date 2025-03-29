@@ -1,0 +1,78 @@
+#!/bin/bash
+# PostgreSQLモニタリングスクリプト
+# {{ ansible_managed }}
+
+# 変数
+LOG_DIR="/var/log/postgresql-monitor"
+DATE=$(date +%Y%m%d_%H%M%S)
+LOG_FILE="${LOG_DIR}/monitor_${DATE}.log"
+ALERT_THRESHOLD_CONNECTIONS=100
+ALERT_THRESHOLD_DISK_USAGE=80
+ALERT_THRESHOLD_CPU_USAGE=90
+ALERT_THRESHOLD_MEMORY_USAGE=90
+
+# ログディレクトリの確認
+if [ ! -d "$LOG_DIR" ]; then
+  mkdir -p "$LOG_DIR"
+  chmod 755 "$LOG_DIR"
+fi
+
+# ヘッダー
+echo "PostgreSQLモニタリングレポート - $(date)" > "$LOG_FILE"
+echo "----------------------------------------" >> "$LOG_FILE"
+
+# システムリソース
+echo "## システムリソース" >> "$LOG_FILE"
+echo "CPU使用率: $(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%" >> "$LOG_FILE"
+echo "メモリ使用率: $(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2}')%" >> "$LOG_FILE"
+echo "ディスク使用率: $(df -h / | awk 'NR==2{print $5}')%" >> "$LOG_FILE"
+echo "ロード平均: $(uptime | awk -F'load average:' '{print $2}')" >> "$LOG_FILE"
+echo "" >> "$LOG_FILE"
+
+# PostgreSQL接続数
+echo "## PostgreSQL接続数" >> "$LOG_FILE"
+su - postgres -c "psql -c 'SELECT count(*) AS connections FROM pg_stat_activity;'" >> "$LOG_FILE" 2>&1
+echo "" >> "$LOG_FILE"
+
+# データベースサイズ
+echo "## データベースサイズ" >> "$LOG_FILE"
+su - postgres -c "psql -c 'SELECT pg_database.datname, pg_size_pretty(pg_database_size(pg_database.datname)) AS size FROM pg_database ORDER BY pg_database_size(pg_database.datname) DESC;'" >> "$LOG_FILE" 2>&1
+echo "" >> "$LOG_FILE"
+
+# テーブルサイズ
+echo "## 最大テーブルサイズ（上位5件）" >> "$LOG_FILE"
+su - postgres -c "psql -d {{ db_name }} -c \"SELECT table_schema, table_name, pg_size_pretty(pg_total_relation_size(table_schema || '.' || table_name)) AS total_size FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY pg_total_relation_size(table_schema || '.' || table_name) DESC LIMIT 5;\"" >> "$LOG_FILE" 2>&1
+echo "" >> "$LOG_FILE"
+
+# スロークエリ
+echo "## スロークエリ（直近10件）" >> "$LOG_FILE"
+su - postgres -c "psql -d {{ db_name }} -c \"SELECT query, calls, total_time, mean_time, max_time FROM pg_stat_statements ORDER BY total_time DESC LIMIT 10;\"" >> "$LOG_FILE" 2>&1
+echo "" >> "$LOG_FILE"
+
+# アラート
+echo "## アラート" >> "$LOG_FILE"
+CONNECTIONS=$(su - postgres -c "psql -t -c 'SELECT count(*) FROM pg_stat_activity;'" | tr -d ' ')
+DISK_USAGE=$(df -h / | awk 'NR==2{print $5}' | tr -d '%')
+CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')
+MEMORY_USAGE=$(free -m | awk 'NR==2{printf "%.0f", $3*100/$2}')
+
+if [ "$CONNECTIONS" -gt "$ALERT_THRESHOLD_CONNECTIONS" ]; then
+  echo "警告: 接続数が閾値を超えています ($CONNECTIONS > $ALERT_THRESHOLD_CONNECTIONS)" >> "$LOG_FILE"
+fi
+
+if [ "$DISK_USAGE" -gt "$ALERT_THRESHOLD_DISK_USAGE" ]; then
+  echo "警告: ディスク使用率が閾値を超えています ($DISK_USAGE% > $ALERT_THRESHOLD_DISK_USAGE%)" >> "$LOG_FILE"
+fi
+
+if [ "$CPU_USAGE" -gt "$ALERT_THRESHOLD_CPU_USAGE" ]; then
+  echo "警告: CPU使用率が閾値を超えています ($CPU_USAGE% > $ALERT_THRESHOLD_CPU_USAGE%)" >> "$LOG_FILE"
+fi
+
+if [ "$MEMORY_USAGE" -gt "$ALERT_THRESHOLD_MEMORY_USAGE" ]; then
+  echo "警告: メモリ使用率が閾値を超えています ($MEMORY_USAGE% > $ALERT_THRESHOLD_MEMORY_USAGE%)" >> "$LOG_FILE"
+fi
+
+# ログローテーション（30日以上経過したログを削除）
+find "$LOG_DIR" -name "monitor_*.log" -type f -mtime +30 -delete
+
+exit 0
