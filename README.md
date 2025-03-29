@@ -30,6 +30,7 @@ Click below to **learn more** in a video:
 - [Official Docker image](https://github.com/mastodon/mastodon/pkgs/container/mastodon)
 - [Browse Mastodon servers](https://joinmastodon.org/communities)
 - [Browse Mastodon apps](https://joinmastodon.org/apps)
+- [Community forums](https://discourse.joinmastodon.org)
 
 [patreon]: https://www.patreon.com/mastodon
 
