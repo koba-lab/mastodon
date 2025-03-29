@@ -1,61 +1,52 @@
 ---
-# 論理レプリケーションを使用したPostgreSQLアップグレード
-- name: 古いPostgreSQLの設定更新（レプリケーション用）
-  lineinfile:
-    path: '{{ postgresql_conf_dir_old }}/postgresql.conf'
-    regexp: '^{{ item.key }}'
-    line: '{{ item.key }} = {{ item.value }}'
-    state: present
-  loop:
-    - { key: 'wal_level', value: 'logical' }
-    - { key: 'max_wal_senders', value: '10' }
-    - { key: 'max_replication_slots', value: '10' }
-  delegate_to: "{{ groups['postgresql_servers'][0] }}"
-  notify: restart postgresql old
+# PostgreSQL 16サーバーでのレプリケーション設定
+# 注: このファイルは新サーバー側の設定のみを含みます
 
-- name: レプリケーション用のpg_hba.conf設定
-  lineinfile:
-    path: '{{ postgresql_conf_dir_old }}/pg_hba.conf'
-    line: "host replication {{ db_user }} {{ hostvars[groups['new_postgresql_servers'][0]]['private_ip'] }}/32 md5"
-    state: present
-  delegate_to: "{{ groups['postgresql_servers'][0] }}"
-  notify: restart postgresql old
-
-- name: パブリケーションの作成
+- name: データベースユーザーの作成
+  postgresql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+    role_attr_flags: CREATEDB,SUPERUSER
   become: true
   become_user: postgres
-  shell: |
-    psql -c "CREATE PUBLICATION mastodon_pub FOR ALL TABLES;" {{ db_name }}
-  delegate_to: "{{ groups['postgresql_servers'][0] }}"
-  register: create_publication
-  failed_when: create_publication.rc != 0 and "already exists" not in create_publication.stderr
 
-- name: 新しいPostgreSQLでデータベースとユーザーの作成
+- name: データベースの作成
+  postgresql_db:
+    name: "{{ db_name }}"
+    owner: "{{ db_user }}"
+    encoding: UTF8
+    lc_collate: "ja_JP.UTF-8"
+    lc_ctype: "ja_JP.UTF-8"
+    template: template0
   become: true
   become_user: postgres
-  shell: |
-    psql -c "CREATE USER {{ db_user }} WITH PASSWORD '{{ db_password }}';"
-    psql -c "CREATE DATABASE {{ db_name }} OWNER {{ db_user }};"
-  register: create_db
-  failed_when: create_db.rc != 0 and "already exists" not in create_db.stderr
 
 - name: サブスクリプションの作成
+  postgresql_query:
+    db: "{{ db_name }}"
+    query: >
+      CREATE SUBSCRIPTION mastodon_sub 
+      CONNECTION 'host={{ hostvars[groups['postgresql_servers'][0]]['private_ip'] }} 
+                 dbname={{ db_name }} 
+                 user={{ db_user }} 
+                 password={{ db_password }}' 
+      PUBLICATION mastodon_pub;
   become: true
   become_user: postgres
-  shell: |
-    psql -c "CREATE SUBSCRIPTION mastodon_sub CONNECTION 'host={{ hostvars[groups['postgresql_servers'][0]]['private_ip'] }} dbname={{ db_name }} user={{ db_user }} password={{ db_password }}' PUBLICATION mastodon_pub;" {{ db_name }}
   register: create_subscription
-  failed_when: create_subscription.rc != 0 and "already exists" not in create_subscription.stderr
+  failed_when: create_subscription.failed and "already exists" not in create_subscription.stderr|default('')
+  when: enable_replication | default(false)
 
 - name: レプリケーションの進行状況を確認
+  postgresql_query:
+    db: "{{ db_name }}"
+    query: "SELECT * FROM pg_stat_subscription;"
   become: true
   become_user: postgres
-  shell: |
-    psql -c "SELECT * FROM pg_stat_subscription;" {{ db_name }}
   register: replication_status
   until: >
-    replication_status.stdout.splitlines()[2].split('|')[3].strip() == '0' and
-    replication_status.stdout.splitlines()[2].split('|')[4].strip() == '0' and
-    replication_status.stdout.splitlines()[2].split('|')[5].strip() == '0'
+    replication_status.query_result[0].relid == 0 and
+    replication_status.query_result[0].received_lsn == replication_status.query_result[0].latest_end_lsn
   retries: 60
   delay: 10
+  when: enable_replication | default(false)
