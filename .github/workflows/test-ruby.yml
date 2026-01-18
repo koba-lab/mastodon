@@ -307,7 +307,6 @@ jobs:
           - '3.2'
           - '3.3'
           - '.ruby-version'
-          - '3.3'
 
     steps:
       - uses: actions/checkout@v4
