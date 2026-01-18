@@ -6,7 +6,7 @@ services:
       dockerfile: .devcontainer/Dockerfile
     volumes:
       - ..:/workspaces/mastodon:cached
-      - home-data:/home/vscode
+      - root-data:/root
     environment:
       RAILS_ENV: development
       NODE_ENV: development
@@ -88,7 +88,7 @@ volumes:
   redis-data:
   es-data:
   lt-data:
-  home-data:
+  root-data:
 
 networks:
   external_network:
