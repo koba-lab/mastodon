@@ -4,7 +4,7 @@ require 'csv'
 
 module Admin
   class ExportDomainAllowsController < BaseController
-    include AdminExportControllerConcern
+    include Admin::ExportControllerConcern
 
     before_action :set_dummy_import!, only: [:new]
 
@@ -49,8 +49,8 @@ module Admin
 
     def export_data
       CSV.generate(headers: export_headers, write_headers: true) do |content|
-        DomainAllow.allowed_domains.each do |instance|
-          content << [instance.domain]
+        DomainAllow.allowed_domains.each do |domain|
+          content << [domain]
         end
       end
     end

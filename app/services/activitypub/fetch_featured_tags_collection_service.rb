@@ -45,7 +45,7 @@ class ActivityPub::FetchFeaturedTagsCollectionService < BaseService
     return collection_or_uri if collection_or_uri.is_a?(Hash)
     return if non_matching_uri_hosts?(@account.uri, collection_or_uri)
 
-    fetch_resource_without_id_validation(collection_or_uri, local_follower, true)
+    fetch_resource_without_id_validation(collection_or_uri, local_follower, raise_on_error: :temporary)
   end
 
   def process_items(items)
@@ -55,7 +55,7 @@ class ActivityPub::FetchFeaturedTagsCollectionService < BaseService
 
     FeaturedTag.includes(:tag).references(:tag).where(account: @account).where.not(tag: { name: normalized_names }).delete_all
 
-    FeaturedTag.includes(:tag).references(:tag).where(account: @account, tag: { name: normalized_names }).each do |featured_tag|
+    FeaturedTag.includes(:tag).references(:tag).where(account: @account, tag: { name: normalized_names }).find_each do |featured_tag|
       featured_tag.update(name: tags.delete(featured_tag.tag.name))
     end
 

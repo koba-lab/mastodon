@@ -10,7 +10,8 @@ import ImmutablePropTypes from 'react-immutable-proptypes';
 import { supportsPassiveEvents } from 'detect-passive-events';
 import Overlay from 'react-overlays/Overlay';
 
-import { assetHost } from 'mastodon/utils/config';
+import MoodIcon from '@/material-icons/400-20px/mood.svg?react';
+import { IconButton } from 'mastodon/components/icon_button';
 
 import { buildCustomEmojis, categoriesFromEmojis } from '../../emoji/emoji';
 import { EmojiPicker as EmojiPickerAsync } from '../../ui/util/async-components';
@@ -35,16 +36,11 @@ let EmojiPicker, Emoji; // load asynchronously
 
 const listenerOptions = supportsPassiveEvents ? { passive: true, capture: true } : true;
 
-const backgroundImageFn = () => `${assetHost}/emoji/sheet_13.png`;
-
 const notFoundFn = () => (
   <div className='emoji-mart-no-results'>
     <Emoji
       emoji='sleuth_or_spy'
-      set='twitter'
       size={32}
-      sheetSize={32}
-      backgroundImageFn={backgroundImageFn}
     />
 
     <div className='emoji-mart-no-results-label'>
@@ -65,7 +61,7 @@ class ModifierPickerMenu extends PureComponent {
     this.props.onSelect(e.currentTarget.getAttribute('data-index') * 1);
   };
 
-  UNSAFE_componentWillReceiveProps (nextProps) {
+  UNSAFE_componentWillReceiveProps(nextProps) {
     if (nextProps.active) {
       this.attachListeners();
     } else {
@@ -73,7 +69,7 @@ class ModifierPickerMenu extends PureComponent {
     }
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     this.removeListeners();
   }
 
@@ -83,12 +79,12 @@ class ModifierPickerMenu extends PureComponent {
     }
   };
 
-  attachListeners () {
+  attachListeners() {
     document.addEventListener('click', this.handleDocumentClick, { capture: true });
     document.addEventListener('touchend', this.handleDocumentClick, listenerOptions);
   }
 
-  removeListeners () {
+  removeListeners() {
     document.removeEventListener('click', this.handleDocumentClick, { capture: true });
     document.removeEventListener('touchend', this.handleDocumentClick, listenerOptions);
   }
@@ -97,17 +93,17 @@ class ModifierPickerMenu extends PureComponent {
     this.node = c;
   };
 
-  render () {
+  render() {
     const { active } = this.props;
 
     return (
       <div className='emoji-picker-dropdown__modifiers__menu' style={{ display: active ? 'block' : 'none' }} ref={this.setRef}>
-        <button type='button' onClick={this.handleClick} data-index={1}><Emoji emoji='fist' set='twitter' size={22} sheetSize={32} skin={1} backgroundImageFn={backgroundImageFn} /></button>
-        <button type='button' onClick={this.handleClick} data-index={2}><Emoji emoji='fist' set='twitter' size={22} sheetSize={32} skin={2} backgroundImageFn={backgroundImageFn} /></button>
-        <button type='button' onClick={this.handleClick} data-index={3}><Emoji emoji='fist' set='twitter' size={22} sheetSize={32} skin={3} backgroundImageFn={backgroundImageFn} /></button>
-        <button type='button' onClick={this.handleClick} data-index={4}><Emoji emoji='fist' set='twitter' size={22} sheetSize={32} skin={4} backgroundImageFn={backgroundImageFn} /></button>
-        <button type='button' onClick={this.handleClick} data-index={5}><Emoji emoji='fist' set='twitter' size={22} sheetSize={32} skin={5} backgroundImageFn={backgroundImageFn} /></button>
-        <button type='button' onClick={this.handleClick} data-index={6}><Emoji emoji='fist' set='twitter' size={22} sheetSize={32} skin={6} backgroundImageFn={backgroundImageFn} /></button>
+        <button type='button' onClick={this.handleClick} data-index={1}><Emoji emoji='fist' size={22} skin={1} /></button>
+        <button type='button' onClick={this.handleClick} data-index={2}><Emoji emoji='fist' size={22} skin={2} /></button>
+        <button type='button' onClick={this.handleClick} data-index={3}><Emoji emoji='fist' size={22} skin={3} /></button>
+        <button type='button' onClick={this.handleClick} data-index={4}><Emoji emoji='fist' size={22} skin={4} /></button>
+        <button type='button' onClick={this.handleClick} data-index={5}><Emoji emoji='fist' size={22} skin={5} /></button>
+        <button type='button' onClick={this.handleClick} data-index={6}><Emoji emoji='fist' size={22} skin={6} /></button>
       </div>
     );
   }
@@ -137,12 +133,12 @@ class ModifierPicker extends PureComponent {
     this.props.onClose();
   };
 
-  render () {
+  render() {
     const { active, modifier } = this.props;
 
     return (
       <div className='emoji-picker-dropdown__modifiers'>
-        <Emoji emoji='fist' set='twitter' size={22} sheetSize={32} skin={modifier} onClick={this.handleClick} backgroundImageFn={backgroundImageFn} />
+        <Emoji emoji='fist' size={22} skin={modifier} onClick={this.handleClick} />
         <ModifierPickerMenu active={active} onSelect={this.handleSelect} onClose={this.props.onClose} />
       </div>
     );
@@ -162,6 +158,7 @@ class EmojiPickerMenuImpl extends PureComponent {
     intl: PropTypes.object.isRequired,
     skinTone: PropTypes.number.isRequired,
     onSkinTone: PropTypes.func.isRequired,
+    pickerButtonRef: PropTypes.func.isRequired
   };
 
   static defaultProps = {
@@ -176,12 +173,12 @@ class EmojiPickerMenuImpl extends PureComponent {
   };
 
   handleDocumentClick = e => {
-    if (this.node && !this.node.contains(e.target)) {
+    if (this.node && !this.node.contains(e.target) && !this.props.pickerButtonRef.contains(e.target)) {
       this.props.onClose();
     }
   };
 
-  componentDidMount () {
+  componentDidMount() {
     document.addEventListener('click', this.handleDocumentClick, { capture: true });
     document.addEventListener('touchend', this.handleDocumentClick, listenerOptions);
 
@@ -196,7 +193,7 @@ class EmojiPickerMenuImpl extends PureComponent {
     });
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     document.removeEventListener('click', this.handleDocumentClick, { capture: true });
     document.removeEventListener('touchend', this.handleDocumentClick, listenerOptions);
   }
@@ -231,6 +228,7 @@ class EmojiPickerMenuImpl extends PureComponent {
       emoji.native = emoji.colons;
     }
     if (!(event.ctrlKey || event.metaKey)) {
+
       this.props.onClose();
     }
     this.props.onPick(emoji);
@@ -248,7 +246,7 @@ class EmojiPickerMenuImpl extends PureComponent {
     this.props.onSkinTone(modifier);
   };
 
-  render () {
+  render() {
     const { loading, style, intl, custom_emojis, skinTone, frequentlyUsedEmojis } = this.props;
 
     if (loading) {
@@ -278,11 +276,9 @@ class EmojiPickerMenuImpl extends PureComponent {
         <EmojiPicker
           perLine={8}
           emojiSize={22}
-          sheetSize={32}
           custom={buildCustomEmojis(custom_emojis)}
           color=''
           emoji=''
-          set='twitter'
           title={title}
           i18n={this.getI18n()}
           onClick={this.handleClick}
@@ -291,7 +287,6 @@ class EmojiPickerMenuImpl extends PureComponent {
           skin={skinTone}
           showPreview={false}
           showSkinTones={false}
-          backgroundImageFn={backgroundImageFn}
           notFound={notFoundFn}
           autoFocus={this.state.readyToFocus}
           emojiTooltip
@@ -321,12 +316,12 @@ class EmojiPickerDropdown extends PureComponent {
     onPickEmoji: PropTypes.func.isRequired,
     onSkinTone: PropTypes.func.isRequired,
     skinTone: PropTypes.number.isRequired,
-    button: PropTypes.node,
   };
 
   state = {
     active: false,
     loading: false,
+    placement: 'bottom',
   };
 
   setRef = (c) => {
@@ -341,7 +336,7 @@ class EmojiPickerDropdown extends PureComponent {
 
       EmojiPickerAsync().then(EmojiMart => {
         EmojiPicker = EmojiMart.Picker;
-        Emoji       = EmojiMart.Emoji;
+        Emoji = EmojiMart.Emoji;
 
         this.setState({ loading: false });
       }).catch(() => {
@@ -378,24 +373,29 @@ class EmojiPickerDropdown extends PureComponent {
     return this.target;
   };
 
-  render () {
-    const { intl, onPickEmoji, onSkinTone, skinTone, frequentlyUsedEmojis, button } = this.props;
+  handleOverlayEnter = (state) => {
+    this.setState({ placement: state.placement });
+  };
+
+  render() {
+    const { intl, onPickEmoji, onSkinTone, skinTone, frequentlyUsedEmojis } = this.props;
     const title = intl.formatMessage(messages.emoji);
-    const { active, loading } = this.state;
+    const { active, loading, placement } = this.state;
 
     return (
-      <div className='emoji-picker-dropdown' onKeyDown={this.handleKeyDown}>
-        <div ref={this.setTargetRef} className='emoji-button' title={title} aria-label={title} aria-expanded={active} role='button' onClick={this.onToggle} onKeyDown={this.onToggle} tabIndex={0}>
-          {button || <img
-            className={classNames('emojione', { 'pulse-loading': active && loading })}
-            alt='🙂'
-            src={`${assetHost}/emoji/1f642.svg`}
-          />}
-        </div>
+      <div className='emoji-picker-dropdown' onKeyDown={this.handleKeyDown} ref={this.setTargetRef}>
+        <IconButton
+          title={title}
+          aria-expanded={active}
+          active={active}
+          iconComponent={MoodIcon}
+          onClick={this.onToggle}
+          inverted
+        />
 
-        <Overlay show={active} placement={'bottom'} target={this.findTarget} popperConfig={{ strategy: 'fixed' }}>
-          {({ props, placement })=> (
-            <div {...props} style={{ ...props.style, width: 299 }}>
+        <Overlay show={active} placement={placement} flip target={this.findTarget} popperConfig={{ strategy: 'fixed', onFirstUpdate: this.handleOverlayEnter }}>
+          {({ props, placement }) => (
+            <div {...props} style={{ ...props.style }}>
               <div className={`dropdown-animation ${placement}`}>
                 <EmojiPickerMenu
                   custom_emojis={this.props.custom_emojis}
@@ -405,6 +405,7 @@ class EmojiPickerDropdown extends PureComponent {
                   onSkinTone={onSkinTone}
                   skinTone={skinTone}
                   frequentlyUsedEmojis={frequentlyUsedEmojis}
+                  pickerButtonRef={this.target}
                 />
               </div>
             </div>

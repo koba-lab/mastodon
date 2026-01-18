@@ -20,6 +20,7 @@ module Mastodon::CLI
     option :import, type: :boolean, default: true, desc: 'Import data from the database to the index'
     option :clean, type: :boolean, default: true, desc: 'Remove outdated documents from the index'
     option :reset_chewy, type: :boolean, default: false, desc: "Reset Chewy's internal index"
+    option :only_mapping, type: :boolean, default: false, desc: 'Update the index specification without re-index'
     desc 'deploy', 'Create or upgrade Elasticsearch indices and populate them'
     long_desc <<~LONG_DESC
       If Elasticsearch is empty, this command will create the necessary indices
@@ -42,9 +43,29 @@ module Mastodon::CLI
 
       pool      = Concurrent::FixedThreadPool.new(options[:concurrency], max_queue: options[:concurrency] * 10)
       importers = indices.index_with { |index| "Importer::#{index.name}Importer".constantize.new(batch_size: options[:batch_size], executor: pool) }
-      progress  = ProgressBar.create(total: nil, format: '%t%c/%u |%b%i| %e (%r docs/s)', autofinish: false)
+      progress  = ProgressBar.create(
+        {
+          total: nil,
+          format: '%t%c/%u |%b%i| %e (%r docs/s)',
+          autofinish: false,
+        }.merge(progress_output_options)
+      )
 
       Chewy::Stash::Specification.reset! if options[:reset_chewy]
+
+      if options[:only_mapping]
+        indices.select { |index| index.specification.changed? }.each do |index|
+          progress.title = "Updating mapping for #{index} "
+          index.update_specification
+          index.specification.lock!
+        end
+
+        progress.title = 'Done! '
+        progress.finish
+
+        say('Updated index mappings', :green, true)
+        return
+      end
 
       # First, ensure all indices are created and have the correct
       # structure, so that live data can already be written
@@ -94,6 +115,14 @@ module Mastodon::CLI
       progress.finish
 
       say("Indexed #{added} records, de-indexed #{removed}", :green, true)
+    rescue Elasticsearch::Transport::Transport::ServerError => e
+      fail_with_message <<~ERROR
+        There was an issue connecting to the search server. Make sure the
+        server is configured and running correctly, and that the environment
+        variable settings match what the server is expecting.
+
+        #{e.message}
+      ERROR
     end
 
     private
@@ -104,17 +133,15 @@ module Mastodon::CLI
     end
 
     def verify_deploy_concurrency!
-      return unless options[:concurrency] < 1
-
-      say('Cannot run with this concurrency setting, must be at least 1', :red)
-      exit(1)
+      fail_with_message 'Cannot run with this concurrency setting, must be at least 1' if options[:concurrency] < 1
     end
 
     def verify_deploy_batch_size!
-      return unless options[:batch_size] < 1
+      fail_with_message 'Cannot run with this batch_size setting, must be at least 1' if options[:batch_size] < 1
+    end
 
-      say('Cannot run with this batch_size setting, must be at least 1', :red)
-      exit(1)
+    def progress_output_options
+      Rails.env.test? ? { output: ProgressBar::Outputs::Null } : {}
     end
   end
 end

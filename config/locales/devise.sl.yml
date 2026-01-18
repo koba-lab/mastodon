@@ -7,11 +7,13 @@ sl:
       send_paranoid_instructions: Če vaš e-poštni naslov obstaja v naši zbirki podatkov, boste v nekaj minutah prejeli e-poštno sporočilo z navodili za potrditev vašega e-poštnega naslova. Če niste prejeli e-poštnega sporočila, preverite mapo neželena pošta.
     failure:
       already_authenticated: Ste že prijavljeni.
+      closed_registrations: Vaš poskus registracije je blokiran zaradi omrežnih pravil. Če ste mnenja, da gre za napako, stopite v stik s/z %{email}.
       inactive: Vaš račun še ni aktiviran.
       invalid: Neveljavno %{authentication_keys} ali geslo.
       last_attempt: Pred zaklepom računa imate še en poskus.
       locked: Vaš račun je zaklenjen.
       not_found_in_database: Neveljavno %{authentication_keys} ali geslo.
+      omniauth_user_creation_failure: Napaka pri ustvarjanju računa za to identiteto.
       pending: Vaš račun je še vedno pod drobnogledom.
       timeout: Vaša seja je potekla. Če želite nadaljevati, se znova prijavite.
       unauthenticated: Pred nadaljevanjem se morate prijaviti ali vpisati.
@@ -47,16 +49,19 @@ sl:
         subject: 'Mastodon: navodila za ponastavitev gesla'
         title: Ponastavitev gesla
       two_factor_disabled:
-        explanation: Dvojno oz. dvofazno preverjanje pristnosti je za vaš račun onemogočeno. Prijava je zdaj možna le z e-poštnim naslovom in geslom.
+        explanation: Prijava je sedaj mogoče le z uporabo e-poštnega naslova in gesla.
         subject: 'Mastodon: dvojno preverjanje pristnosti je onemogočeno'
+        subtitle: Dvo-faktorsko preverjanje pristnosti za vaš račun je bilo onemogočeno.
         title: 2FA onemogočeno
       two_factor_enabled:
-        explanation: Dvojno oz. dvofazno preverjanje pristnosti je za vaš račun omogočeno. Žeton, izdelan z aplikacijo TOTP, bo zahtevan zs prijavo.
+        explanation: Za prijavo bo zahtevan žeton, ustvarjen s povezano aplikacijo TOTP.
         subject: 'Mastodon: dvojno preverjanje pristnosti je omogočeno'
+        subtitle: Dvo-faktorsko preverjanje pristnosti za vaš račun je bilo omogočeno.
         title: 2FA omogočeno
       two_factor_recovery_codes_changed:
         explanation: Prejšnje obnovitvene kode so postale neveljavne in ustvarjene so bile nove.
         subject: 'Mastodon: varnostne obnovitvene kode za dvojno preverjanje pristnosti so ponovno izdelane'
+        subtitle: Prejšnje kode za obnovitev so bile razveljavljene, ustvarjene pa so bile nove.
         title: obnovitvene kode 2FA spremenjene
       unlock_instructions:
         subject: 'Mastodon: navodila za odklepanje'
@@ -70,11 +75,13 @@ sl:
           subject: 'Mastodon: varnostna koda izbrisana'
           title: Ena od vaših varnostnih kod je bila izbrisana
       webauthn_disabled:
-        explanation: Overjanje pristnosti z varnostnimi kodami je za vaš račun onemogočeno. Prijava je zdaj možna le z uporabo žetona, ki ga izdela oparjena aplikacija TOTP.
+        explanation: Preverjanje pristnosti z varnostnimi ključi za vaš račun je bilo onemogočeno.
+        extra: Prijava je sedaj mogoče le z uporabo žetona, ustvarjenega s povezano aplikacijo TOTP.
         subject: 'Mastodon: overjanje pristnosti z varnosnimi kodami je onemogočeno'
         title: Varnostne kode onemogočene
       webauthn_enabled:
-        explanation: Overjanje z varnostno kodo je za vaš račun omogočeno. Svojo varnostno kodo lahko zdaj uporabite za prijavo.
+        explanation: Preverjanje pristnosti z varnostnimi ključi za vaš račun je bilo omogočeno.
+        extra: Za prijavo sedaj lahko uporabite svoj varnostni ključ.
         subject: 'Mastodon: preverjanje pristnosti z varnostno kodo je omogočeno'
         title: Varnostne kode omogočene
     omniauth_callbacks:
@@ -88,11 +95,6 @@ sl:
       updated_not_active: Vaše geslo je bilo uspešno spremenjeno.
     registrations:
       destroyed: Srečno! Vaš račun je bil uspešno preklican. Upamo, da vas bomo kmalu spet videli.
-      signed_up: Dobrodošli! Uspešno ste se vpisali.
-      signed_up_but_inactive: Uspešno ste se vpisali. Vendar vas nismo mogli prijaviti, ker vaš račun še ni aktiviran.
-      signed_up_but_locked: Uspešno ste se vpisali. Vendar vas nismo mogli prijaviti, ker je vaš račun zaklenjen.
-      signed_up_but_pending: Na vaš e-poštni naslov je bilo poslano sporočilo s povezavo za potrditev. Ko kliknete povezavo, bomo pregledali vašo prijavo. Obveščeni boste, če bo odobrena.
-      signed_up_but_unconfirmed: Na vaš e-poštni naslov je bilo poslano sporočilo s povezavo za potrditev. Sledite povezavi, da aktivirate svoj račun. Če niste prejeli te e-pošte, preverite mapo z neželeno pošto.
       update_needs_confirmation: Uspešno ste posodobili račun, vendar moramo potrditi vaš novi e-poštni naslov. Preverite svojo e-pošto in sledite povezavi za potrditev, da potrdite nov e-poštni naslov. Če niste prejeli te e-pošte, preverite mapo z neželeno pošto.
       updated: Vaš račun je bil uspešno posodobljen.
     sessions:

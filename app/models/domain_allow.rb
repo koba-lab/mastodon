@@ -17,8 +17,6 @@ class DomainAllow < ApplicationRecord
 
   validates :domain, presence: true, uniqueness: true, domain: true
 
-  scope :matches_domain, ->(value) { where(arel_table[:domain].matches("%#{value}%")) }
-
   def to_log_human_identifier
     domain
   end
@@ -29,7 +27,7 @@ class DomainAllow < ApplicationRecord
     end
 
     def allowed_domains
-      select(:domain)
+      pluck(:domain)
     end
 
     def rule_for(domain)

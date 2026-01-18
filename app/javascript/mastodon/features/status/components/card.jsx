@@ -7,11 +7,16 @@ import { FormattedMessage } from 'react-intl';
 
 import classNames from 'classnames';
 
-import Immutable from 'immutable';
+
+import { is } from 'immutable';
 import ImmutablePropTypes from 'react-immutable-proptypes';
 
+import DescriptionIcon from '@/material-icons/400-24px/description-fill.svg?react';
+import OpenInNewIcon from '@/material-icons/400-24px/open_in_new.svg?react';
+import PlayArrowIcon from '@/material-icons/400-24px/play_arrow-fill.svg?react';
 import { Blurhash } from 'mastodon/components/blurhash';
 import { Icon }  from 'mastodon/components/icon';
+import { MoreFromAuthor } from 'mastodon/components/more_from_author';
 import { RelativeTimestamp } from 'mastodon/components/relative_timestamp';
 import { useBlurhash } from 'mastodon/initial_state';
 
@@ -32,18 +37,23 @@ const getHostname = url => {
 
 const domParser = new DOMParser();
 
-const addAutoPlay = html => {
+const handleIframeUrl = (html, url, providerName) => {
   const document = domParser.parseFromString(html, 'text/html').documentElement;
   const iframe = document.querySelector('iframe');
+  const startTime = new URL(url).searchParams.get('t')
 
   if (iframe) {
-    if (iframe.src.indexOf('?') !== -1) {
-      iframe.src += '&';
-    } else {
-      iframe.src += '?';
+    const iframeUrl = new URL(iframe.src)
+
+    iframeUrl.searchParams.set('autoplay', 1)
+    iframeUrl.searchParams.set('auto_play', 1)
+
+    if (providerName === 'YouTube') {
+      iframeUrl.searchParams.set('start', startTime || '');
+      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     }
 
-    iframe.src += 'autoplay=1&auto_play=1';
+    iframe.src = iframeUrl.href
 
     // DOM parser creates html/body elements around original HTML fragment,
     // so we need to get innerHTML out of the body and not the entire document
@@ -68,7 +78,7 @@ export default class Card extends PureComponent {
   };
 
   UNSAFE_componentWillReceiveProps (nextProps) {
-    if (!Immutable.is(this.props.card, nextProps.card)) {
+    if (!is(this.props.card, nextProps.card)) {
       this.setState({ embedded: false, previewLoaded: false });
     }
 
@@ -89,6 +99,10 @@ export default class Card extends PureComponent {
     this.setState({ embedded: true });
   };
 
+  handleExternalLinkClick = (e) => {
+    e.stopPropagation();
+  };
+
   setRef = c => {
     this.node = c;
   };
@@ -105,7 +119,7 @@ export default class Card extends PureComponent {
 
   renderVideo () {
     const { card } = this.props;
-    const content = { __html: addAutoPlay(card.get('html')) };
+    const content = { __html: handleIframeUrl(card.get('html'), card.get('url'), card.get('provider_name')) };
 
     return (
       <div
@@ -129,9 +143,10 @@ export default class Card extends PureComponent {
     const interactive = card.get('type') === 'video';
     const language    = card.get('language') || '';
     const largeImage  = (card.get('image')?.length > 0 && card.get('width') > card.get('height')) || interactive;
+    const showAuthor  = !!card.getIn(['authors', 0, 'accountId']);
 
     const description = (
-      <div className='status-card__content'>
+      <div className='status-card__content' dir='auto'>
         <span className='status-card__host'>
           <span lang={language}>{provider}</span>
           {card.get('published_at') && <> · <RelativeTimestamp timestamp={card.get('published_at')} /></>}
@@ -139,7 +154,7 @@ export default class Card extends PureComponent {
 
         <strong className='status-card__title' title={card.get('title')} lang={language}>{card.get('title')}</strong>
 
-        {card.get('author_name').length > 0 ? <span className='status-card__author'><FormattedMessage id='link_preview.author' defaultMessage='By {name}' values={{ name: <strong>{card.get('author_name')}</strong> }} /></span> : <span className='status-card__description'>{card.get('description')}</span>}
+        {!showAuthor && (card.get('author_name').length > 0 ? <span className='status-card__author'><FormattedMessage id='link_preview.author' defaultMessage='By {name}' values={{ name: <strong>{card.get('author_name')}</strong> }} /></span> : <span className='status-card__description' lang={language}>{card.get('description')}</span>)}
       </div>
     );
 
@@ -197,8 +212,8 @@ export default class Card extends PureComponent {
             {revealed ? (
               <div className='status-card__actions' onClick={this.handleEmbedClick} role='none'>
                 <div>
-                  <button type='button' onClick={this.handleEmbedClick}><Icon id='play' /></button>
-                  <a href={card.get('url')} target='_blank' rel='noopener noreferrer'><Icon id='external-link' /></a>
+                  <button type='button' onClick={this.handleEmbedClick}><Icon id='play' icon={PlayArrowIcon} /></button>
+                  <a href={card.get('url')} onClick={this.handleExternalLinkClick} target='_blank' rel='noopener'><Icon id='external-link' icon={OpenInNewIcon} /></a>
                 </div>
               </div>
             ) : spoilerButton}
@@ -209,7 +224,7 @@ export default class Card extends PureComponent {
       return (
         <div className={classNames('status-card', { expanded: largeImage })} ref={this.setRef} onClick={revealed ? null : this.handleReveal} role={revealed ? 'button' : null}>
           {embed}
-          <a href={card.get('url')} target='_blank' rel='noopener noreferrer'>{description}</a>
+          <a href={card.get('url')} target='_blank' rel='noopener'>{description}</a>
         </div>
       );
     } else if (card.get('image')) {
@@ -222,16 +237,20 @@ export default class Card extends PureComponent {
     } else {
       embed = (
         <div className='status-card__image'>
-          <Icon id='file-text' />
+          <Icon id='file-text' icon={DescriptionIcon} />
         </div>
       );
     }
 
     return (
-      <a href={card.get('url')} className={classNames('status-card', { expanded: largeImage })} target='_blank' rel='noopener noreferrer' ref={this.setRef}>
-        {embed}
-        {description}
-      </a>
+      <>
+        <a href={card.get('url')} className={classNames('status-card', { expanded: largeImage, bottomless: showAuthor })} target='_blank' rel='noopener' ref={this.setRef}>
+          {embed}
+          {description}
+        </a>
+
+        {showAuthor && <MoreFromAuthor accountId={card.getIn(['authors', 0, 'accountId'])} />}
+      </>
     );
   }
 

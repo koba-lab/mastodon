@@ -16,8 +16,8 @@ class Admin::SystemCheck::ElasticsearchCheck < Admin::SystemCheck::BaseCheck
   def pass?
     return true unless Chewy.enabled?
 
-    running_version.present? && compatible_version? && cluster_health['status'] == 'green' && indexes_match? && preset_matches?
-  rescue Faraday::ConnectionFailed, Elasticsearch::Transport::Transport::Error
+    running_version.present? && compatible_version? && cluster_health['status'] == 'green' && indexes_match? && specifications_match? && preset_matches?
+  rescue Faraday::ConnectionFailed, Elasticsearch::Transport::Transport::Error, HTTPClient::KeepAliveDisconnected
     false
   end
 
@@ -38,6 +38,11 @@ class Admin::SystemCheck::ElasticsearchCheck < Admin::SystemCheck::BaseCheck
         :elasticsearch_index_mismatch,
         mismatched_indexes.join(' ')
       )
+    elsif !specifications_match?
+      Admin::SystemCheck::Message.new(
+        :elasticsearch_analysis_index_mismatch,
+        mismatched_specifications_indexes.join(' ')
+      )
     elsif cluster_health['status'] == 'red'
       Admin::SystemCheck::Message.new(:elasticsearch_health_red)
     elsif cluster_health['number_of_nodes'] < 2 && es_preset != 'single_node_cluster'
@@ -49,7 +54,7 @@ class Admin::SystemCheck::ElasticsearchCheck < Admin::SystemCheck::BaseCheck
     else
       Admin::SystemCheck::Message.new(:elasticsearch_preset, nil, 'https://docs.joinmastodon.org/admin/elasticsearch/#scaling')
     end
-  rescue Faraday::ConnectionFailed, Elasticsearch::Transport::Transport::Error
+  rescue Faraday::ConnectionFailed, Elasticsearch::Transport::Transport::Error, HTTPClient::KeepAliveDisconnected
     Admin::SystemCheck::Message.new(:elasticsearch_running_check)
   end
 
@@ -76,12 +81,33 @@ class Admin::SystemCheck::ElasticsearchCheck < Admin::SystemCheck::BaseCheck
   end
 
   def compatible_version?
-    return false if running_version.nil?
-
-    Gem::Version.new(running_version) >= Gem::Version.new(required_version) ||
-      Gem::Version.new(compatible_wire_version) >= Gem::Version.new(required_version)
+    running_version_ok? || compatible_wire_version_ok?
   rescue ArgumentError
     false
+  end
+
+  def running_version_ok?
+    return false if running_version.blank?
+
+    gem_version_running >= gem_version_required
+  end
+
+  def compatible_wire_version_ok?
+    return false if compatible_wire_version.blank?
+
+    gem_version_compatible_wire >= gem_version_required
+  end
+
+  def gem_version_running
+    Gem::Version.new(running_version)
+  end
+
+  def gem_version_required
+    Gem::Version.new(required_version)
+  end
+
+  def gem_version_compatible_wire
+    Gem::Version.new(compatible_wire_version)
   end
 
   def mismatched_indexes
@@ -90,8 +116,18 @@ class Admin::SystemCheck::ElasticsearchCheck < Admin::SystemCheck::BaseCheck
     end
   end
 
+  def mismatched_specifications_indexes
+    @mismatched_specifications_indexes ||= INDEXES.filter_map do |klass|
+      klass.base_name if klass.specification.changed?
+    end
+  end
+
   def indexes_match?
     mismatched_indexes.empty?
+  end
+
+  def specifications_match?
+    mismatched_specifications_indexes.empty?
   end
 
   def es_preset

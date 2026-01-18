@@ -5,6 +5,7 @@ import { defineMessages, FormattedMessage, injectIntl } from 'react-intl';
 import ImmutablePureComponent from 'react-immutable-pure-component';
 import { connect } from 'react-redux';
 
+import CloseIcon from '@/material-icons/400-24px/close.svg?react';
 import { fetchFilters, createFilter, createFilterStatus } from 'mastodon/actions/filters';
 import { fetchStatus } from 'mastodon/actions/statuses';
 import { IconButton } from 'mastodon/components/icon_button';
@@ -37,7 +38,7 @@ class FilterModal extends ImmutablePureComponent {
 
   handleSuccess = () => {
     const { dispatch, statusId } = this.props;
-    dispatch(fetchStatus(statusId, true));
+    dispatch(fetchStatus(statusId, {forceFetch: true}));
     this.setState({ isSubmitting: false, isSubmitted: true, step: 'submitted' });
   };
 
@@ -120,7 +121,7 @@ class FilterModal extends ImmutablePureComponent {
     return (
       <div className='modal-root__modal report-dialog-modal'>
         <div className='report-modal__target'>
-          <IconButton className='report-modal__close' title={intl.formatMessage(messages.close)} icon='times' onClick={onClose} size={20} />
+          <IconButton className='report-modal__close' title={intl.formatMessage(messages.close)} icon='times' iconComponent={CloseIcon} onClick={onClose} size={20} />
           <FormattedMessage id='filter_modal.title.status' defaultMessage='Filter a post' />
         </div>
 

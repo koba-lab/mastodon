@@ -3,11 +3,11 @@
 module Admin
   class ConfirmationsController < BaseController
     before_action :set_user
-    before_action :check_confirmation, only: [:resend]
+    before_action :redirect_confirmed_user, only: [:resend], if: :user_confirmed?
 
     def create
       authorize @user, :confirm?
-      @user.confirm!
+      @user.mark_email_as_confirmed!
       log_action :confirm, @user
       redirect_to admin_accounts_path
     end
@@ -19,17 +19,17 @@ module Admin
 
       log_action :resend, @user
 
-      flash[:notice] = I18n.t('admin.accounts.resend_confirmation.success')
-      redirect_to admin_accounts_path
+      redirect_to admin_accounts_path, notice: t('admin.accounts.resend_confirmation.success')
     end
 
     private
 
-    def check_confirmation
-      if @user.confirmed?
-        flash[:error] = I18n.t('admin.accounts.resend_confirmation.already_confirmed')
-        redirect_to admin_accounts_path
-      end
+    def redirect_confirmed_user
+      redirect_to admin_accounts_path, flash: { error: t('admin.accounts.resend_confirmation.already_confirmed') }
+    end
+
+    def user_confirmed?
+      @user.confirmed?
     end
   end
 end

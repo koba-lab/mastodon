@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 class Admin::Metrics::Dimension::SpaceUsageDimension < Admin::Metrics::Dimension::BaseDimension
-  include Redisable
   include ActionView::Helpers::NumberHelper
+  include Admin::Metrics::Dimension::StoreHelper
 
   def key
     'space_usage'
@@ -11,7 +11,7 @@ class Admin::Metrics::Dimension::SpaceUsageDimension < Admin::Metrics::Dimension
   protected
 
   def perform_query
-    [postgresql_size, redis_size, media_size]
+    [postgresql_size, redis_size, media_size, search_size].compact
   end
 
   def postgresql_size
@@ -27,25 +27,22 @@ class Admin::Metrics::Dimension::SpaceUsageDimension < Admin::Metrics::Dimension
   end
 
   def redis_size
-    value = redis_info['used_memory']
-
     {
       key: 'redis',
-      human_key: 'Redis',
-      value: value.to_s,
+      human_key: store_name,
+      value: store_size.to_s,
       unit: 'bytes',
-      human_value: number_to_human_size(value),
+      human_value: number_to_human_size(store_size),
     }
   end
 
   def media_size
     value = [
-      MediaAttachment.sum(Arel.sql('COALESCE(file_file_size, 0) + COALESCE(thumbnail_file_size, 0)')),
+      MediaAttachment.sum(MediaAttachment.combined_media_file_size),
       CustomEmoji.sum(:image_file_size),
       PreviewCard.sum(:image_file_size),
       Account.sum(Arel.sql('COALESCE(avatar_file_size, 0) + COALESCE(header_file_size, 0)')),
       Backup.sum(:dump_file_size),
-      Import.sum(:data_file_size),
       SiteUpload.sum(:file_file_size),
     ].sum
 
@@ -58,11 +55,21 @@ class Admin::Metrics::Dimension::SpaceUsageDimension < Admin::Metrics::Dimension
     }
   end
 
-  def redis_info
-    @redis_info ||= if redis.is_a?(Redis::Namespace)
-                      redis.redis.info
-                    else
-                      redis.info
-                    end
+  def search_size
+    return unless Chewy.enabled?
+
+    client_info = Chewy.client.info
+
+    value = Chewy.client.indices.stats['indices'].values.sum { |index_data| index_data['primaries']['store']['size_in_bytes'] }
+
+    {
+      key: 'search',
+      human_key: client_info.dig('version', 'distribution') == 'opensearch' ? 'OpenSearch' : 'Elasticsearch',
+      value: value.to_s,
+      unit: 'bytes',
+      human_value: number_to_human_size(value),
+    }
+  rescue Faraday::ConnectionFailed, Elasticsearch::Transport::Transport::Error
+    nil
   end
 end

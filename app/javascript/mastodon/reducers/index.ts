@@ -1,91 +1,85 @@
-import { Record as ImmutableRecord } from 'immutable';
+import { Record as ImmutableRecord, mergeDeep } from 'immutable';
 
 import { loadingBarReducer } from 'react-redux-loading-bar';
 import { combineReducers } from 'redux-immutable';
 
-import accounts from './accounts';
-import accounts_counters from './accounts_counters';
-import accounts_map from './accounts_map';
-import alerts from './alerts';
+import { accountsReducer } from './accounts';
+import { accountsFamiliarFollowersReducer } from './accounts_familiar_followers';
+import { accountsMapReducer } from './accounts_map';
+import { alertsReducer } from './alerts';
 import announcements from './announcements';
-import blocks from './blocks';
-import boosts from './boosts';
-import compose from './compose';
-import contexts from './contexts';
+import { composeReducer } from './compose';
+import { contextsReducer } from './contexts';
 import conversations from './conversations';
 import custom_emojis from './custom_emojis';
-import domain_lists from './domain_lists';
-import dropdown_menu from './dropdown_menu';
+import { dropdownMenuReducer } from './dropdown_menu';
 import filters from './filters';
-import followed_tags from './followed_tags';
 import height_cache from './height_cache';
 import history from './history';
-import listAdder from './list_adder';
-import listEditor from './list_editor';
-import lists from './lists';
-import markers from './markers';
+import { listsReducer } from './lists';
+import { markersReducer } from './markers';
 import media_attachments from './media_attachments';
 import meta from './meta';
 import { modalReducer } from './modal';
-import mutes from './mutes';
+import { navigationReducer } from './navigation';
+import { notificationGroupsReducer } from './notification_groups';
+import { notificationPolicyReducer } from './notification_policy';
+import { notificationRequestsReducer } from './notification_requests';
 import notifications from './notifications';
-import picture_in_picture from './picture_in_picture';
-import polls from './polls';
+import { pictureInPictureReducer } from './picture_in_picture';
+import { pollsReducer } from './polls';
 import push_notifications from './push_notifications';
-import relationships from './relationships';
-import search from './search';
+import { relationshipsReducer } from './relationships';
+import { searchReducer } from './search';
 import server from './server';
 import settings from './settings';
 import status_lists from './status_lists';
 import statuses from './statuses';
-import suggestions from './suggestions';
-import tags from './tags';
+import { suggestionsReducer } from './suggestions';
+import { followedTagsReducer } from './tags';
 import timelines from './timelines';
 import trends from './trends';
 import user_lists from './user_lists';
 
 const reducers = {
   announcements,
-  dropdown_menu,
+  dropdownMenu: dropdownMenuReducer,
   timelines,
   meta,
-  alerts,
+  alerts: alertsReducer,
   loadingBar: loadingBarReducer,
   modal: modalReducer,
   user_lists,
-  domain_lists,
   status_lists,
-  accounts,
-  accounts_counters,
-  accounts_map,
+  accounts: accountsReducer,
+  accounts_map: accountsMapReducer,
+  accounts_familiar_followers: accountsFamiliarFollowersReducer,
   statuses,
-  relationships,
+  relationships: relationshipsReducer,
   settings,
   push_notifications,
-  mutes,
-  blocks,
-  boosts,
   server,
-  contexts,
-  compose,
-  search,
+  contexts: contextsReducer,
+  compose: composeReducer,
+  search: searchReducer,
   media_attachments,
   notifications,
+  notificationGroups: notificationGroupsReducer,
   height_cache,
   custom_emojis,
-  lists,
-  listEditor,
-  listAdder,
+  lists: listsReducer,
+  followedTags: followedTagsReducer,
   filters,
   conversations,
-  suggestions,
-  polls,
+  suggestions: suggestionsReducer,
+  polls: pollsReducer,
   trends,
-  markers,
-  picture_in_picture,
+  markers: markersReducer,
+  picture_in_picture: pictureInPictureReducer,
   history,
-  tags,
-  followed_tags,
+  notificationPolicy: notificationPolicyReducer,
+  notificationRequests: notificationRequestsReducer,
+  navigation: navigationReducer,
 };
 
 // We want the root state to be an ImmutableRecord, which is an object with a defined list of keys,
@@ -104,6 +98,15 @@ const initialRootState = Object.fromEntries(
 
 const RootStateRecord = ImmutableRecord(initialRootState, 'RootState');
 
-const rootReducer = combineReducers(reducers, RootStateRecord);
+export const rootReducer = combineReducers(reducers, RootStateRecord);
 
-export { rootReducer };
+export function reducerWithInitialState(
+  ...stateOverrides: Record<string, unknown>[]
+) {
+  const initialStateRecord = mergeDeep(initialRootState, ...stateOverrides);
+  const PatchedRootStateRecord = ImmutableRecord(
+    initialStateRecord,
+    'RootState',
+  );
+  return combineReducers(reducers, PatchedRootStateRecord);
+}

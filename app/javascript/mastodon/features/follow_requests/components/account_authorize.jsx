@@ -7,9 +7,13 @@ import { Link } from 'react-router-dom';
 import ImmutablePropTypes from 'react-immutable-proptypes';
 import ImmutablePureComponent from 'react-immutable-pure-component';
 
-import { Avatar } from '../../../components/avatar';
-import { DisplayName } from '../../../components/display_name';
-import { IconButton } from '../../../components/icon_button';
+import CheckIcon from '@/material-icons/400-24px/check.svg?react';
+import CloseIcon from '@/material-icons/400-24px/close.svg?react';
+
+import { Avatar } from '@/mastodon/components/avatar';
+import { DisplayName } from '@/mastodon/components/display_name';
+import { IconButton } from '@/mastodon/components/icon_button';
+import { EmojiHTML } from '@/mastodon/components/emoji/html';
 
 const messages = defineMessages({
   authorize: { id: 'follow_request.authorize', defaultMessage: 'Authorize' },
@@ -19,7 +23,7 @@ const messages = defineMessages({
 class AccountAuthorize extends ImmutablePureComponent {
 
   static propTypes = {
-    account: ImmutablePropTypes.map.isRequired,
+    account: ImmutablePropTypes.record.isRequired,
     onAuthorize: PropTypes.func.isRequired,
     onReject: PropTypes.func.isRequired,
     intl: PropTypes.object.isRequired,
@@ -27,7 +31,6 @@ class AccountAuthorize extends ImmutablePureComponent {
 
   render () {
     const { intl, account, onAuthorize, onReject } = this.props;
-    const content = { __html: account.get('note_emojified') };
 
     return (
       <div className='account-authorize__wrapper'>
@@ -37,12 +40,16 @@ class AccountAuthorize extends ImmutablePureComponent {
             <DisplayName account={account} />
           </Link>
 
-          <div className='account__header__content translate' dangerouslySetInnerHTML={content} />
+          <EmojiHTML
+            className='account__header__content translate'
+            htmlString={account.get('note_emojified')}
+            extraEmojis={account.get('emojis')}
+          />
         </div>
 
         <div className='account--panel'>
-          <div className='account--panel__button'><IconButton title={intl.formatMessage(messages.authorize)} icon='check' onClick={onAuthorize} /></div>
-          <div className='account--panel__button'><IconButton title={intl.formatMessage(messages.reject)} icon='times' onClick={onReject} /></div>
+          <div className='account--panel__button'><IconButton title={intl.formatMessage(messages.authorize)} icon='check' iconComponent={CheckIcon} onClick={onAuthorize} /></div>
+          <div className='account--panel__button'><IconButton title={intl.formatMessage(messages.reject)} icon='times' iconComponent={CloseIcon} onClick={onReject} /></div>
         </div>
       </div>
     );
