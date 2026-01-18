@@ -2,28 +2,28 @@
 # For a containerized local dev environment, see: https://github.com/mastodon/mastodon/blob/main/docs/DEVELOPMENT.md#docker
 
 services:
-  db:
-    restart: always
-    image: postgres:14-alpine
-    shm_size: 256mb
-    networks:
-      - internal_network
-    healthcheck:
-      test: ['CMD', 'pg_isready', '-U', 'postgres']
-    volumes:
-      - ./postgres14:/var/lib/postgresql/data
-    environment:
-      - 'POSTGRES_HOST_AUTH_METHOD=trust'
+  # db:
+  #   restart: always
+  #   image: postgres:14-alpine
+  #   shm_size: 256mb
+  #   networks:
+  #     - internal_network
+  #   healthcheck:
+  #     test: ['CMD', 'pg_isready', '-U', 'postgres']
+  #   volumes:
+  #     - ./postgres14:/var/lib/postgresql/data
+  #   environment:
+  #     - 'POSTGRES_HOST_AUTH_METHOD=trust'
 
-  redis:
-    restart: always
-    image: redis:7-alpine
-    networks:
-      - internal_network
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-    volumes:
-      - ./redis:/data
+  # redis:
+  #   restart: always
+  #   image: redis:7-alpine
+  #   networks:
+  #     - internal_network
+  #   healthcheck:
+  #     test: ['CMD', 'redis-cli', 'ping']
+  #   volumes:
+  #     - ./redis:/data
 
   # es:
   #   restart: always
@@ -57,9 +57,8 @@ services:
   #     - '127.0.0.1:9200:9200'
 
   web:
-    # You can uncomment the following line if you want to not use the prebuilt image, for example if you have local code changes
-    # build: .
-    image: ghcr.io/mastodon/mastodon:v4.5.4
+    build: .
+    image: ghcr.io/koba-lab/ikatodon:v4.5.4
     restart: always
     env_file: .env.production
     command: bundle exec puma -C config/puma.rb
@@ -68,22 +67,21 @@ services:
       - internal_network
     healthcheck:
       # prettier-ignore
-      test: ['CMD-SHELL',"curl -s --noproxy localhost localhost:3000/health | grep -q 'OK' || exit 1"]
+      test: [ 'CMD-SHELL', "curl -s --noproxy localhost localhost:3000/health | grep -q 'OK' || exit 1" ]
     ports:
       - '127.0.0.1:3000:3000'
-    depends_on:
-      - db
-      - redis
-      # - es
+    # depends_on:
+    #   - db
+    #   - redis
+    #   # - es
     volumes:
       - ./public/system:/mastodon/public/system
 
   streaming:
-    # You can uncomment the following lines if you want to not use the prebuilt image, for example if you have local code changes
-    # build:
-    #   dockerfile: ./streaming/Dockerfile
-    #   context: .
-    image: ghcr.io/mastodon/mastodon-streaming:v4.5.4
+    build:
+      dockerfile: ./streaming/Dockerfile
+      context: .
+    image: ghcr.io/koba-lab/ikatodon-streaming:v4.5.4
     restart: always
     env_file: .env.production
     command: node ./streaming/index.js
@@ -92,31 +90,29 @@ services:
       - internal_network
     healthcheck:
       # prettier-ignore
-      test: ['CMD-SHELL', "curl -s --noproxy localhost localhost:4000/api/v1/streaming/health | grep -q 'OK' || exit 1"]
+      test: [ 'CMD-SHELL', "curl -s --noproxy localhost localhost:4000/api/v1/streaming/health | grep -q 'OK' || exit 1" ]
     ports:
       - '127.0.0.1:4000:4000'
-    depends_on:
-      - db
-      - redis
+    # depends_on:
+    #   - db
+    #   - redis
 
   sidekiq:
-    # You can uncomment the following line if you want to not use the prebuilt image, for example if you have local code changes
-    # build: .
-    image: ghcr.io/mastodon/mastodon:v4.5.4
+    build: .
+    image: ghcr.io/koba-lab/ikatodon:v4.5.4
     restart: always
     env_file: .env.production
     command: bundle exec sidekiq
-    depends_on:
-      - db
-      - redis
+    # depends_on:
+    #   - db
+    #   - redis
     networks:
       - external_network
       - internal_network
     volumes:
       - ./public/system:/mastodon/public/system
     healthcheck:
-      test: ['CMD-SHELL', "ps aux | grep '[s]idekiq\ 8' || false"]
-
+      test: [ 'CMD-SHELL', "ps aux | grep '[s]idekiq 8' || false" ]
   ## Uncomment to enable federation with tor instances along with adding the following ENV variables
   ## http_hidden_proxy=http://privoxy:8118
   ## ALLOW_ACCESS_TO_HIDDEN_SERVICE=true
