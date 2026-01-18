@@ -7,6 +7,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ../..:/workspaces:cached
+      - home-data:/home/vscode
     environment:
       RAILS_ENV: development
       NODE_ENV: development
@@ -83,6 +84,7 @@ volumes:
   redis-data:
   es-data:
   lt-data:
+  home-data:
 
 networks:
   external_network:
