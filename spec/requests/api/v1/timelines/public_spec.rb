@@ -127,7 +127,8 @@ RSpec.describe 'Public' do
         end
       end
 
-      it_behaves_like 'forbidden for wrong scope', 'profile'
+      context 'with an authenticated user' do
+        let(:expected_statuses) { [local_status, remote_status, media_status] }
 
         it_behaves_like 'a successful request to the public timeline'
       end

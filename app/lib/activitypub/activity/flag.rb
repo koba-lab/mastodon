@@ -42,8 +42,4 @@ class ActivityPub::Activity::Flag < ActivityPub::Activity
   def report_comment
     (@json['content'] || '')[0...COMMENT_SIZE_LIMIT]
   end
-
-  def report_comment
-    (@json['content'] || '')[0...5000]
-  end
 end

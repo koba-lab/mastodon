@@ -51,9 +51,9 @@ class ActivityPub::FetchRepliesService < BaseService
   def collection_page_items(collection)
     case collection['type']
     when 'Collection', 'CollectionPage'
-      as_array(collection['items'])
+      collection['items']
     when 'OrderedCollection', 'OrderedCollectionPage'
-      as_array(collection['orderedItems'])
+      collection['orderedItems']
     end
   end
 

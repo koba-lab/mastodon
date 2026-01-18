@@ -40,16 +40,6 @@ class REST::AccountSerializer < ActiveModel::Serializer
 
   has_many :roles, serializer: RoleSerializer, if: :local?
 
-  class AccountDecorator < SimpleDelegator
-    def self.model_name
-      Account.model_name
-    end
-
-    def moved?
-      false
-    end
-  end
-
   class FieldSerializer < ActiveModel::Serializer
     include FormattingHelper
 

@@ -1,8 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call,
-                  @typescript-eslint/no-unsafe-return,
-                  @typescript-eslint/no-unsafe-assignment,
-                  @typescript-eslint/no-unsafe-member-access
-                  -- the settings store is not yet typed */
 import type { PropsWithChildren } from 'react';
 import { useCallback, useState, useEffect } from 'react';
 

@@ -101,14 +101,6 @@ RSpec.describe User do
         expect(described_class.matches_ip('2160:2160::/32')).to contain_exactly(user1)
       end
     end
-
-    def exceed_duration_window_days
-      described_class::ACTIVE_DURATION + 2.days
-    end
-
-    def within_duration_window_days
-      described_class::ACTIVE_DURATION - 2.days
-    end
   end
 
   describe 'email domains denylist integration' do

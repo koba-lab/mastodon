@@ -164,8 +164,6 @@ class Status extends ImmutablePureComponent {
 
   componentDidMount () {
     attachFullscreenListener(this.onFullScreenChange);
-
-    this._scrollStatusIntoView();
   }
 
   UNSAFE_componentWillReceiveProps (nextProps) {
@@ -271,13 +269,13 @@ class Status extends ImmutablePureComponent {
           // Error handling - could show error message
         });
     } else {
-      dispatch(openModal({
-        modalType: 'CONFIRM_DELETE_STATUS',
-        modalProps: {
-          statusId: status.get('id'),
+      dispatch(openModal({ 
+        modalType: 'CONFIRM_DELETE_STATUS', 
+        modalProps: { 
+          statusId: status.get('id'), 
           withRedraft,
           onDeleteSuccess: handleDeleteSuccess
-        }
+        } 
       }));
     }
   };
@@ -495,18 +493,10 @@ class Status extends ImmutablePureComponent {
     // Only highlight replies after the initial load
     if (prevProps.descendantsIds.length && isSameStatus) {
       const newRepliesIds = difference(descendantsIds, prevProps.descendantsIds);
-
+      
       if (newRepliesIds.length) {
         this.setState({newRepliesIds});
       }
-    }
-  }
-
-  componentDidUpdate (prevProps) {
-    const { status, ancestorsIds } = this.props;
-
-    if (status && (ancestorsIds.size > prevProps.ancestorsIds.size || prevProps.status?.get('id') !== status.get('id'))) {
-      this._scrollStatusIntoView();
     }
   }
 
@@ -636,7 +626,7 @@ class Status extends ImmutablePureComponent {
             </Hotkeys>
 
             {descendants}
-
+            
             <RefreshController
               isLocal={isLocal}
               statusId={status.get('id')}

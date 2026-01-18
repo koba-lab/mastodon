@@ -199,9 +199,9 @@ const Firehose = ({ feedType, multiColumn }) => {
             <FormattedMessage tagName='div' id='firehose.local' defaultMessage='This server' />
           </NavLink>
 
-        <NavLink exact to='/public/remote'>
-          <FormattedMessage tagName='div' id='firehose.remote' defaultMessage='Other servers' />
-        </NavLink>
+          <NavLink exact to='/public/remote'>
+            <FormattedMessage tagName='div' id='firehose.remote' defaultMessage='Other servers' />
+          </NavLink>
 
           <NavLink exact to='/public'>
             <FormattedMessage tagName='div' id='firehose.all' defaultMessage='All' />
@@ -216,16 +216,6 @@ const Firehose = ({ feedType, multiColumn }) => {
         trackScroll
         scrollKey='firehose'
         emptyMessage={canViewSelectedFeed ? emptyMessage : disabledTimelineMessage}
-        bindToDocument={!multiColumn}
-      />
-
-      <StatusListContainer
-        prepend={prependBanner}
-        timelineId={`${feedType}${onlyMedia ? ':media' : ''}`}
-        onLoadMore={handleLoadMore}
-        trackScroll
-        scrollKey='firehose'
-        emptyMessage={emptyMessage}
         bindToDocument={!multiColumn}
       />
 
