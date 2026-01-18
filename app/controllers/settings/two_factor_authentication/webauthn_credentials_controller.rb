@@ -3,10 +3,11 @@
 module Settings
   module TwoFactorAuthentication
     class WebauthnCredentialsController < BaseController
+      skip_before_action :check_self_destruct!
       skip_before_action :require_functional!
 
-      before_action :require_otp_enabled
-      before_action :require_webauthn_enabled, only: [:index, :destroy]
+      before_action :redirect_invalid_otp, unless: -> { current_user.otp_enabled? }
+      before_action :redirect_invalid_webauthn, only: [:index, :destroy], unless: -> { current_user.webauthn_enabled? }
 
       def index; end
       def new; end
@@ -51,7 +52,7 @@ module Settings
             end
           else
             flash[:error] = I18n.t('webauthn_credentials.create.error')
-            status = :unprocessable_entity
+            status = :unprocessable_content
           end
         else
           flash[:error] = t('webauthn_credentials.create.error')
@@ -84,18 +85,12 @@ module Settings
 
       private
 
-      def require_otp_enabled
-        unless current_user.otp_enabled?
-          flash[:error] = t('webauthn_credentials.otp_required')
-          redirect_to settings_two_factor_authentication_methods_path
-        end
+      def redirect_invalid_otp
+        redirect_to settings_two_factor_authentication_methods_path, flash: { error: t('webauthn_credentials.otp_required') }
       end
 
-      def require_webauthn_enabled
-        unless current_user.webauthn_enabled?
-          flash[:error] = t('webauthn_credentials.not_enabled')
-          redirect_to settings_two_factor_authentication_methods_path
-        end
+      def redirect_invalid_webauthn
+        redirect_to settings_two_factor_authentication_methods_path, flash: { error: t('webauthn_credentials.not_enabled') }
       end
     end
   end

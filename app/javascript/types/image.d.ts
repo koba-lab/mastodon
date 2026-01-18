@@ -1,3 +1,5 @@
+/// <reference types="vite-plugin-svgr/client" />
+
 /* eslint-disable import/no-default-export */
 declare module '*.avif' {
   const path: string;
@@ -15,11 +17,6 @@ declare module '*.jpg' {
 }
 
 declare module '*.png' {
-  const path: string;
-  export default path;
-}
-
-declare module '*.svg' {
   const path: string;
   export default path;
 }

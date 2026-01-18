@@ -31,11 +31,11 @@ class CustomEmojiFilter
   def scope_for(key, value)
     case key.to_s
     when 'local'
-      CustomEmoji.local.left_joins(:category).reorder(Arel.sql('custom_emoji_categories.name ASC NULLS FIRST, custom_emojis.shortcode ASC'))
+      CustomEmoji.local.left_joins(:category).reorder(CustomEmojiCategory.arel_table[:name].asc.nulls_first).order(shortcode: :asc)
     when 'remote'
       CustomEmoji.remote
     when 'by_domain'
-      CustomEmoji.where(domain: value.strip.downcase)
+      CustomEmoji.where(domain: value)
     when 'shortcode'
       CustomEmoji.search(value.strip)
     else

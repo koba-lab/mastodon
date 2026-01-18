@@ -47,11 +47,9 @@ sco:
         subject: 'Mastodon: Reset passwird instructions'
         title: Passwird reset
       two_factor_disabled:
-        explanation: Twa factor authentication fir yer accoont haes been turnt aff. Login is noo possible uisin ainly a email address an passwird.
         subject: 'Mastodon: Twa-factor authentication turnt aff'
         title: 2FA turnt aff
       two_factor_enabled:
-        explanation: Twa-factor authentication haes been turnt on fir yer accoont. A token gien bi the pairt TOTP app wull be needit fir login.
         subject: 'Mastodon: Twa-factor authentication turnt on'
         title: 2FA turnt on
       two_factor_recovery_codes_changed:
@@ -70,11 +68,9 @@ sco:
           subject: 'Mastodon: Security key deletit'
           title: Ane o yer security keys haes been deletit
       webauthn_disabled:
-        explanation: Authentication wi security keys haes been turnt aff on yer accoont. Login is noo possible uisin ainly the token generatit bi the pairt TOTP app.
         subject: 'Mastodon: Authentication wi security keys turnt aff'
         title: Security keys turnt aff
       webauthn_enabled:
-        explanation: Security key authentication haes been turnt on fir yer accoont. Yer security key kin noo be uised fir login.
         subject: 'Mastodon: Security key authentication turnt on'
         title: Security keys turnt on
     omniauth_callbacks:
@@ -88,11 +84,6 @@ sco:
       updated_not_active: Yer passwird haes been chynged successfully.
     registrations:
       destroyed: Cheerio! Yer accoont haes been successfully shut doon. We howp fir tae see ye again suin.
-      signed_up: Hullo! Ye'v signed up successfully.
-      signed_up_but_inactive: Ye'v signed up successfully. Hou an iver, we cuidnae sign ye in acause yer accoont isnae activatit yit.
-      signed_up_but_locked: Ye'v signed up successfully. Hou an iver, we cuidnae sign ye in acause yer accoont is snibbed.
-      signed_up_but_pending: A email wi a confirmation link haes been sent tae yer email address. Efter ye chap on the link, we'll luik ower yer application. Ye'll be sent a note gin it's approved.
-      signed_up_but_unconfirmed: A message wi a confirmation link haes been sent tae yer email address. Please follae the link fir tae activate yer accoont. Please check yer mince folder if ye didnae get this email.
       update_needs_confirmation: Ye updatit yer accoont successfully, but we need tae verify yer new email address. Please tak a deek at yer email an follae the confirm link fir tae confirm yer new email address. Please tak a deek at yer mince folder if ye didnae get this email.
       updated: Yer accoont haes been updatit successfully.
     sessions:

@@ -7,8 +7,11 @@ import { Helmet } from 'react-helmet';
 
 import { connect } from 'react-redux';
 
+import PeopleIcon from '@/material-icons/400-24px/group.svg?react';
 import { DismissableBanner } from 'mastodon/components/dismissable_banner';
-import { domain } from 'mastodon/initial_state';
+import { identityContextPropShape, withIdentity } from 'mastodon/identity_context';
+import { domain, localLiveFeedAccess } from 'mastodon/initial_state';
+import { canViewFeed } from 'mastodon/permissions';
 
 import { addColumn, removeColumn, moveColumn } from '../../actions/columns';
 import { connectCommunityStream } from '../../actions/streaming';
@@ -37,17 +40,12 @@ const mapStateToProps = (state, { columnId }) => {
 };
 
 class CommunityTimeline extends PureComponent {
-
-  static contextTypes = {
-    router: PropTypes.object,
-    identity: PropTypes.object,
-  };
-
   static defaultProps = {
     onlyMedia: false,
   };
 
   static propTypes = {
+    identity: identityContextPropShape,
     dispatch: PropTypes.func.isRequired,
     columnId: PropTypes.string,
     intl: PropTypes.object.isRequired,
@@ -77,7 +75,7 @@ class CommunityTimeline extends PureComponent {
 
   componentDidMount () {
     const { dispatch, onlyMedia } = this.props;
-    const { signedIn } = this.context.identity;
+    const { signedIn } = this.props.identity;
 
     dispatch(expandCommunityTimeline({ onlyMedia }));
 
@@ -87,7 +85,7 @@ class CommunityTimeline extends PureComponent {
   }
 
   componentDidUpdate (prevProps) {
-    const { signedIn } = this.context.identity;
+    const { signedIn } = this.props.identity;
 
     if (prevProps.onlyMedia !== this.props.onlyMedia) {
       const { dispatch, onlyMedia } = this.props;
@@ -123,12 +121,26 @@ class CommunityTimeline extends PureComponent {
 
   render () {
     const { intl, hasUnread, columnId, multiColumn, onlyMedia } = this.props;
+    const { signedIn, permissions } = this.props.identity;
     const pinned = !!columnId;
+
+    const emptyMessage = canViewFeed(signedIn, permissions, localLiveFeedAccess) ? (
+      <FormattedMessage
+        id='empty_column.community'
+        defaultMessage='The local timeline is empty. Write something publicly to get the ball rolling!'
+      />
+    ) : (
+      <FormattedMessage
+        id='empty_column.disabled_feed'
+        defaultMessage='This feed has been disabled by your server administrators.'
+      />
+    );
 
     return (
       <Column bindToDocument={!multiColumn} ref={this.setRef} label={intl.formatMessage(messages.title)}>
         <ColumnHeader
           icon='users'
+          iconComponent={PeopleIcon}
           active={hasUnread}
           title={intl.formatMessage(messages.title)}
           onPin={this.handlePin}
@@ -146,7 +158,7 @@ class CommunityTimeline extends PureComponent {
           scrollKey={`community_timeline-${columnId}`}
           timelineId={`community${onlyMedia ? ':media' : ''}`}
           onLoadMore={this.handleLoadMore}
-          emptyMessage={<FormattedMessage id='empty_column.community' defaultMessage='The local timeline is empty. Write something publicly to get the ball rolling!' />}
+          emptyMessage={emptyMessage}
           bindToDocument={!multiColumn}
         />
 
@@ -160,4 +172,4 @@ class CommunityTimeline extends PureComponent {
 
 }
 
-export default connect(mapStateToProps)(injectIntl(CommunityTimeline));
+export default withIdentity(connect(mapStateToProps)(injectIntl(CommunityTimeline)));

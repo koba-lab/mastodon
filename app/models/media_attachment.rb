@@ -34,8 +34,8 @@ class MediaAttachment < ApplicationRecord
 
   include Attachmentable
 
-  enum type: { image: 0, gifv: 1, video: 2, unknown: 3, audio: 4 }
-  enum processing: { queued: 0, in_progress: 1, complete: 2, failed: 3 }, _prefix: true
+  enum :type, { image: 0, gifv: 1, video: 2, unknown: 3, audio: 4 }
+  enum :processing, { queued: 0, in_progress: 1, complete: 2, failed: 3 }, prefix: true
 
   MAX_DESCRIPTION_LENGTH = 1_500
 
@@ -115,13 +115,14 @@ class MediaAttachment < ApplicationRecord
   VIDEO_PASSTHROUGH_OPTIONS = {
     video_codecs: ['h264'].freeze,
     audio_codecs: ['aac', nil].freeze,
-    colorspaces: ['yuv420p'].freeze,
+    colorspaces: ['yuv420p', 'yuvj420p'].freeze,
     options: {
       format: 'mp4',
       convert_options: {
         output: {
           'loglevel' => 'fatal',
           'map_metadata' => '-1',
+          'movflags' => 'faststart', # Move metadata to start of file so playback can begin before download finishes
           'c:v' => 'copy',
           'c:a' => 'copy',
         }.freeze,
@@ -204,13 +205,14 @@ class MediaAttachment < ApplicationRecord
   validates :file, presence: true, if: :local?
   validates :thumbnail, absence: true, if: -> { local? && !audio_or_video? }
 
-  scope :attached,   -> { where.not(status_id: nil).or(where.not(scheduled_status_id: nil)) }
+  scope :attached, -> { where.not(status_id: nil).or(where.not(scheduled_status_id: nil)) }
+  scope :cached, -> { remote.where.not(file_file_name: nil) }
+  scope :created_before, ->(value) { where(arel_table[:created_at].lt(value)) }
+  scope :local, -> { where(remote_url: '') }
+  scope :ordered, -> { order(id: :asc) }
+  scope :remote, -> { where.not(remote_url: '') }
   scope :unattached, -> { where(status_id: nil, scheduled_status_id: nil) }
-  scope :local,      -> { where(remote_url: '') }
-  scope :remote,     -> { where.not(remote_url: '') }
-  scope :cached,     -> { remote.where.not(file_file_name: nil) }
-
-  default_scope { order(id: :asc) }
+  scope :updated_before, ->(value) { where(arel_table[:updated_at].lt(value)) }
 
   attr_accessor :skip_download
 
@@ -224,6 +226,10 @@ class MediaAttachment < ApplicationRecord
 
   def needs_redownload?
     file.blank? && remote_url.present?
+  end
+
+  def discarded?
+    status&.discarded? || (status_id.present? && status.nil?)
   end
 
   def significantly_changed?
@@ -275,6 +281,9 @@ class MediaAttachment < ApplicationRecord
   before_create :set_unknown_type
   before_create :set_processing
 
+  before_destroy :prepare_cache_bust!, prepend: true
+  after_destroy :bust_cache!
+
   after_commit :enqueue_processing, on: :create
   after_commit :reset_parent_cache, on: :update
 
@@ -287,6 +296,10 @@ class MediaAttachment < ApplicationRecord
 
     def supported_file_extensions
       IMAGE_FILE_EXTENSIONS + VIDEO_FILE_EXTENSIONS + AUDIO_FILE_EXTENSIONS
+    end
+
+    def combined_media_file_size
+      arel_table.coalesce(arel_table[:file_file_size], 0) + arel_table.coalesce(arel_table[:thumbnail_file_size], 0)
     end
 
     private
@@ -408,5 +421,32 @@ class MediaAttachment < ApplicationRecord
 
   def reset_parent_cache
     Rails.cache.delete("v3:statuses/#{status_id}") if status_id.present?
+  end
+
+  # Record the cache keys to burst before the file get actually deleted
+  def prepare_cache_bust!
+    return unless Rails.configuration.x.cache_buster.enabled
+
+    @paths_to_cache_bust = MediaAttachment.attachment_definitions.keys.flat_map do |attachment_name|
+      attachment = public_send(attachment_name)
+      next if attachment.blank?
+
+      styles = DEFAULT_STYLES | attachment.styles.keys
+      styles.map { |style| attachment.url(style) }
+    end.compact
+  rescue => e
+    # We really don't want any error here preventing media deletion
+    Rails.logger.warn "Error #{e.class} busting cache: #{e.message}"
+  end
+
+  # Once Paperclip has deleted the files, we can't recover the cache keys,
+  # so use the previously-saved ones
+  def bust_cache!
+    return unless Rails.configuration.x.cache_buster.enabled
+
+    CacheBusterWorker.push_bulk(@paths_to_cache_bust) { |path| [path] }
+  rescue => e
+    # We really don't want any error here preventing media deletion
+    Rails.logger.warn "Error #{e.class} busting cache: #{e.message}"
   end
 end

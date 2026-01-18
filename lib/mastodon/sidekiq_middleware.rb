@@ -3,8 +3,10 @@
 class Mastodon::SidekiqMiddleware
   BACKTRACE_LIMIT = 3
 
-  def call(*, &block)
-    Chewy.strategy(:mastodon, &block)
+  def call(_worker_class, job, _queue, &block)
+    setup_query_log_tags(job) do
+      Chewy.strategy(:mastodon, &block)
+    end
   rescue Mastodon::HostValidationError
     # Do not retry
   rescue => e
@@ -42,7 +44,7 @@ class Mastodon::SidekiqMiddleware
   def clean_up_elasticsearch_connections!
     return unless Chewy.enabled? && Chewy.current[:chewy_client].present?
 
-    Chewy.client.transport.connections.each do |connection|
+    Chewy.client.transport.transport.connections.each do |connection|
       # NOTE: This bit of code is tailored for the HTTPClient Faraday adapter
       connection.connection.app.instance_variable_get(:@client)&.reset_all
     end
@@ -53,12 +55,22 @@ class Mastodon::SidekiqMiddleware
   end
 
   def clean_up_redis_socket!
-    RedisConfiguration.pool.checkin if Thread.current[:redis]
+    RedisConnection.pool.checkin if Thread.current[:redis]
     Thread.current[:redis] = nil
   end
 
   def clean_up_statsd_socket!
     Thread.current[:statsd_socket]&.close
     Thread.current[:statsd_socket] = nil
+  end
+
+  def setup_query_log_tags(job, &block)
+    if Rails.configuration.active_record.query_log_tags_enabled
+      # If `wrapped` is set, this is an `ActiveJob` which is already in the execution context
+      sidekiq_job_class = job['wrapped'].present? ? nil : job['class'].to_s
+      ActiveSupport::ExecutionContext.set(sidekiq_job_class: sidekiq_job_class, &block)
+    else
+      yield
+    end
   end
 end

@@ -2,7 +2,7 @@
 
 require 'rails_helper'
 
-describe FeedInsertWorker do
+RSpec.describe FeedInsertWorker do
   subject { described_class.new }
 
   describe 'perform' do
@@ -43,7 +43,7 @@ describe FeedInsertWorker do
       it 'pushes the status onto the home timeline without filter' do
         instance = instance_double(FeedManager, push_to_home: nil, filter?: false, filter: nil)
         allow(FeedManager).to receive(:instance).and_return(instance)
-        result = subject.perform(status.id, follower.id)
+        result = subject.perform(status.id, follower.id, :home)
 
         expect(result).to be_nil
         expect(instance).to have_received(:push_to_home).with(follower, status, update: nil)

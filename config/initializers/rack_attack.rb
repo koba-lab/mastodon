@@ -14,7 +14,7 @@ class Rack::Attack
     end
 
     def remote_ip
-      @remote_ip ||= (@env["action_dispatch.remote_ip"] || ip).to_s
+      @remote_ip ||= (@env['action_dispatch.remote_ip'] || ip).to_s
     end
 
     def throttleable_remote_ip
@@ -126,7 +126,7 @@ class Rack::Attack
   end
 
   throttle('throttle_email_confirmations/email', limit: 5, period: 30.minutes) do |req|
-    if req.post? && req.path_matches?('/auth/password')
+    if req.post? && req.path_matches?('/auth/confirmation')
       req.params.dig('user', 'email').presence
     elsif req.post? && req.path == '/api/v1/emails/confirmations'
       req.authenticated_user_id
@@ -158,10 +158,10 @@ class Rack::Attack
     match_data = request.env['rack.attack.match_data']
 
     headers = {
-      'Content-Type'          => 'application/json',
-      'X-RateLimit-Limit'     => match_data[:limit].to_s,
+      'Content-Type' => 'application/json',
+      'X-RateLimit-Limit' => match_data[:limit].to_s,
       'X-RateLimit-Remaining' => '0',
-      'X-RateLimit-Reset'     => (now + (match_data[:period] - (now.to_i % match_data[:period]))).iso8601(6),
+      'X-RateLimit-Reset' => (now + (match_data[:period] - (now.to_i % match_data[:period]))).iso8601(6),
     }
 
     [429, headers, [{ error: I18n.t('errors.429') }.to_json]]

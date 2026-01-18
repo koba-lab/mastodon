@@ -20,7 +20,7 @@ const messages = defineMessages({
 class Report extends ImmutablePureComponent {
 
   static propTypes = {
-    account: ImmutablePropTypes.map.isRequired,
+    account: ImmutablePropTypes.record.isRequired,
     report: ImmutablePropTypes.map.isRequired,
     hidden: PropTypes.bool,
     intl: PropTypes.object.isRequired,
@@ -55,7 +55,7 @@ class Report extends ImmutablePureComponent {
           </div>
 
           <div className='notification__report__actions'>
-            <a href={`/admin/reports/${report.get('id')}`} className='button' target='_blank' rel='noopener noreferrer'>{intl.formatMessage(messages.openReport)}</a>
+            <a href={`/admin/reports/${report.get('id')}`} className='button' target='_blank' rel='noopener'>{intl.formatMessage(messages.openReport)}</a>
           </div>
         </div>
       </div>

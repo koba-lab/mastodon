@@ -1,77 +1,46 @@
 import PropTypes from 'prop-types';
+import { useRef, useMemo, useCallback } from 'react';
 
-import ImmutablePropTypes from 'react-immutable-proptypes';
-import ImmutablePureComponent from 'react-immutable-pure-component';
+import { useSelector, useDispatch } from 'react-redux';
 
 import { debounce } from 'lodash';
 
-import ScrollableList from '../../../components/scrollable_list';
-import ConversationContainer from '../containers/conversation_container';
+import { expandConversations } from 'mastodon/actions/conversations';
+import ScrollableList from 'mastodon/components/scrollable_list';
 
-export default class ConversationsList extends ImmutablePureComponent {
+import { Conversation } from './conversation';
 
-  static propTypes = {
-    conversations: ImmutablePropTypes.list.isRequired,
-    scrollKey: PropTypes.string.isRequired,
-    hasMore: PropTypes.bool,
-    isLoading: PropTypes.bool,
-    onLoadMore: PropTypes.func,
-  };
+export const ConversationsList = ({ scrollKey, ...other }) => {
+  const listRef = useRef();
+  const conversations = useSelector(state => state.getIn(['conversations', 'items']));
+  const isLoading = useSelector(state => state.getIn(['conversations', 'isLoading'], true));
+  const hasMore = useSelector(state => state.getIn(['conversations', 'hasMore'], false));
+  const dispatch = useDispatch();
+  const lastStatusId = conversations.last()?.get('last_status');
 
-  getCurrentIndex = id => this.props.conversations.findIndex(x => x.get('id') === id);
+  const debouncedLoadMore = useMemo(() => debounce(id => {
+    dispatch(expandConversations({ maxId: id }));
+  }, 300, { leading: true }), [dispatch]);
 
-  handleMoveUp = id => {
-    const elementIndex = this.getCurrentIndex(id) - 1;
-    this._selectChild(elementIndex, true);
-  };
-
-  handleMoveDown = id => {
-    const elementIndex = this.getCurrentIndex(id) + 1;
-    this._selectChild(elementIndex, false);
-  };
-
-  _selectChild (index, align_top) {
-    const container = this.node.node;
-    const element = container.querySelector(`article:nth-of-type(${index + 1}) .focusable`);
-
-    if (element) {
-      if (align_top && container.scrollTop > element.offsetTop) {
-        element.scrollIntoView(true);
-      } else if (!align_top && container.scrollTop + container.clientHeight < element.offsetTop + element.offsetHeight) {
-        element.scrollIntoView(false);
-      }
-      element.focus();
+  const handleLoadMore = useCallback(() => {
+    if (lastStatusId) {
+      debouncedLoadMore(lastStatusId);
     }
-  }
+  }, [debouncedLoadMore, lastStatusId]);
 
-  setRef = c => {
-    this.node = c;
-  };
+  return (
+    <ScrollableList {...other} scrollKey={scrollKey} isLoading={isLoading} showLoading={isLoading && conversations.isEmpty()} hasMore={hasMore} onLoadMore={handleLoadMore} ref={listRef}>
+      {conversations.map(item => (
+        <Conversation
+          key={item.get('id')}
+          conversation={item}
+          scrollKey={scrollKey}
+        />
+      ))}
+    </ScrollableList>
+  );
+};
 
-  handleLoadOlder = debounce(() => {
-    const last = this.props.conversations.last();
-
-    if (last && last.get('last_status')) {
-      this.props.onLoadMore(last.get('last_status'));
-    }
-  }, 300, { leading: true });
-
-  render () {
-    const { conversations, isLoading, onLoadMore, ...other } = this.props;
-
-    return (
-      <ScrollableList {...other} isLoading={isLoading} showLoading={isLoading && conversations.isEmpty()} onLoadMore={onLoadMore && this.handleLoadOlder} ref={this.setRef}>
-        {conversations.map(item => (
-          <ConversationContainer
-            key={item.get('id')}
-            conversationId={item.get('id')}
-            onMoveUp={this.handleMoveUp}
-            onMoveDown={this.handleMoveDown}
-            scrollKey={this.props.scrollKey}
-          />
-        ))}
-      </ScrollableList>
-    );
-  }
-
-}
+ConversationsList.propTypes = {
+  scrollKey: PropTypes.string.isRequired,
+};

@@ -8,15 +8,17 @@ namespace :mastodon do
     prompt = TTY::Prompt.new
     env    = {}
 
-    # When the application code gets loaded, it runs `lib/mastodon/redis_configuration.rb`.
-    # This happens before application environment configuration and sets REDIS_URL etc.
-    # These variables are then used even when REDIS_HOST etc. are changed, so clear them
-    # out so they don't interfere with our new configuration.
-    ENV.delete('REDIS_URL')
-    ENV.delete('CACHE_REDIS_URL')
-    ENV.delete('SIDEKIQ_REDIS_URL')
+    if ENV['LOCAL_DOMAIN']
+      prompt.warn "It looks like you already configured Mastodon for domain '#{ENV['LOCAL_DOMAIN']}'."
+      prompt.warn 'Never re-run this task on an already-configured running server.'
+      next prompt.warn 'Nothing saved. Bye!' if prompt.no?('Continue anyway?')
+    end
+
+    clear_environment!
 
     begin
+      errors = []
+
       prompt.say('Your instance is identified by its domain name. Changing it afterward will break things.')
       env['LOCAL_DOMAIN'] = prompt.ask('Domain name:') do |q|
         q.required true
@@ -30,8 +32,17 @@ namespace :mastodon do
       prompt.say('Single user mode disables registrations and redirects the landing page to your public profile.')
       env['SINGLE_USER_MODE'] = prompt.yes?('Do you want to enable single user mode?', default: false)
 
-      %w(SECRET_KEY_BASE OTP_SECRET).each do |key|
+      %w(SECRET_KEY_BASE).each do |key|
         env[key] = SecureRandom.hex(64)
+      end
+
+      # Required by ActiveRecord encryption feature
+      %w(
+        ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY
+        ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT
+        ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY
+      ).each do |key|
+        env[key] = SecureRandom.alphanumeric(32)
       end
 
       vapid_key = Webpush.generate_key
@@ -95,7 +106,12 @@ namespace :mastodon do
         rescue => e
           prompt.error 'Database connection could not be established with this configuration, try again.'
           prompt.error e.message
-          break unless prompt.yes?('Try again?')
+          unless prompt.yes?('Try again?')
+            return prompt.warn 'Nothing saved. Bye!' unless prompt.yes?('Continue anyway?')
+
+            errors << 'Database connection could not be established.'
+            break
+          end
         end
       end
 
@@ -135,7 +151,13 @@ namespace :mastodon do
         rescue => e
           prompt.error 'Redis connection could not be established with this configuration, try again.'
           prompt.error e.message
-          break unless prompt.yes?('Try again?')
+
+          unless prompt.yes?('Try again?')
+            return prompt.warn 'Nothing saved. Bye!' unless prompt.yes?('Continue anyway?')
+
+            errors << 'Redis connection could not be established.'
+            break
+          end
         end
       end
 
@@ -414,13 +436,23 @@ namespace :mastodon do
             from: env['SMTP_FROM_ADDRESS'],
           }
 
-          mail = ActionMailer::Base.new.mail to: send_to, subject: 'Test', body: 'Mastodon SMTP configuration works!'
+          mail = ActionMailer::Base.new.mail(
+            to: send_to,
+            subject: 'Test', # rubocop:disable Rails/I18nLocaleTexts
+            body: 'Mastodon SMTP configuration works!'
+          )
           mail.deliver
           break
         rescue => e
           prompt.error 'E-mail could not be sent with this configuration, try again.'
           prompt.error e.message
-          break unless prompt.yes?('Try again?')
+
+          unless prompt.yes?('Try again?')
+            return prompt.warn 'Nothing saved. Bye!' unless prompt.yes?('Continue anyway?')
+
+            errors << 'E-email was not sent successfully.'
+            break
+          end
         end
       end
 
@@ -466,6 +498,7 @@ namespace :mastodon do
             prompt.ok 'Done!'
           else
             prompt.error 'That failed! Perhaps your configuration is not right'
+            errors << 'Preparing the database failed'
           end
         end
 
@@ -482,12 +515,18 @@ namespace :mastodon do
               prompt.say 'Done!'
             else
               prompt.error 'That failed! Maybe you need swap space?'
+              errors << 'Compiling assets failed.'
             end
           end
         end
 
         prompt.say "\n"
-        prompt.ok 'All done! You can now power on the Mastodon server 🐘'
+        if errors.any?
+          prompt.warn 'Your Mastodon server is set up, but there were some errors along the way, you may have to fix them:'
+          errors.each { |error| prompt.warn "- #{error}" }
+        else
+          prompt.ok 'All done! You can now power on the Mastodon server 🐘'
+        end
         prompt.say "\n"
 
         if db_connection_works && prompt.yes?('Do you want to create an admin user straight away?')
@@ -513,7 +552,7 @@ namespace :mastodon do
           password = SecureRandom.hex(16)
 
           owner_role = UserRole.find_by(name: 'Owner')
-          user = User.new(email: email, password: password, confirmed_at: Time.now.utc, account_attributes: { username: username }, bypass_invite_request_check: true, role: owner_role)
+          user = User.new(email: email, password: password, confirmed_at: Time.now.utc, account_attributes: { username: username }, bypass_registration_checks: true, role: owner_role)
           user.save(validate: false)
           user.approve!
 
@@ -541,6 +580,17 @@ namespace :mastodon do
 
   private
 
+  def clear_environment!
+    # When the application code gets loaded, it runs `lib/mastodon/redis_configuration.rb`.
+    # This happens before application environment configuration and sets REDIS_URL etc.
+    # These variables are then used even when REDIS_HOST etc. are changed, so clear them
+    # out so they don't interfere with our new configuration.
+
+    ENV.delete('REDIS_URL')
+    ENV.delete('CACHE_REDIS_URL')
+    ENV.delete('SIDEKIQ_REDIS_URL')
+  end
+
   def generate_header(include_warning)
     default_message = "# Generated with mastodon:setup on #{Time.now.utc}\n\n"
 
@@ -554,11 +604,11 @@ namespace :mastodon do
 end
 
 def disable_log_stdout!
-  dev_null = Logger.new('/dev/null')
+  dev_null = Logger.new(File::NULL)
 
   Rails.logger                 = dev_null
   ActiveRecord::Base.logger    = dev_null
-  HttpLog.configuration.logger = dev_null
+  HttpLog.configuration.logger = dev_null if defined?(HttpLog)
   Paperclip.options[:log]      = false
 end
 

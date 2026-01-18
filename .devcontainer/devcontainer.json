@@ -1,11 +1,13 @@
 {
   "name": "Mastodon on local machine",
-  "dockerComposeFile": "docker-compose.yml",
+  "dockerComposeFile": "compose.yaml",
   "service": "app",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
 
   "features": {
-    "ghcr.io/devcontainers/features/sshd:1": {}
+    "ghcr.io/devcontainers/features/sshd:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
   "forwardPorts": [3000, 4000],
@@ -23,12 +25,14 @@
     }
   },
 
+  "remoteUser": "root",
+
   "otherPortsAttributes": {
     "onAutoForward": "silent"
   },
 
   "onCreateCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}",
-  "postCreateCommand": ".devcontainer/post-create.sh",
+  "postCreateCommand": "bin/setup",
   "waitFor": "postCreateCommand",
 
   "customizations": {

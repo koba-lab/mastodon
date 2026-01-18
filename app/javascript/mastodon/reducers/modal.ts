@@ -1,13 +1,12 @@
+import type { Reducer } from '@reduxjs/toolkit';
 import { Record as ImmutableRecord, Stack } from 'immutable';
 
-import type { PayloadAction } from '@reduxjs/toolkit';
+import { timelineDelete } from 'mastodon/actions/timelines_typed';
 
-import { COMPOSE_UPLOAD_CHANGE_SUCCESS } from '../actions/compose';
 import type { ModalType } from '../actions/modal';
 import { openModal, closeModal } from '../actions/modal';
-import { TIMELINE_DELETE } from '../actions/timelines';
 
-type ModalProps = Record<string, unknown>;
+export type ModalProps = Record<string, unknown>;
 interface Modal {
   modalType: ModalType;
   modalProps: ModalProps;
@@ -42,7 +41,7 @@ const popModal = (
     modalType === state.get('stack').get(0)?.get('modalType')
   ) {
     return state
-      .set('ignoreFocus', !!ignoreFocus)
+      .set('ignoreFocus', ignoreFocus)
       .update('stack', (stack) => stack.shift());
   } else {
     return state;
@@ -53,42 +52,54 @@ const pushModal = (
   state: State,
   modalType: ModalType,
   modalProps: ModalProps,
+  previousModalProps?: ModalProps,
 ): State => {
   return state.withMutations((record) => {
     record.set('ignoreFocus', false);
-    record.update('stack', (stack) =>
-      stack.unshift(Modal({ modalType, modalProps })),
-    );
+    record.update('stack', (stack) => {
+      let tmp = stack;
+
+      // With this option, we update the previously opened modal, so that when the
+      // current (new) modal is closed, the previous modal is re-opened with different
+      // props. Specifically, this is useful for the confirmation modal.
+      if (previousModalProps) {
+        const previousModal = tmp.first() as Modal | undefined;
+
+        if (previousModal) {
+          tmp = tmp.shift().unshift(
+            Modal({
+              modalType: previousModal.modalType,
+              modalProps: {
+                ...previousModal.modalProps,
+                ...previousModalProps,
+              },
+            }),
+          );
+        }
+      }
+
+      tmp = tmp.unshift(Modal({ modalType, modalProps }));
+
+      return tmp;
+    });
   });
 };
 
-export function modalReducer(
-  state: State = initialState,
-  action: PayloadAction<{
-    modalType: ModalType;
-    ignoreFocus: boolean;
-    modalProps: Record<string, unknown>;
-  }>,
-) {
-  switch (action.type) {
-    case openModal.type:
-      return pushModal(
-        state,
-        action.payload.modalType,
-        action.payload.modalProps,
-      );
-    case closeModal.type:
-      return popModal(state, action.payload);
-    case COMPOSE_UPLOAD_CHANGE_SUCCESS:
-      return popModal(state, { modalType: 'FOCAL_POINT', ignoreFocus: false });
-    case TIMELINE_DELETE:
-      return state.update('stack', (stack) =>
-        stack.filterNot(
-          // @ts-expect-error TIMELINE_DELETE action is not typed yet.
-          (modal) => modal.get('modalProps').statusId === action.id,
-        ),
-      );
-    default:
-      return state;
-  }
-}
+export const modalReducer: Reducer<State> = (state = initialState, action) => {
+  if (openModal.match(action))
+    return pushModal(
+      state,
+      action.payload.modalType,
+      action.payload.modalProps,
+      action.payload.previousModalProps,
+    );
+  else if (closeModal.match(action)) return popModal(state, action.payload);
+  // TODO: type those actions
+  else if (timelineDelete.match(action))
+    return state.update('stack', (stack) =>
+      stack.filterNot(
+        (modal) => modal.get('modalProps').statusId === action.payload.statusId,
+      ),
+    );
+  else return state;
+};

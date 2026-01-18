@@ -25,23 +25,26 @@ class Webhook < ApplicationRecord
     status.updated
   ).freeze
 
+  SECRET_LENGTH_MIN = 12
+  SECRET_SIZE = 20
+
   attr_writer :current_account
 
   scope :enabled, -> { where(enabled: true) }
 
   validates :url, presence: true, url: true
-  validates :secret, presence: true, length: { minimum: 12 }
+  validates :secret, presence: true, length: { minimum: SECRET_LENGTH_MIN }
   validates :events, presence: true
 
-  validate :validate_events
+  validate :events_validation_error, if: :invalid_events?
   validate :validate_permissions
   validate :validate_template
 
-  before_validation :strip_events
+  normalizes :events, with: ->(events) { events.filter_map { |event| event.strip.presence } }
   before_validation :generate_secret
 
   def rotate_secret!
-    update!(secret: SecureRandom.hex(20))
+    update!(secret: random_secret)
   end
 
   def enable!
@@ -53,7 +56,7 @@ class Webhook < ApplicationRecord
   end
 
   def required_permissions
-    events.map { |event| Webhook.permission_for_event(event) }
+    events.map { |event| Webhook.permission_for_event(event) }.uniq
   end
 
   def self.permission_for_event(event)
@@ -69,8 +72,12 @@ class Webhook < ApplicationRecord
 
   private
 
-  def validate_events
-    errors.add(:events, :invalid) if events.any? { |e| EVENTS.exclude?(e) }
+  def events_validation_error
+    errors.add(:events, :invalid)
+  end
+
+  def invalid_events?
+    events.blank? || events.difference(EVENTS).any?
   end
 
   def validate_permissions
@@ -88,11 +95,11 @@ class Webhook < ApplicationRecord
     end
   end
 
-  def strip_events
-    self.events = events.filter_map { |str| str.strip.presence } if events.present?
+  def generate_secret
+    self.secret = random_secret if secret.blank?
   end
 
-  def generate_secret
-    self.secret = SecureRandom.hex(20) if secret.blank?
+  def random_secret
+    SecureRandom.hex(SECRET_SIZE)
   end
 end

@@ -10,11 +10,12 @@ import { connect } from 'react-redux';
 
 import { debounce } from 'lodash';
 
+import VolumeOffIcon from '@/material-icons/400-24px/volume_off.svg?react';
+import { Account } from 'mastodon/components/account';
+
 import { fetchMutes, expandMutes } from '../../actions/mutes';
-import ColumnBackButtonSlim from '../../components/column_back_button_slim';
 import { LoadingIndicator } from '../../components/loading_indicator';
 import ScrollableList from '../../components/scrollable_list';
-import AccountContainer from '../../containers/account_container';
 import Column from '../ui/components/column';
 
 const messages = defineMessages({
@@ -61,8 +62,7 @@ class Mutes extends ImmutablePureComponent {
     const emptyMessage = <FormattedMessage id='empty_column.mutes' defaultMessage="You haven't muted any users yet." />;
 
     return (
-      <Column bindToDocument={!multiColumn} icon='volume-off' heading={intl.formatMessage(messages.heading)}>
-        <ColumnBackButtonSlim />
+      <Column bindToDocument={!multiColumn} icon='volume-off' iconComponent={VolumeOffIcon} heading={intl.formatMessage(messages.heading)} alwaysShowBackButton>
         <ScrollableList
           scrollKey='mutes'
           onLoadMore={this.handleLoadMore}
@@ -72,7 +72,7 @@ class Mutes extends ImmutablePureComponent {
           bindToDocument={!multiColumn}
         >
           {accountIds.map(id =>
-            <AccountContainer key={id} id={id} defaultAction='mute' />,
+            <Account key={id} id={id} defaultAction='mute' />,
           )}
         </ScrollableList>
 

@@ -2,16 +2,10 @@
 
 require 'rails_helper'
 
-describe InstancePresenter do
+RSpec.describe InstancePresenter do
   let(:instance_presenter) { described_class.new }
 
   describe '#description' do
-    around do |example|
-      site_description = Setting.site_short_description
-      example.run
-      Setting.site_short_description = site_description
-    end
-
     it 'delegates site_description to Setting' do
       Setting.site_short_description = 'Site desc'
       expect(instance_presenter.description).to eq 'Site desc'
@@ -19,12 +13,6 @@ describe InstancePresenter do
   end
 
   describe '#extended_description' do
-    around do |example|
-      site_extended_description = Setting.site_extended_description
-      example.run
-      Setting.site_extended_description = site_extended_description
-    end
-
     it 'delegates site_extended_description to Setting' do
       Setting.site_extended_description = 'Extended desc'
       expect(instance_presenter.extended_description).to eq 'Extended desc'
@@ -32,12 +20,6 @@ describe InstancePresenter do
   end
 
   describe '#email' do
-    around do |example|
-      site_contact_email = Setting.site_contact_email
-      example.run
-      Setting.site_contact_email = site_contact_email
-    end
-
     it 'delegates contact_email to Setting' do
       Setting.site_contact_email = 'admin@example.com'
       expect(instance_presenter.contact.email).to eq 'admin@example.com'
@@ -45,12 +27,6 @@ describe InstancePresenter do
   end
 
   describe '#account' do
-    around do |example|
-      site_contact_username = Setting.site_contact_username
-      example.run
-      Setting.site_contact_username = site_contact_username
-    end
-
     it 'returns the account for the site contact username' do
       Setting.site_contact_username = 'aaa'
       account = Fabricate(:account, username: 'aaa')
@@ -92,6 +68,7 @@ describe InstancePresenter do
     context 'with the GITHUB_REPOSITORY env variable set' do
       around do |example|
         ClimateControl.modify GITHUB_REPOSITORY: 'other/repo' do
+          reload_configuration
           example.run
         end
       end
@@ -104,6 +81,7 @@ describe InstancePresenter do
     context 'without the GITHUB_REPOSITORY env variable set' do
       around do |example|
         ClimateControl.modify GITHUB_REPOSITORY: nil do
+          reload_configuration
           example.run
         end
       end
@@ -111,6 +89,10 @@ describe InstancePresenter do
       it 'defaults to the core mastodon repo URL' do
         expect(instance_presenter.source_url).to eq('https://github.com/mastodon/mastodon')
       end
+    end
+
+    def reload_configuration
+      Rails.configuration.x.mastodon = Rails.application.config_for(:mastodon)
     end
   end
 

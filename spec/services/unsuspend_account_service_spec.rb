@@ -2,8 +2,8 @@
 
 require 'rails_helper'
 
-RSpec.describe UnsuspendAccountService, type: :service do
-  shared_context 'with common context' do
+RSpec.describe UnsuspendAccountService do
+  shared_context 'when account is unsuspended' do
     subject { described_class.new.call(account) }
 
     let!(:local_follower) { Fabricate(:user, current_sign_in_at: 1.hour.ago).account }
@@ -31,28 +31,34 @@ RSpec.describe UnsuspendAccountService, type: :service do
       stub_request(:post, 'https://bob.com/inbox').to_return(status: 201)
     end
 
+    let!(:account) { Fabricate(:account) }
+
     it 'does not change the “suspended” flag' do
       expect { subject }.to_not change(account, :suspended?)
     end
 
-    include_examples 'with common context' do
-      let!(:account)         { Fabricate(:account) }
+    include_context 'when account is unsuspended' do
       let!(:remote_follower) { Fabricate(:account, uri: 'https://alice.com', inbox_url: 'https://alice.com/inbox', protocol: :activitypub, domain: 'alice.com') }
       let!(:remote_reporter) { Fabricate(:account, uri: 'https://bob.com', inbox_url: 'https://bob.com/inbox', protocol: :activitypub, domain: 'bob.com') }
-      let!(:report)          { Fabricate(:report, account: remote_reporter, target_account: account) }
 
       before do
+        Fabricate(:report, account: remote_reporter, target_account: account)
         remote_follower.follow!(account)
       end
 
-      it "merges back into local followers' feeds" do
+      it 'merges back into feeds of local followers and sends update', :inline_jobs do
         subject
+
+        expect_feeds_merged
+        expect_updates_sent
+      end
+
+      def expect_feeds_merged
         expect(FeedManager.instance).to have_received(:merge_into_home).with(account, local_follower)
         expect(FeedManager.instance).to have_received(:merge_into_list).with(account, list)
       end
 
-      it 'sends an update actor to followers and reporters' do
-        subject
+      def expect_updates_sent
         expect(a_request(:post, remote_follower.inbox_url).with { |req| match_update_actor_request(req, account) }).to have_been_made.once
         expect(a_request(:post, remote_reporter.inbox_url).with { |req| match_update_actor_request(req, account) }).to have_been_made.once
       end
@@ -60,8 +66,8 @@ RSpec.describe UnsuspendAccountService, type: :service do
   end
 
   describe 'unsuspending a remote account' do
-    include_examples 'with common context' do
-      let!(:account)                 { Fabricate(:account, domain: 'bob.com', uri: 'https://bob.com', inbox_url: 'https://bob.com/inbox', protocol: :activitypub) }
+    include_context 'when account is unsuspended' do
+      let!(:account) { Fabricate(:account, domain: 'bob.com', uri: 'https://bob.com', inbox_url: 'https://bob.com/inbox', protocol: :activitypub) }
       let!(:resolve_account_service) { instance_double(ResolveAccountService) }
 
       before do
@@ -73,19 +79,20 @@ RSpec.describe UnsuspendAccountService, type: :service do
           allow(resolve_account_service).to receive(:call).with(account).and_return(account)
         end
 
-        it 're-fetches the account' do
-          subject
+        it 're-fetches the account, merges feeds, and preserves suspended' do
+          expect { subject }
+            .to_not change_suspended_flag
+          expect_feeds_merged
           expect(resolve_account_service).to have_received(:call).with(account)
         end
 
-        it "merges back into local followers' feeds" do
-          subject
+        def expect_feeds_merged
           expect(FeedManager.instance).to have_received(:merge_into_home).with(account, local_follower)
           expect(FeedManager.instance).to have_received(:merge_into_list).with(account, list)
         end
 
-        it 'does not change the “suspended” flag' do
-          expect { subject }.to_not change(account, :suspended?)
+        def change_suspended_flag
+          change(account, :suspended?)
         end
       end
 
@@ -97,19 +104,20 @@ RSpec.describe UnsuspendAccountService, type: :service do
           end
         end
 
-        it 're-fetches the account' do
-          subject
+        it 're-fetches the account, does not merge feeds, marks suspended' do
+          expect { subject }
+            .to change_suspended_to_true
           expect(resolve_account_service).to have_received(:call).with(account)
+          expect_feeds_not_merged
         end
 
-        it "does not merge back into local followers' feeds" do
-          subject
+        def expect_feeds_not_merged
           expect(FeedManager.instance).to_not have_received(:merge_into_home).with(account, local_follower)
           expect(FeedManager.instance).to_not have_received(:merge_into_list).with(account, list)
         end
 
-        it 'marks account as suspended' do
-          expect { subject }.to change(account, :suspended?).from(false).to(true)
+        def change_suspended_to_true
+          change(account, :suspended?).from(false).to(true)
         end
       end
 
@@ -118,13 +126,14 @@ RSpec.describe UnsuspendAccountService, type: :service do
           allow(resolve_account_service).to receive(:call).with(account).and_return(nil)
         end
 
-        it 're-fetches the account' do
+        it 're-fetches the account and does not merge feeds' do
           subject
+
           expect(resolve_account_service).to have_received(:call).with(account)
+          expect_feeds_not_merged
         end
 
-        it "does not merge back into local followers' feeds" do
-          subject
+        def expect_feeds_not_merged
           expect(FeedManager.instance).to_not have_received(:merge_into_home).with(account, local_follower)
           expect(FeedManager.instance).to_not have_received(:merge_into_list).with(account, list)
         end

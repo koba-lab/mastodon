@@ -9,8 +9,15 @@ import {
   changeComposeSpoilerText,
   insertEmojiCompose,
   uploadCompose,
-} from '../../../actions/compose';
+} from 'mastodon/actions/compose';
+import { pasteLinkCompose } from 'mastodon/actions/compose_typed';
+import { openModal } from 'mastodon/actions/modal';
+import { PRIVATE_QUOTE_MODAL_ID } from 'mastodon/features/ui/components/confirmation_modals/private_quote_notify';
+import { me } from 'mastodon/initial_state';
+
 import ComposeForm from '../components/compose_form';
+
+const urlLikeRegex = /^https?:\/\/[^\s]+\/[^\s]+$/i;
 
 const mapStateToProps = state => ({
   text: state.getIn(['compose', 'text']),
@@ -26,18 +33,41 @@ const mapStateToProps = state => ({
   isChangingUpload: state.getIn(['compose', 'is_changing_upload']),
   isUploading: state.getIn(['compose', 'is_uploading']),
   anyMedia: state.getIn(['compose', 'media_attachments']).size > 0,
+  missingAltText: state.getIn(['compose', 'media_attachments']).some(media => ['image', 'gifv'].includes(media.get('type')) && (media.get('description') ?? '').length === 0),
+  quoteToPrivate:
+    !!state.getIn(['compose', 'quoted_status_id'])
+    && state.getIn(['compose', 'privacy']) === 'private'
+    && state.getIn(['statuses', state.getIn(['compose', 'quoted_status_id']), 'account']) !== me
+    && !state.getIn(['settings', 'dismissed_banners', PRIVATE_QUOTE_MODAL_ID]),
   isInReply: state.getIn(['compose', 'in_reply_to']) !== null,
   lang: state.getIn(['compose', 'language']),
+  maxChars: state.getIn(['server', 'server', 'configuration', 'statuses', 'max_characters'], 500),
 });
 
-const mapDispatchToProps = (dispatch) => ({
+const mapDispatchToProps = (dispatch, props) => ({
 
   onChange (text) {
     dispatch(changeCompose(text));
   },
 
-  onSubmit (router) {
-    dispatch(submitCompose(router));
+  onSubmit ({ missingAltText, quoteToPrivate }) {
+    if (missingAltText) {
+      dispatch(openModal({
+        modalType: 'CONFIRM_MISSING_ALT_TEXT',
+        modalProps: {},
+      }));
+    } else if (quoteToPrivate) {
+      dispatch(openModal({
+        modalType: 'CONFIRM_PRIVATE_QUOTE_NOTIFY',
+        modalProps: {},
+      }));
+    } else {
+      dispatch(submitCompose((status) => {
+        if (props.redirectOnSuccess) {
+          window.location.assign(status.url);
+        }
+      }));
+    }
   },
 
   onClearSuggestions () {
@@ -56,8 +86,21 @@ const mapDispatchToProps = (dispatch) => ({
     dispatch(changeComposeSpoilerText(checked));
   },
 
-  onPaste (files) {
-    dispatch(uploadCompose(files));
+  onPaste (e) {
+    if (e.clipboardData && e.clipboardData.files.length === 1) {
+      dispatch(uploadCompose(e.clipboardData.files));
+      e.preventDefault();
+    } else if (e.clipboardData && e.clipboardData.files.length === 0) {
+      const data = e.clipboardData.getData('text/plain');
+      if (!data.match(urlLikeRegex)) return;
+
+      try {
+        const url = new URL(data);
+        dispatch(pasteLinkCompose({ url }));
+      } catch {
+        return;
+      }
+    }
   },
 
   onPickEmoji (position, data, needsSpace) {

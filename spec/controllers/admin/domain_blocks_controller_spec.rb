@@ -6,14 +6,13 @@ RSpec.describe Admin::DomainBlocksController do
   render_views
 
   before do
-    sign_in Fabricate(:user, role: UserRole.find_by(name: 'Admin')), scope: :user
+    sign_in Fabricate(:admin_user), scope: :user
   end
 
   describe 'GET #new' do
     it 'assigns a new domain block' do
       get :new
 
-      expect(assigns(:domain_block)).to be_instance_of(DomainBlock)
       expect(response).to have_http_status(200)
     end
   end
@@ -49,15 +48,11 @@ RSpec.describe Admin::DomainBlocksController do
         post :create, params: { domain_block: { domain: 'example.com', severity: 'silence' } }
       end
 
-      it 'records a block' do
+      it 'records a block, calls a worker, redirects' do
         expect(DomainBlock.exists?(domain: 'example.com', severity: 'silence')).to be true
-      end
 
-      it 'calls DomainBlockWorker' do
         expect(DomainBlockWorker).to have_received(:perform_async)
-      end
 
-      it 'redirects with a success message' do
         expect(flash[:notice]).to eq I18n.t('admin.domain_blocks.created_msg')
         expect(response).to redirect_to(admin_instances_path(limited: '1'))
       end
@@ -69,16 +64,13 @@ RSpec.describe Admin::DomainBlocksController do
         post :create, params: { domain_block: { domain: 'example.com', severity: 'silence' } }
       end
 
-      it 'does not record a block' do
+      it 'does not record a block or call worker, renders new' do
         expect(DomainBlock.exists?(domain: 'example.com', severity: 'silence')).to be false
-      end
 
-      it 'does not call DomainBlockWorker' do
         expect(DomainBlockWorker).to_not have_received(:perform_async)
-      end
 
-      it 'renders new' do
-        expect(response).to render_template :new
+        expect(response.parsed_body.title)
+          .to match(I18n.t('admin.domain_blocks.new.title'))
       end
     end
 
@@ -88,16 +80,13 @@ RSpec.describe Admin::DomainBlocksController do
           post :create, params: { domain_block: { domain: 'example.com', severity: 'suspend', reject_media: true, reject_reports: true } }
         end
 
-        it 'does not record a block' do
+        it 'does not record a block or call worker, renders confirm suspension' do
           expect(DomainBlock.exists?(domain: 'example.com', severity: 'suspend')).to be false
-        end
 
-        it 'does not call DomainBlockWorker' do
           expect(DomainBlockWorker).to_not have_received(:perform_async)
-        end
 
-        it 'renders confirm_suspension' do
-          expect(response).to render_template :confirm_suspension
+          expect(response.parsed_body.title)
+            .to match(I18n.t('admin.domain_blocks.confirm_suspension.title', domain: 'example.com'))
         end
       end
 
@@ -106,15 +95,11 @@ RSpec.describe Admin::DomainBlocksController do
           post :create, params: { :domain_block => { domain: 'example.com', severity: 'suspend', reject_media: true, reject_reports: true }, 'confirm' => '' }
         end
 
-        it 'records a block' do
+        it 'records a block and calls worker and redirects' do
           expect(DomainBlock.exists?(domain: 'example.com', severity: 'suspend')).to be true
-        end
 
-        it 'calls DomainBlockWorker' do
           expect(DomainBlockWorker).to have_received(:perform_async)
-        end
 
-        it 'redirects with a success message' do
           expect(flash[:notice]).to eq I18n.t('admin.domain_blocks.created_msg')
           expect(response).to redirect_to(admin_instances_path(limited: '1'))
         end
@@ -131,16 +116,13 @@ RSpec.describe Admin::DomainBlocksController do
           post :create, params: { domain_block: { domain: 'example.com', severity: 'suspend', reject_media: true, reject_reports: true } }
         end
 
-        it 'does not record a block' do
+        it 'does not record a block or call worker, renders confirm suspension' do
           expect(DomainBlock.exists?(domain: 'example.com', severity: 'suspend')).to be false
-        end
 
-        it 'does not call DomainBlockWorker' do
           expect(DomainBlockWorker).to_not have_received(:perform_async)
-        end
 
-        it 'renders confirm_suspension' do
-          expect(response).to render_template :confirm_suspension
+          expect(response.parsed_body.title)
+            .to match(I18n.t('admin.domain_blocks.confirm_suspension.title', domain: 'example.com'))
         end
       end
 
@@ -149,15 +131,11 @@ RSpec.describe Admin::DomainBlocksController do
           post :create, params: { :domain_block => { domain: 'example.com', severity: 'suspend', reject_media: true, reject_reports: true }, 'confirm' => '' }
         end
 
-        it 'updates the record' do
+        it 'updates the record and calls worker, redirects' do
           expect(DomainBlock.exists?(domain: 'example.com', severity: 'suspend')).to be true
-        end
 
-        it 'calls DomainBlockWorker' do
           expect(DomainBlockWorker).to have_received(:perform_async)
-        end
 
-        it 'redirects with a success message' do
           expect(flash[:notice]).to eq I18n.t('admin.domain_blocks.created_msg')
           expect(response).to redirect_to(admin_instances_path(limited: '1'))
         end
@@ -165,7 +143,17 @@ RSpec.describe Admin::DomainBlocksController do
     end
   end
 
-  describe 'PUT #update' do
+  describe 'GET #edit' do
+    let(:domain_block) { Fabricate(:domain_block) }
+
+    it 'returns http success' do
+      get :edit, params: { id: domain_block.id }
+
+      expect(response).to have_http_status(200)
+    end
+  end
+
+  describe 'PUT #update', :inline_jobs do
     subject do
       post :update, params: { :id => domain_block.id, :domain_block => { domain: 'example.com', severity: new_severity }, 'confirm' => '' }
     end
@@ -181,16 +169,11 @@ RSpec.describe Admin::DomainBlocksController do
       let(:original_severity) { 'suspend' }
       let(:new_severity)      { 'silence' }
 
-      it 'changes the block severity' do
-        expect { subject }.to change { domain_block.reload.severity }.from('suspend').to('silence')
-      end
-
-      it 'undoes individual suspensions' do
-        expect { subject }.to change { remote_account.reload.suspended? }.from(true).to(false)
-      end
-
-      it 'performs individual silences' do
-        expect { subject }.to change { remote_account.reload.silenced? }.from(false).to(true)
+      it 'changes the block severity, suspensions, and silences' do
+        expect { subject }
+          .to change_severity('suspend', 'silence')
+          .and change_suspended(true, false)
+          .and change_silenced(false, true)
       end
     end
 
@@ -198,17 +181,26 @@ RSpec.describe Admin::DomainBlocksController do
       let(:original_severity) { 'silence' }
       let(:new_severity)      { 'suspend' }
 
-      it 'changes the block severity' do
-        expect { subject }.to change { domain_block.reload.severity }.from('silence').to('suspend')
+      it 'changes the block severity, silences, and suspensions' do
+        expect { subject }
+          .to change_severity('silence', 'suspend')
+          .and change_silenced(true, false)
+          .and change_suspended(false, true)
       end
+    end
 
-      it 'undoes individual silences' do
-        expect { subject }.to change { remote_account.reload.silenced? }.from(true).to(false)
-      end
+    private
 
-      it 'performs individual suspends' do
-        expect { subject }.to change { remote_account.reload.suspended? }.from(false).to(true)
-      end
+    def change_severity(from, to)
+      change { domain_block.reload.severity }.from(from).to(to)
+    end
+
+    def change_silenced(from, to)
+      change { remote_account.reload.silenced? }.from(from).to(to)
+    end
+
+    def change_suspended(from, to)
+      change { remote_account.reload.suspended? }.from(from).to(to)
     end
   end
 
