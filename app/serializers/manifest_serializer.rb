@@ -18,13 +18,6 @@ class ManifestSerializer < ActiveModel::Serializer
     '/home'
   end
 
-  def id
-    # This is set to `/home` because that was the old value of `start_url` and
-    # thus the fallback ID computed by Chrome:
-    # https://developer.chrome.com/blog/pwa-manifest-id/
-    '/home'
-  end
-
   def name
     object.title
   end
