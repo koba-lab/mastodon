@@ -18,13 +18,13 @@ jobs:
           docker run --rm \
             -e RCLONE_CONFIG_WASABI_TYPE=s3 \
             -e RCLONE_CONFIG_WASABI_PROVIDER=Wasabi \
-            -e RCLONE_CONFIG_WASABI_ACCESS_KEY_ID=${{ secrets.WASABI_ACCESS_KEY_ID }} \
-            -e RCLONE_CONFIG_WASABI_SECRET_ACCESS_KEY=${{ secrets.WASABI_SECRET_ACCESS_KEY }} \
+            -e RCLONE_CONFIG_WASABI_ACCESS_KEY_ID="${{ secrets.WASABI_ACCESS_KEY_ID }}" \
+            -e RCLONE_CONFIG_WASABI_SECRET_ACCESS_KEY="${{ secrets.WASABI_SECRET_ACCESS_KEY }}" \
             -e RCLONE_CONFIG_WASABI_REGION=us-west-1 \
             -e RCLONE_CONFIG_WASABI_ENDPOINT=s3.us-west-1.wasabisys.com \
             -e RCLONE_CONFIG_B2_TYPE=b2 \
-            -e RCLONE_CONFIG_B2_ACCOUNT=${{ secrets.B2_ACCOUNT }} \
-            -e RCLONE_CONFIG_B2_KEY=${{ secrets.B2_KEY }} \
+            -e RCLONE_CONFIG_B2_ACCOUNT="${{ secrets.B2_ACCOUNT }}" \
+            -e RCLONE_CONFIG_B2_KEY="${{ secrets.B2_KEY }}" \
             rclone/rclone sync wasabi:ikatodon-media b2:ikatodon-media \
             --fast-list \
             --size-only \
