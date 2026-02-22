@@ -8,6 +8,8 @@ on:
     - cron: '0 */2 * * *' # 2時間ごと
   workflow_dispatch: # 手動実行も可能に
 
+permissions: {}
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -26,6 +28,7 @@ jobs:
             -e RCLONE_CONFIG_B2_ACCOUNT="${{ secrets.B2_ACCOUNT }}" \
             -e RCLONE_CONFIG_B2_KEY="${{ secrets.B2_KEY }}" \
             rclone/rclone sync wasabi:ikatodon-media b2:ikatodon-media \
+            -v \
             --fast-list \
             --size-only \
             --transfers 32 \
