@@ -29,7 +29,7 @@ jobs:
             -e RCLONE_CONFIG_B2_KEY="${{ secrets.B2_KEY }}" \
             rclone/rclone sync wasabi:ikatodon-media b2:ikatodon-media \
             -v \
-            --max-delete 1000 \
+            --max-delete 5000 \
             --fast-list \
             --size-only \
             --transfers 32 \
