@@ -4,8 +4,8 @@
 name: Ikatodon Storage Rclone Sync
 
 on:
-  schedule:
-    - cron: '0 */1 * * *' # 1時間ごと
+#  schedule:
+#    - cron: '0 */1 * * *' # 1時間ごと
   workflow_dispatch: # 手動実行も可能に
 
 permissions: {}
