@@ -1,0 +1,5 @@
+- content_for :header_tags do
+  = render_initial_state
+  = vite_typescript_tag 'share.tsx', crossorigin: 'anonymous'
+
+#mastodon-compose{ data: { props: default_props.to_json } }

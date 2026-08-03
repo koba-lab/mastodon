@@ -1,4 +1,6 @@
+# frozen_string_literal: true
+
 Fabricator(:notification) do
-  activity_id   1
-  activity_type 'Favourite'
+  activity fabricator: :status
+  account { Fabricate.build(:account) }
 end

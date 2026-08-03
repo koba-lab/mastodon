@@ -1,22 +1,23 @@
 # frozen_string_literal: true
 
 class PrecomputeFeedService < BaseService
-  # Fill up a user's home/mentions feed from DB and return a subset
-  # @param [Symbol] type :home or :mentions
-  # @param [Account] account
-  def call(_, account)
-    redis.pipelined do
-      # NOTE: Added `id desc, account_id desc` to `ORDER BY` section to optimize query.
-      Status.as_home_timeline(account).order(account_id: :desc).limit(FeedManager::MAX_ITEMS / 4).each do |status|
-        next if status.direct_visibility? || FeedManager.instance.filter?(:home, status, account.id)
-        redis.zadd(FeedManager.instance.key(:home, account.id), status.id, status.reblog? ? status.reblog_of_id : status.id)
-      end
+  include Redisable
+
+  def call(account, skip_filled_timelines: false)
+    @skip_filled_timelines = skip_filled_timelines
+
+    FeedManager.instance.populate_home(account) unless skip_timeline?(:home, account.id)
+
+    account.owned_lists.each do |list|
+      FeedManager.instance.populate_list(list) unless skip_timeline?(:list, list.id)
     end
+  ensure
+    HomeFeed.new(account).regeneration_finished!
   end
 
   private
 
-  def redis
-    Redis.current
+  def skip_timeline?(type, id)
+    @skip_filled_timelines && FeedManager.instance.timeline_size(type, id) * 2 > FeedManager::MAX_ITEMS
   end
 end

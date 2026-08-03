@@ -1,9 +1,19 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
-RSpec.describe Account, type: :model do
-  subject { Fabricate(:account, username: 'alice') }
+RSpec.describe Account do
+  it_behaves_like 'Reviewable'
 
-  context do
+  describe 'Associations' do
+    it { is_expected.to have_many(:account_notes).inverse_of(:account) }
+    it { is_expected.to have_many(:action_logs).class_name('Admin::ActionLog') }
+    it { is_expected.to have_many(:targeted_account_notes).inverse_of(:target_account) }
+  end
+
+  context 'with an account record' do
+    subject { Fabricate(:account) }
+
     let(:bob) { Fabricate(:account, username: 'bob') }
 
     describe '#follow!' do
@@ -44,17 +54,50 @@ RSpec.describe Account, type: :model do
   end
 
   describe '#local?' do
-    it 'returns true when the account is local' do
-      expect(subject.local?).to be true
+    context 'when the domain is null' do
+      subject { Fabricate.build :account, domain: nil }
+
+      it { is_expected.to be_local }
     end
 
-    it 'returns false when the account is on a different domain' do
-      subject.domain = 'foreign.tld'
-      expect(subject.local?).to be false
+    context 'when the domain is present' do
+      subject { Fabricate.build :account, domain: 'host.example' }
+
+      it { is_expected.to_not be_local }
+    end
+  end
+
+  describe '#remote?' do
+    context 'when the domain is null' do
+      subject { Fabricate.build :account, domain: nil }
+
+      it { is_expected.to_not be_remote }
+    end
+
+    context 'when the domain is present' do
+      subject { Fabricate.build :account, domain: 'host.example' }
+
+      it { is_expected.to be_remote }
+    end
+  end
+
+  describe '#actor_type_application?' do
+    context 'when the actor is not of type application' do
+      subject { Fabricate.build :account, actor_type: 'Person' }
+
+      it { is_expected.to_not be_actor_type_application }
+    end
+
+    context 'when the actor is of type application' do
+      subject { Fabricate.build :account, actor_type: 'Application' }
+
+      it { is_expected.to be_actor_type_application }
     end
   end
 
   describe 'Local domain user methods' do
+    subject { Fabricate(:account, domain: nil, username: 'alice') }
+
     around do |example|
       before = Rails.configuration.x.local_domain
       example.run
@@ -80,45 +123,145 @@ RSpec.describe Account, type: :model do
 
   describe '#acct' do
     it 'returns username for local users' do
-      expect(subject.acct).to eql 'alice'
+      account = Fabricate(:account, domain: nil, username: 'alice')
+      expect(account.acct).to eql 'alice'
     end
 
     it 'returns username@domain for foreign users' do
-      subject.domain = 'foreign.tld'
-      expect(subject.acct).to eql 'alice@foreign.tld'
+      account = Fabricate(:account, domain: 'foreign.tld', username: 'alice')
+      expect(account.acct).to eql 'alice@foreign.tld'
     end
   end
 
-  describe '#subscribed?' do
-    it 'returns false when no subscription expiration information is present' do
-      expect(subject.subscribed?).to be false
+  describe '#save_with_optional_media!' do
+    before do
+      stub_request(:get, 'https://remote.test/valid_avatar').to_return(request_fixture('avatar.txt'))
+      stub_request(:get, 'https://remote.test/invalid_avatar').to_return(request_fixture('feed.txt'))
     end
 
-    it 'returns true when subscription expiration has been set' do
-      subject.subscription_expires_at = 30.days.from_now
-      expect(subject.subscribed?).to be true
+    let(:account) do
+      Fabricate(:account,
+                avatar_remote_url: 'https://remote.test/valid_avatar',
+                header_remote_url: 'https://remote.test/valid_avatar')
+    end
+
+    let!(:expectation) { account.dup }
+
+    context 'with valid properties' do
+      before do
+        account.save_with_optional_media!
+      end
+
+      it 'unchanges avatar, header, avatar_remote_url, and header_remote_url' do
+        expect(account.avatar_remote_url).to eq expectation.avatar_remote_url
+        expect(account.header_remote_url).to eq expectation.header_remote_url
+        expect(account.avatar_file_name).to  eq expectation.avatar_file_name
+        expect(account.header_file_name).to  eq expectation.header_file_name
+      end
+    end
+
+    context 'with invalid properties' do
+      before do
+        account.avatar_remote_url = 'https://remote.test/invalid_avatar'
+        account.save_with_optional_media!
+      end
+
+      it 'sets default avatar, header, avatar_remote_url, and header_remote_url' do
+        expect(account.avatar_remote_url).to eq 'https://remote.test/invalid_avatar'
+        expect(account.header_remote_url).to eq expectation.header_remote_url
+        expect(account.avatar_file_name).to  be_nil
+        expect(account.header_file_name).to  eq expectation.header_file_name
+      end
+    end
+  end
+
+  describe '#possibly_stale?' do
+    let(:account) { Fabricate(:account, last_webfingered_at: last_webfingered_at) }
+
+    context 'when last_webfingered_at is nil' do
+      let(:last_webfingered_at) { nil }
+
+      it 'returns true' do
+        expect(account.possibly_stale?).to be true
+      end
+    end
+
+    context 'when last_webfingered_at is before the threshold' do
+      let(:last_webfingered_at) { (described_class::STALE_THRESHOLD + 1.hour).ago }
+
+      it 'returns true' do
+        expect(account.possibly_stale?).to be true
+      end
+    end
+
+    context 'when last_webfingered_at is after the threshold' do
+      let(:last_webfingered_at) { (described_class::STALE_THRESHOLD - 1.hour).ago }
+
+      it 'returns false' do
+        expect(account.possibly_stale?).to be false
+      end
+    end
+  end
+
+  describe '#refresh!' do
+    let(:account) { Fabricate(:account, domain: domain) }
+    let(:acct)    { account.acct }
+
+    context 'when domain is nil' do
+      let(:domain) { nil }
+
+      it 'returns nil' do
+        expect(account.refresh!).to be_nil
+      end
+
+      it 'does not call ResolveAccountService#call' do
+        service = instance_double(ResolveAccountService, call: nil)
+        allow(ResolveAccountService).to receive(:new).and_return(service)
+
+        account.refresh!
+
+        expect(service).to_not have_received(:call).with(acct)
+      end
+    end
+
+    context 'when domain is present' do
+      let(:domain) { 'example.com' }
+
+      it 'calls ResolveAccountService#call' do
+        service = instance_double(ResolveAccountService, call: nil)
+        allow(ResolveAccountService).to receive(:new).and_return(service)
+
+        account.refresh!
+
+        expect(service).to have_received(:call).with(acct).once
+      end
+    end
+  end
+
+  describe '#to_param' do
+    it 'returns username' do
+      account = Fabricate(:account, username: 'alice')
+      expect(account.to_param).to eq 'alice'
     end
   end
 
   describe '#keypair' do
     it 'returns an RSA key pair' do
-      expect(subject.keypair).to be_instance_of OpenSSL::PKey::RSA
-    end
-  end
-
-  describe '#subscription' do
-    it 'returns an OStatus subscription' do
-      expect(subject.subscription('')).to be_instance_of OStatus2::Subscription
+      account = Fabricate(:account)
+      expect(account.keypair).to be_instance_of OpenSSL::PKey::RSA
     end
   end
 
   describe '#object_type' do
     it 'is always a person' do
-      expect(subject.object_type).to be :person
+      account = Fabricate(:account)
+      expect(account.object_type).to be :person
     end
   end
 
   describe '#favourited?' do
+    subject { Fabricate(:account) }
+
     let(:original_status) do
       author = Fabricate(:account, username: 'original')
       Fabricate(:status, account: author)
@@ -130,37 +273,39 @@ RSpec.describe Account, type: :model do
         Fabricate(:status, reblog: original_status, account: author)
       end
 
-      it 'is is true when this account has favourited it' do
+      it 'is true when this account has favourited it' do
         Fabricate(:favourite, status: original_reblog, account: subject)
 
-        expect(subject.favourited?(original_status)).to eq true
+        expect(subject.favourited?(original_status)).to be true
       end
 
       it 'is false when this account has not favourited it' do
-        expect(subject.favourited?(original_status)).to eq false
+        expect(subject.favourited?(original_status)).to be false
       end
     end
 
     context 'when the status is an original status' do
-      it 'is is true when this account has favourited it' do
+      it 'is true when this account has favourited it' do
         Fabricate(:favourite, status: original_status, account: subject)
 
-        expect(subject.favourited?(original_status)).to eq true
+        expect(subject.favourited?(original_status)).to be true
       end
 
       it 'is false when this account has not favourited it' do
-        expect(subject.favourited?(original_status)).to eq false
+        expect(subject.favourited?(original_status)).to be false
       end
     end
   end
 
   describe '#reblogged?' do
+    subject { Fabricate(:account) }
+
     let(:original_status) do
       author = Fabricate(:account, username: 'original')
       Fabricate(:status, account: author)
     end
 
-    context 'when the status is a reblog of another status'do
+    context 'when the status is a reblog of another status' do
       let(:original_reblog) do
         author = Fabricate(:account, username: 'original_reblogger')
         Fabricate(:status, reblog: original_status, account: author)
@@ -169,11 +314,11 @@ RSpec.describe Account, type: :model do
       it 'is true when this account has reblogged it' do
         Fabricate(:status, reblog: original_reblog, account: subject)
 
-        expect(subject.reblogged?(original_reblog)).to eq true
+        expect(subject.reblogged?(original_reblog)).to be true
       end
 
       it 'is false when this account has not reblogged it' do
-        expect(subject.reblogged?(original_reblog)).to eq false
+        expect(subject.reblogged?(original_reblog)).to be false
       end
     end
 
@@ -181,11 +326,11 @@ RSpec.describe Account, type: :model do
       it 'is true when this account has reblogged it' do
         Fabricate(:status, reblog: original_status, account: subject)
 
-        expect(subject.reblogged?(original_status)).to eq true
+        expect(subject.reblogged?(original_status)).to be true
       end
 
       it 'is false when this account has not reblogged it' do
-        expect(subject.reblogged?(original_status)).to eq false
+        expect(subject.reblogged?(original_status)).to be false
       end
     end
   end
@@ -199,158 +344,55 @@ RSpec.describe Account, type: :model do
 
       results = account.excluded_from_timeline_account_ids
       expect(results.size).to eq 3
-      expect(results).to include(block.target_account.id)
-      expect(results).to include(mute.target_account.id)
-      expect(results).to include(block_by.account.id)
+      expect(results).to include(
+        block.target_account.id,
+        mute.target_account.id,
+        block_by.account.id
+      )
     end
   end
 
-  describe '.search_for' do
-    before do
-      @match = Fabricate(
-        :account,
-        display_name: "Display Name",
-        username: "username",
-        domain: "example.com"
-      )
-      _missing = Fabricate(
-        :account,
-        display_name: "Missing",
-        username: "missing",
-        domain: "missing.com"
-      )
-    end
-
-    it 'finds accounts with matching display_name' do
-      results = Account.search_for("display")
-      expect(results).to eq [@match]
-    end
-
-    it 'finds accounts with matching username' do
-      results = Account.search_for("username")
-      expect(results).to eq [@match]
-    end
-
-    it 'finds accounts with matching domain' do
-      results = Account.search_for("example")
-      expect(results).to eq [@match]
-    end
-
-    it 'ranks multiple matches higher' do
-      account = Fabricate(
-        :account,
-        username: "username",
-        display_name: "username"
-      )
-      results = Account.search_for("username")
-      expect(results).to eq [account, @match]
-    end
-  end
-
-  describe '.advanced_search_for' do
-    it 'ranks followed accounts higher' do
+  describe '#excluded_from_timeline_domains' do
+    it 'returns the domains blocked by the account' do
       account = Fabricate(:account)
-      match = Fabricate(:account, username: "Matching")
-      followed_match = Fabricate(:account, username: "Matcher")
-      Fabricate(:follow, account: account, target_account: followed_match)
-
-      results = Account.advanced_search_for("match", account)
-      expect(results).to eq [followed_match, match]
-      expect(results.first.rank).to be > results.last.rank
+      account.block_domain!('domain')
+      expect(account.excluded_from_timeline_domains).to contain_exactly('domain')
     end
   end
 
-  describe '.triadic_closures' do
-    it 'finds accounts you dont follow which are followed by accounts you do follow' do
-      me = Fabricate(:account)
-      friend = Fabricate(:account)
-      friends_friend = Fabricate(:account)
-      me.follow!(friend)
-      friend.follow!(friends_friend)
+  describe '#statuses_count' do
+    subject { Fabricate(:account) }
 
-      both_follow = Fabricate(:account)
-      me.follow!(both_follow)
-      friend.follow!(both_follow)
-
-      results = Account.triadic_closures(me)
-      expect(results).to eq [friends_friend]
-    end
-  end
-
-  describe '.find_local' do
-    before do
-      Fabricate(:account, username: 'Alice')
+    it 'counts statuses' do
+      Fabricate(:status, account: subject)
+      Fabricate(:status, account: subject)
+      expect(subject.statuses_count).to eq 2
     end
 
-    it 'returns Alice for alice' do
-      expect(Account.find_local('alice')).to_not be_nil
+    it 'does not count direct statuses' do
+      Fabricate(:status, account: subject, visibility: :direct)
+      expect(subject.statuses_count).to eq 0
     end
 
-    it 'returns Alice for Alice' do
-      expect(Account.find_local('Alice')).to_not be_nil
+    it 'is decremented when status is removed' do
+      status = Fabricate(:status, account: subject)
+      expect(subject.statuses_count).to eq 1
+      status.destroy
+      expect(subject.statuses_count).to eq 0
     end
 
-    it 'does not return anything for a_ice' do
-      expect(Account.find_local('a_ice')).to be_nil
-    end
-
-    it 'does not return anything for al%' do
-      expect(Account.find_local('al%')).to be_nil
-    end
-  end
-
-  describe '.find_remote' do
-    before do
-      Fabricate(:account, username: 'Alice', domain: 'mastodon.social')
-    end
-
-    it 'returns Alice for alice@mastodon.social' do
-      expect(Account.find_remote('alice', 'mastodon.social')).to_not be_nil
-    end
-
-    it 'returns Alice for ALICE@MASTODON.SOCIAL' do
-      expect(Account.find_remote('ALICE', 'MASTODON.SOCIAL')).to_not be_nil
-    end
-
-    it 'does not return anything for a_ice@mastodon.social' do
-      expect(Account.find_remote('a_ice', 'mastodon.social')).to be_nil
-    end
-
-    it 'does not return anything for alice@m_stodon.social' do
-      expect(Account.find_remote('alice', 'm_stodon.social')).to be_nil
-    end
-
-    it 'does not return anything for alice@m%' do
-      expect(Account.find_remote('alice', 'm%')).to be_nil
-    end
-  end
-
-  describe '.following_map' do
-    it 'returns an hash' do
-      expect(Account.following_map([], 1)).to be_a Hash
-    end
-  end
-
-  describe '.followed_by_map' do
-    it 'returns an hash' do
-      expect(Account.followed_by_map([], 1)).to be_a Hash
-    end
-  end
-
-  describe '.blocking_map' do
-    it 'returns an hash' do
-      expect(Account.blocking_map([], 1)).to be_a Hash
-    end
-  end
-
-  describe '.requested_map' do
-    it 'returns an hash' do
-      expect(Account.requested_map([], 1)).to be_a Hash
+    it 'is decremented when status is removed when account is not preloaded' do
+      status = Fabricate(:status, account: subject)
+      expect(subject.reload.statuses_count).to eq 1
+      clean_status = Status.find(status.id)
+      expect(clean_status.association(:account).loaded?).to be false
+      clean_status.destroy
+      expect(subject.reload.statuses_count).to eq 0
     end
   end
 
   describe 'MENTION_RE' do
-    subject { Account::MENTION_RE }
+    subject { described_class::MENTION_RE }
 
     it 'matches usernames in the middle of a sentence' do
       expect(subject.match('Hello to @alice from me')[1]).to eq 'alice'
@@ -380,110 +422,463 @@ RSpec.describe Account, type: :model do
       expect(subject.match('Check this out https://medium.com/@alice/some-article#.abcdef123')).to be_nil
     end
 
-    xit 'does not match URL querystring' do
+    it 'does not match URL query string' do
       expect(subject.match('https://example.com/?x=@alice')).to be_nil
+    end
+
+    it 'matches usernames immediately following the letter ß' do
+      expect(subject.match('Hello toß @alice from me')[1]).to eq 'alice'
+    end
+
+    it 'matches usernames containing uppercase characters' do
+      expect(subject.match('Hello to @aLice@Example.com from me')[1]).to eq 'aLice@Example.com'
     end
   end
 
-  describe 'validations' do
-    it 'has a valid fabricator' do
-      account = Fabricate.build(:account)
-      account.valid?
-      expect(account).to be_valid
-    end
+  describe 'Callbacks' do
+    describe 'Stripping content when required' do
+      context 'with a remote account' do
+        subject { Fabricate.build :account, domain: 'host.example', note: '   note   ', display_name: '   display name   ' }
 
-    it 'is invalid without a username' do
-      account = Fabricate.build(:account, username: nil)
-      account.valid?
-      expect(account).to model_have_error_on_field(:username)
-    end
-
-    it 'is invalid if the username already exists' do
-      account_1 = Fabricate(:account, username: 'the_doctor')
-      account_2 = Fabricate.build(:account, username: 'the_doctor')
-      account_2.valid?
-      expect(account_2).to model_have_error_on_field(:username)
-    end
-
-    context 'when is local' do
-      it 'is invalid if the username doesn\'t only contains letters, numbers and underscores' do
-        account = Fabricate.build(:account, username: 'the-doctor')
-        account.valid?
-        expect(account).to model_have_error_on_field(:username)
+        it 'preserves content' do
+          expect { subject.valid? }
+            .to not_change(subject, :note)
+            .and not_change(subject, :display_name)
+        end
       end
 
-      it 'is invalid if the username is longer then 30 characters' do
-        account = Fabricate.build(:account, username: Faker::Lorem.characters(31))
-        account.valid?
-        expect(account).to model_have_error_on_field(:username)
+      context 'with a local account' do
+        subject { Fabricate.build :account, domain: nil, note:, display_name: }
+
+        context 'with populated fields' do
+          let(:note) { '   note   ' }
+          let(:display_name) { '   display name   ' }
+
+          it 'strips content' do
+            expect { subject.valid? }
+              .to change(subject, :note).to('note')
+              .and change(subject, :display_name).to('display name')
+          end
+        end
+
+        context 'with empty fields' do
+          let(:note) { nil }
+          let(:display_name) { nil }
+
+          it 'preserves content' do
+            expect { subject.valid? }
+              .to not_change(subject, :note)
+              .and not_change(subject, :display_name)
+          end
+        end
       end
+    end
+  end
+
+  describe '#can_be_attributed_from?' do
+    subject { Fabricate(:account, attribution_domains: %w(example.com)) }
+
+    it 'returns true for a matching domain' do
+      expect(subject.can_be_attributed_from?('example.com')).to be true
+    end
+
+    it 'returns true for a subdomain of a domain' do
+      expect(subject.can_be_attributed_from?('foo.example.com')).to be true
+    end
+
+    it 'returns false for a non-matching domain' do
+      expect(subject.can_be_attributed_from?('hoge.com')).to be false
+    end
+  end
+
+  describe 'Normalizations' do
+    describe 'username' do
+      it { is_expected.to normalize(:username).from(" \u3000bob \t \u00a0 \n ").to('bob') }
+    end
+
+    describe 'attribution_domains' do
+      it { is_expected.to normalize(:attribution_domains).from(['example.com', ' example.com ', ' example.net ']).to(['example.com', 'example.net']) }
+      it { is_expected.to normalize(:attribution_domains).from(['https://example.com', 'http://example.net', '*.example.org']).to(['example.com', 'example.net', 'example.org']) }
+      it { is_expected.to normalize(:attribution_domains).from(['', ' ', nil]).to([]) }
+    end
+  end
+
+  describe 'Validations' do
+    it { is_expected.to validate_presence_of(:username) }
+
+    it { is_expected.to_not allow_value('').for(:domain) }
+
+    context 'when account is local' do
+      subject { Fabricate.build :account, domain: nil }
+
+      let(:domains_limit) { described_class::ATTRIBUTION_DOMAINS_LIMIT }
+
+      context 'with an existing differently-cased username account' do
+        before { Fabricate :account, username: 'the_doctor' }
+
+        it { is_expected.to_not allow_value('the_Doctor').for(:username) }
+      end
+
+      it { is_expected.to_not allow_value('support').for(:username) }
+
+      it 'is valid when username is reserved but record has already been created' do
+        account = Fabricate.build(:account, username: 'support')
+        account.save(validate: false)
+        expect(account.valid?).to be true
+      end
+
+      context 'with the instance actor' do
+        subject { Fabricate.build :account, id: described_class::INSTANCE_ACTOR_ID, actor_type: 'Application', locked: true }
+
+        it { is_expected.to allow_value('example.com').for(:username) }
+      end
+
+      it 'is valid if we are creating a possibly-conflicting instance actor account' do
+        _account = Fabricate(:account, username: 'examplecom')
+        instance_account = Fabricate.build(:account, id: described_class::INSTANCE_ACTOR_ID, actor_type: 'Application', locked: true, username: 'example.com')
+        expect(instance_account.valid?).to be true
+      end
+
+      it { is_expected.to_not allow_values('the-doctor', 'the.doctor').for(:username) }
+
+      it { is_expected.to validate_length_of(:username).is_at_most(described_class::USERNAME_LENGTH_LIMIT) }
+      it { is_expected.to validate_length_of(:display_name).is_at_most(described_class::DISPLAY_NAME_LENGTH_LIMIT) }
+
+      it { is_expected.to_not allow_values(account_note_over_limit).for(:note) }
+
+      it { is_expected.to validate_absence_of(:followers_url).on(:create) }
+      it { is_expected.to validate_absence_of(:inbox_url).on(:create) }
+      it { is_expected.to validate_absence_of(:shared_inbox_url).on(:create) }
+      it { is_expected.to validate_absence_of(:uri).on(:create) }
+
+      it { is_expected.to allow_values([], ['example.com'], (1..domains_limit).to_a).for(:attribution_domains) }
+      it { is_expected.to_not allow_values(['example com'], ['@'], (1..(domains_limit + 1)).to_a).for(:attribution_domains) }
+    end
+
+    context 'when account is remote' do
+      subject { Fabricate.build :account, domain: 'host.example' }
+
+      context 'when a normalized domain account exists' do
+        subject { Fabricate.build :account, domain: 'xn--r9j5b5b' }
+
+        before { Fabricate(:account, domain: 'にゃん', username: 'username') }
+
+        it { is_expected.to_not allow_values('username', 'Username').for(:username) }
+      end
+
+      it { is_expected.to validate_length_of(:username).is_at_most(described_class::USERNAME_LENGTH_HARD_LIMIT) }
+
+      it { is_expected.to allow_values('the-doctor', username_over_limit).for(:username) }
+      it { is_expected.to_not allow_values('the doctor').for(:username) }
+
+      it { is_expected.to allow_values(display_name_over_limit).for(:display_name) }
+
+      it { is_expected.to allow_values(account_note_over_limit).for(:note) }
+    end
+
+    def username_over_limit
+      'a' * described_class::USERNAME_LENGTH_LIMIT * 2
+    end
+
+    def display_name_over_limit
+      'a' * described_class::DISPLAY_NAME_LENGTH_LIMIT * 2
+    end
+
+    def account_note_over_limit
+      'a' * described_class::NOTE_LENGTH_LIMIT * 2
     end
   end
 
   describe 'scopes' do
-    describe 'remote' do
-      it 'returns an array of accounts who have a domain' do
-        account_1 = Fabricate(:account, domain: nil)
-        account_2 = Fabricate(:account, domain: 'example.com')
-        expect(Account.remote).to match_array([account_2])
+    describe 'matches_uri_prefix' do
+      let!(:alice) { Fabricate :account, domain: 'host.example', uri: 'https://host.example/user/a' }
+      let!(:bob) { Fabricate :account, domain: 'top-level.example', uri: 'https://top-level.example' }
+
+      it 'returns accounts which start with the value' do
+        results = described_class.matches_uri_prefix('https://host.example')
+
+        expect(results.size)
+          .to eq(1)
+        expect(results)
+          .to include(alice)
+          .and not_include(bob)
+      end
+
+      it 'returns accounts which equal the value' do
+        results = described_class.matches_uri_prefix('https://top-level.example')
+
+        expect(results.size)
+          .to eq(1)
+        expect(results)
+          .to include(bob)
+          .and not_include(alice)
       end
     end
 
-    describe 'by_domain_accounts' do
-      it 'returns accounts grouped by domain sorted by accounts' do
-        2.times { Fabricate(:account, domain: 'example.com') }
-        Fabricate(:account, domain: 'example2.com')
+    describe 'auditable' do
+      let!(:alice) { Fabricate :account }
+      let!(:bob) { Fabricate :account }
 
-        results = Account.by_domain_accounts
-        expect(results.length).to eq 2
-        expect(results.first.domain).to eq 'example.com'
-        expect(results.first.accounts_count).to eq 2
-        expect(results.last.domain).to eq 'example2.com'
-        expect(results.last.accounts_count).to eq 1
+      before do
+        2.times { Fabricate :action_log, account: alice }
+      end
+
+      it 'returns distinct accounts with action log records' do
+        results = described_class.auditable
+
+        expect(results.size)
+          .to eq(1)
+        expect(results)
+          .to include(alice)
+          .and not_include(bob)
+      end
+    end
+
+    describe 'matches_display_name' do
+      it 'matches display name which starts with the given string' do
+        match = Fabricate(:account, display_name: 'pattern and suffix')
+        Fabricate(:account, display_name: 'prefix and pattern')
+
+        expect(described_class.matches_display_name('pattern')).to eq [match]
+      end
+    end
+
+    describe 'matches_username' do
+      it 'matches display name which starts with the given string' do
+        match = Fabricate(:account, username: 'pattern_and_suffix')
+        Fabricate(:account, username: 'prefix_and_pattern')
+
+        expect(described_class.matches_username('pattern')).to eq [match]
+      end
+    end
+
+    describe 'by_domain_and_subdomains' do
+      it 'returns exact domain matches' do
+        account = Fabricate(:account, domain: 'example.com')
+        expect(described_class.by_domain_and_subdomains('example.com')).to eq [account]
+      end
+
+      it 'returns subdomains' do
+        account = Fabricate(:account, domain: 'foo.example.com')
+        expect(described_class.by_domain_and_subdomains('example.com')).to eq [account]
+      end
+
+      it 'does not return partially matching domains' do
+        account = Fabricate(:account, domain: 'grexample.com')
+        expect(described_class.by_domain_and_subdomains('example.com')).to_not eq [account]
+      end
+    end
+
+    describe 'remote' do
+      it 'returns an array of accounts who have a domain' do
+        _account = Fabricate(:account, domain: nil)
+        account_with_domain = Fabricate(:account, domain: 'example.com')
+        expect(described_class.remote).to contain_exactly(account_with_domain)
       end
     end
 
     describe 'local' do
       it 'returns an array of accounts who do not have a domain' do
-        account_1 = Fabricate(:account, domain: nil)
-        account_2 = Fabricate(:account, domain: 'example.com')
-        expect(Account.local).to match_array([account_1])
+        local_account = Fabricate(:account, domain: nil)
+        _account_with_domain = Fabricate(:account, domain: 'example.com')
+        expect(described_class.without_internal.local).to contain_exactly(local_account)
       end
     end
 
-    describe 'silenced' do
-      it 'returns an array of accounts who are silenced' do
-        account_1 = Fabricate(:account, silenced: true)
-        account_2 = Fabricate(:account, silenced: false)
-        expect(Account.silenced).to match_array([account_1])
+    describe 'partitioned' do
+      it 'returns a relation of accounts partitioned by domain' do
+        matches = %w(a b a b)
+        matches.size.times.to_a.shuffle.each do |index|
+          matches[index] = Fabricate(:account, domain: matches[index])
+        end
+
+        expect(described_class.without_internal.partitioned).to match_array(matches)
       end
     end
 
-    describe 'suspended' do
-      it 'returns an array of accounts who are suspended' do
-        account_1 = Fabricate(:account, suspended: true)
-        account_2 = Fabricate(:account, suspended: false)
-        expect(Account.suspended).to match_array([account_1])
+    describe 'recent' do
+      it 'returns a relation of accounts sorted by recent creation' do
+        matches = Array.new(2) { Fabricate(:account) }
+        expect(described_class.without_internal.recent).to match_array(matches)
+      end
+    end
+
+    describe 'searchable' do
+      let!(:suspended_local)        { Fabricate(:account, suspended: true, username: 'suspended_local') }
+      let!(:suspended_remote)       { Fabricate(:account, suspended: true, domain: 'example.org', username: 'suspended_remote') }
+      let!(:silenced_local)         { Fabricate(:account, silenced: true, username: 'silenced_local') }
+      let!(:silenced_remote)        { Fabricate(:account, silenced: true, domain: 'example.org', username: 'silenced_remote') }
+      let!(:unconfirmed)            { Fabricate(:user, confirmed_at: nil).account }
+      let!(:unapproved)             { Fabricate(:user, approved: false).account }
+      let!(:unconfirmed_unapproved) { Fabricate(:user, confirmed_at: nil, approved: false).account }
+      let!(:local_account)          { Fabricate(:account, username: 'local_account') }
+      let!(:remote_account)         { Fabricate(:account, domain: 'example.org', username: 'remote_account') }
+
+      before do
+        # Accounts get automatically-approved depending on settings, so ensure they aren't approved
+        unapproved.user.update(approved: false)
+        unconfirmed_unapproved.user.update(approved: false)
+      end
+
+      it 'returns every usable non-suspended account' do
+        expect(described_class.searchable).to contain_exactly(silenced_local, silenced_remote, local_account, remote_account)
+        expect(described_class.searchable).to_not include(suspended_local, suspended_remote, unconfirmed, unapproved)
+      end
+
+      it 'does not mess with previously-applied scopes' do
+        expect(described_class.where.not(id: remote_account.id).searchable).to contain_exactly(silenced_local, silenced_remote, local_account)
       end
     end
   end
 
-  describe 'static avatars' do
-    describe 'when GIF' do
-      it 'creates a png static style' do
-        subject.avatar = attachment_fixture('avatar.gif')
-        subject.save
+  context 'when is local' do
+    it 'generates keys' do
+      account = described_class.create!(domain: nil, username: 'user_without_keys')
 
-        expect(subject.avatar_static_url).to_not eq subject.avatar_original_url
+      expect(account)
+        .to be_private_key
+        .and be_public_key
+      expect(account.keypair)
+        .to be_private
+        .and be_public
+    end
+  end
+
+  context 'when is remote' do
+    it 'does not generate keys' do
+      key = OpenSSL::PKey::RSA.new(1024).public_key
+      account = described_class.create!(domain: 'remote', uri: 'https://remote/actor', username: 'remote_user_with_public', public_key: key.to_pem)
+      expect(account.keypair.params).to eq key.params
+    end
+
+    it 'normalizes domain' do
+      account = described_class.create!(domain: 'にゃん', uri: 'https://xn--r9j5b5b/actor', username: 'remote_user_with_idn_domain')
+      expect(account.domain).to eq 'xn--r9j5b5b'
+    end
+  end
+
+  describe '#increment_count!' do
+    subject { Fabricate(:account) }
+
+    it 'increments the count in multi-threaded an environment when account_stat is not yet initialized' do
+      subject
+
+      multi_threaded_execution(15) do
+        described_class.find(subject.id).increment_count!(:followers_count)
+      end
+
+      expect(subject.reload.followers_count).to eq 15
+    end
+  end
+
+  describe '#featureable_by?' do
+    subject { Fabricate.build(:account, domain: (local ? nil : 'example.com'), discoverable:, locked:, feature_approval_policy:) }
+
+    let(:locked) { false }
+    let(:local_account) { Fabricate(:account) }
+
+    context 'when account is local' do
+      let(:local) { true }
+      let(:feature_approval_policy) { 0 }
+
+      context 'when account is discoverable' do
+        let(:discoverable) { true }
+
+        context 'when the account is not locked' do
+          let(:locked) { false }
+
+          it 'returns `true`' do
+            expect(subject.featureable_by?(local_account)).to be true
+          end
+        end
+
+        context 'when the account is locked' do
+          let(:locked) { true }
+
+          it 'returns `false`' do
+            expect(subject.featureable_by?(local_account)).to be false
+          end
+
+          context 'when the other account is a follower' do
+            before do
+              local_account.follow!(subject)
+            end
+
+            it 'returns `true`' do
+              expect(subject.featureable_by?(local_account)).to be true
+            end
+          end
+        end
+      end
+
+      context 'when account is not discoverable' do
+        let(:discoverable) { false }
+
+        it 'returns `false`' do
+          expect(subject.featureable_by?(local_account)).to be false
+        end
       end
     end
 
-    describe 'when non-GIF' do
-      it 'does not create extra static style' do
-        subject.avatar = attachment_fixture('attachment.jpg')
-        subject.save
+    context 'when account is remote' do
+      let(:local) { false }
+      let(:discoverable) { true }
+      let(:feature_approval_policy) { (0b10 << 16) | 0 }
 
-        expect(subject.avatar_static_url).to eq subject.avatar_original_url
+      context 'when the policy allows it' do
+        it 'returns `true`' do
+          expect(subject.featureable_by?(local_account)).to be true
+        end
+      end
+
+      context 'when the policy forbids it' do
+        let(:feature_approval_policy) { 0 }
+
+        it 'returns `false`' do
+          expect(subject.featureable_by?(local_account)).to be false
+        end
+      end
+    end
+  end
+
+  describe '#needs_background_refresh?' do
+    subject { account.needs_background_refresh? }
+
+    context 'when account is local' do
+      let(:account) { Fabricate(:account) }
+
+      it { is_expected.to be false }
+    end
+
+    context 'when account is remote' do
+      let(:account) { Fabricate(:remote_account, last_webfingered_at:) }
+
+      context 'when account has never been updated or last update is unknown' do
+        let(:last_webfingered_at) { nil }
+
+        it { is_expected.to be true }
+      end
+
+      context 'when account has not been updated for over a week' do
+        let(:last_webfingered_at) { 8.days.ago }
+
+        it { is_expected.to be true }
+      end
+
+      context 'when account has been updated in the last week' do
+        let(:last_webfingered_at) { 4.days.ago }
+
+        context 'when there is no other account from the same domain with an feature approval policy' do
+          it { is_expected.to be false }
+        end
+
+        context 'when there is another account from the same domain with a feature approval policy' do
+          before do
+            Fabricate(:remote_account, domain: account.domain, feature_approval_policy: 1)
+          end
+
+          it { is_expected.to be true }
+        end
       end
     end
   end

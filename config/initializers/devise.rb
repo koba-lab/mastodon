@@ -1,15 +1,111 @@
+# frozen_string_literal: true
+
+require 'devise/strategies/authenticatable'
+
+Warden::Manager.after_set_user except: :fetch do |user, warden|
+  session_id = warden.cookies.signed['_session_id'] || warden.raw_session['auth_id']
+  session_id = user.activate_session(warden.request) unless user.session_activations.active?(session_id)
+
+  warden.cookies.signed['_session_id'] = {
+    value: session_id,
+    expires: 1.year.from_now,
+    httponly: true,
+    same_site: :lax,
+  }
+end
+
+Warden::Manager.after_fetch do |user, warden|
+  session_id = warden.cookies.signed['_session_id'] || warden.raw_session['auth_id']
+
+  if session_id && (session = user.session_activations.find_by(session_id: session_id))
+    session.update(ip: warden.request.remote_ip) if session.ip != warden.request.remote_ip
+
+    warden.cookies.signed['_session_id'] = {
+      value: session_id,
+      expires: 1.year.from_now,
+      httponly: true,
+      same_site: :lax,
+    }
+  else
+    warden.logout
+    throw :warden, message: :unauthenticated
+  end
+end
+
+Warden::Manager.before_logout do |_, warden|
+  SessionActivation.deactivate warden.cookies.signed['_session_id']
+  warden.cookies.delete('_session_id')
+end
+
+module Devise
+  mattr_accessor :pam_authentication, default: false
+  mattr_accessor :pam_controlled_service, default: nil
+
+  mattr_accessor :check_at_sign, default: false
+
+  mattr_accessor :ldap_authentication, default: false
+  mattr_accessor :ldap_host, default: nil
+  mattr_accessor :ldap_port, default: nil
+  mattr_accessor :ldap_method, default: nil
+  mattr_accessor :ldap_base, default: nil
+  mattr_accessor :ldap_uid, default: nil
+  mattr_accessor :ldap_mail, default: nil
+  mattr_accessor :ldap_bind_dn, default: nil
+  mattr_accessor :ldap_password, default: nil
+  mattr_accessor :ldap_tls_no_verify, default: false
+  mattr_accessor :ldap_search_filter, default: nil
+  mattr_accessor :ldap_uid_conversion_enabled, default: false
+  mattr_accessor :ldap_uid_conversion_search, default: nil
+  mattr_accessor :ldap_uid_conversion_replace, default: nil
+
+  module Strategies
+    class PamAuthenticatable
+      def valid?
+        super && ::Devise.pam_authentication
+      end
+    end
+
+    class SessionActivationRememberable < Authenticatable
+      def valid?
+        @session_cookie = nil
+        session_cookie.present?
+      end
+
+      def authenticate!
+        resource = SessionActivation.find_by(session_id: session_cookie)&.user
+
+        unless resource
+          cookies.delete('_session_id')
+          return pass
+        end
+
+        success!(resource) if validate(resource)
+      end
+
+      private
+
+      def session_cookie
+        @session_cookie ||= cookies.signed['_session_id']
+      end
+    end
+  end
+end
+
+Warden::Strategies.add(:session_activation_rememberable, Devise::Strategies::SessionActivationRememberable)
+
 Devise.setup do |config|
   config.warden do |manager|
-    manager.default_strategies(scope: :user).unshift :two_factor_authenticatable
-    manager.default_strategies(scope: :user).unshift :two_factor_backupable
+    manager.default_strategies(scope: :user).unshift :two_factor_ldap_authenticatable if Devise.ldap_authentication
+    manager.default_strategies(scope: :user).unshift :two_factor_pam_authenticatable  if Devise.pam_authentication
+    manager.default_strategies(scope: :user).unshift :session_activation_rememberable
   end
 
   # The secret key used by Devise. Devise uses this key to generate
   # random tokens. Changing this key will render invalid all existing
   # confirmation, reset password and unlock tokens in the database.
-  # Devise will use the `secret_key_base` on Rails 4+ applications as its `secret_key`
+  # Devise will use the `secret_key_base` as its `secret_key`
   # by default. You can change it below and use your own secret key.
-  # config.secret_key = '2f86974c4dd7735170fd70fbf399f7a477ffd635ef240d07a22cf4bd7cd13dbae17c4383a2996d0c1e79a991ec18a91a17424c53e4771adb75a8b21904bd1403'
+  # config.secret_key = '<%= SecureRandom.hex(64) %>'
 
   # ==> Mailer Configuration
   # Configure the e-mail address which will be shown in Devise::Mailer,
@@ -44,7 +140,7 @@ Devise.setup do |config|
   # config.request_keys = []
 
   # Configure which authentication keys should be case-insensitive.
-  # These keys will be downcased upon creating or modifying a user and when used
+  # These keys will be lowercased upon creating or modifying a user and when used
   # to authenticate or find a user. Default is :email.
   config.case_insensitive_keys = [:email]
 
@@ -58,13 +154,15 @@ Devise.setup do |config|
   # given strategies, for example, `config.params_authenticatable = [:database]` will
   # enable it only for database (email + password) authentication.
   # config.params_authenticatable = true
+  config.params_authenticatable = true
 
   # Tell if authentication through HTTP Auth is enabled. False by default.
   # It can be set to an array that will enable http authentication only for the
   # given strategies, for example, `config.http_authenticatable = [:database]` will
   # enable it only for database authentication. The supported strategies are:
   # :database      = Support basic authentication with authentication key + password
-  config.http_authenticatable = [:database]
+  # config.http_authenticatable = [:pam, :database]
+  config.http_authenticatable = false
 
   # If 401 status code should be returned for AJAX requests. True by default.
   # config.http_authenticatable_on_xhr = true
@@ -105,6 +203,9 @@ Devise.setup do |config|
   # Setup a pepper to generate the encrypted password.
   # config.pepper = '104d16705f794923e77c5e5167b52452d00646dc952a2d30b541c24086e647012c7b9625f253c51912e455981e503446772973d5f1638631196c819d7137fad4'
 
+  # Send a notification to the original email when the user's email is changed.
+  config.send_email_changed_notification = true
+
   # Send a notification email when the user's password is changed
   config.send_password_change_notification = true
 
@@ -122,20 +223,20 @@ Devise.setup do |config|
   # their account can't be confirmed with the token any more.
   # Default is nil, meaning there is no restriction on how long a user can take
   # before confirming their account.
-  # config.confirm_within = 3.days
+  config.confirm_within = 2.days
 
   # If true, requires any email changes to be confirmed (exactly the same way as
   # initial account confirmation) to be applied. Requires additional unconfirmed_email
   # db field (see migrations). Until confirmed, new email is stored in
   # unconfirmed_email column, and copied to email column on successful confirmation.
-  config.reconfirmable = false
+  config.reconfirmable = true
 
   # Defines which key will be used when confirming an account
   # config.confirmation_keys = [:email]
 
   # ==> Configuration for :rememberable
   # The time the user will be remembered without asking for credentials again.
-  # config.remember_for = 2.weeks
+  config.remember_for = 1.year
 
   # Invalidates all the remember me tokens when the user signs out.
   config.expire_all_remember_me_on_sign_out = true
@@ -145,7 +246,7 @@ Devise.setup do |config|
 
   # Options to be passed to the created cookie. For instance, you can set
   # secure: true in order to force SSL only cookies.
-  # config.rememberable_options = {}
+  config.rememberable_options = {}
 
   # ==> Configuration for :validatable
   # Range for password length.
@@ -266,4 +367,32 @@ Devise.setup do |config|
   # When using OmniAuth, Devise cannot automatically set OmniAuth path,
   # so you need to do it manually. For the users scope, it would be:
   # config.omniauth_path_prefix = '/my_engine/users/auth'
+
+  if ENV['PAM_ENABLED'] == 'true'
+    config.pam_authentication     = true
+    config.usernamefield          = nil
+    config.emailfield             = 'email'
+    config.check_at_sign          = true
+    config.pam_default_suffix     = ENV.fetch('PAM_EMAIL_DOMAIN') { ENV.fetch('LOCAL_DOMAIN', nil) }
+    config.pam_default_service    = ENV.fetch('PAM_DEFAULT_SERVICE') { 'rpam' }
+    config.pam_controlled_service = ENV.fetch('PAM_CONTROLLED_SERVICE', nil).presence
+  end
+
+  if ENV['LDAP_ENABLED'] == 'true'
+    config.ldap_authentication = true
+    config.check_at_sign       = true
+    config.ldap_host           = ENV.fetch('LDAP_HOST', 'localhost')
+    config.ldap_port           = ENV.fetch('LDAP_PORT', 389).to_i
+    config.ldap_method         = ENV.fetch('LDAP_METHOD', :simple_tls).to_sym
+    config.ldap_base           = ENV.fetch('LDAP_BASE')
+    config.ldap_bind_dn        = ENV.fetch('LDAP_BIND_DN')
+    config.ldap_password       = ENV.fetch('LDAP_PASSWORD')
+    config.ldap_uid            = ENV.fetch('LDAP_UID', 'cn')
+    config.ldap_mail           = ENV.fetch('LDAP_MAIL', 'mail')
+    config.ldap_tls_no_verify  = ENV['LDAP_TLS_NO_VERIFY'] == 'true'
+    config.ldap_search_filter  = ENV.fetch('LDAP_SEARCH_FILTER', '(|(%<uid>s=%<email>s)(%<mail>s=%<email>s))')
+    config.ldap_uid_conversion_enabled  = ENV['LDAP_UID_CONVERSION_ENABLED'] == 'true'
+    config.ldap_uid_conversion_search   = ENV.fetch('LDAP_UID_CONVERSION_SEARCH', '.,- ')
+    config.ldap_uid_conversion_replace  = ENV.fetch('LDAP_UID_CONVERSION_REPLACE', '_')
+  end
 end

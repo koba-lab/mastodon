@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class CreateMutes < ActiveRecord::Migration[5.0]
   def change
     create_table :mutes do |t|
@@ -7,6 +9,5 @@ class CreateMutes < ActiveRecord::Migration[5.0]
     end
 
     add_index :mutes, [:account_id, :target_account_id], unique: true
-
   end
 end

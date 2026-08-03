@@ -1,76 +1,125 @@
-import { createSelector } from 'reselect';
-import Immutable from 'immutable';
+import { createSelector } from '@reduxjs/toolkit';
+import { List as ImmutableList, Map as ImmutableMap } from 'immutable';
 
-const getStatuses = state => state.get('statuses');
-const getAccounts = state => state.get('accounts');
+import { me } from '../initial_state';
 
-const getAccountBase         = (state, id) => state.getIn(['accounts', id], null);
-const getAccountCounters     = (state, id) => state.getIn(['accounts_counters', id], null);
-const getAccountRelationship = (state, id) => state.getIn(['relationships', id], null);
+import { getFilters } from './filters';
 
-export const makeGetAccount = () => {
-  return createSelector([getAccountBase, getAccountCounters, getAccountRelationship], (base, counters, relationship) => {
-    if (base === null) {
-      return null;
+export { makeGetAccount } from "./accounts";
+export { getStatusList } from "./statuses";
+
+const getStatusInputSelectors = [
+  (state, { id }) => state.getIn(['statuses', id]),
+  (state, { id }) => state.getIn(['statuses', state.getIn(['statuses', id, 'reblog'])]),
+  (state, { id }) => state.getIn(['accounts', state.getIn(['statuses', id, 'account'])]),
+  (state, { id }) => state.getIn(['accounts', state.getIn(['statuses', state.getIn(['statuses', id, 'reblog']), 'account'])]),
+  getFilters,
+  (_, { contextType }) => ['detailed', 'bookmarks', 'favourites', 'search'].includes(contextType),
+];
+
+function getStatusResultFunction(
+  statusBase,
+  statusReblog,
+  accountBase,
+  accountReblog,
+  filters,
+  warnInsteadOfHide
+) {
+  if (!statusBase) {
+    return {
+      status: null,
+      loadingState: 'not-found',
+    };
+  }
+
+  // When a status is loading, a `isLoading` property is set
+  // A status can be loading because it is not known yet (in which case it will only contain `isLoading`)
+  // or because it is being re-fetched; in the latter case, `visibility` will always be set to a non-empty
+  // string.
+  if (statusBase.get('isLoading') && !statusBase.get('visibility')) {
+    return {
+      status: null,
+      loadingState: 'loading',
+    }
+  }
+
+  if (statusReblog) {
+    statusReblog = statusReblog.set('account', accountReblog);
+  } else {
+    statusReblog = null;
+  }
+
+  let filtered = false;
+  let mediaFiltered = false;
+  if ((accountReblog || accountBase).get('id') !== me && filters) {
+    let filterResults = statusReblog?.get('filtered') || statusBase.get('filtered') || ImmutableList();
+    if (!warnInsteadOfHide && filterResults.some((result) => filters.getIn([result.get('filter'), 'filter_action']) === 'hide')) {
+      return {
+        status: null,
+        loadingState: 'filtered',
+      }
     }
 
-    return base.merge(counters).set('relationship', relationship);
-  });
-};
+    let mediaFilters = filterResults.filter(result => filters.getIn([result.get('filter'), 'filter_action']) === 'blur');
+    if (!mediaFilters.isEmpty()) {
+      mediaFiltered = mediaFilters.map(result => filters.getIn([result.get('filter'), 'title']));
+    }
+
+    filterResults = filterResults.filter(result => filters.has(result.get('filter')) && filters.getIn([result.get('filter'), 'filter_action']) !== 'blur');
+    if (!filterResults.isEmpty()) {
+      filtered = filterResults.map(result => filters.getIn([result.get('filter'), 'title']));
+    }
+  }
+
+  return {
+    status: statusBase.withMutations(map => {
+      map.set('reblog', statusReblog);
+      map.set('account', accountBase);
+      map.set('matched_filters', filtered ? filtered.toJS() : false);
+      map.set('matched_media_filters', mediaFiltered ? mediaFiltered.toJS() : false);
+    }),
+    loadingState: statusBase.get('isLoading') ? 'loading' : 'complete'
+  };
+}
 
 export const makeGetStatus = () => {
   return createSelector(
-    [
-      (state, id) => state.getIn(['statuses', id]),
-      (state, id) => state.getIn(['statuses', state.getIn(['statuses', id, 'reblog'])]),
-      (state, id) => state.getIn(['accounts', state.getIn(['statuses', id, 'account'])]),
-      (state, id) => state.getIn(['accounts', state.getIn(['statuses', state.getIn(['statuses', id, 'reblog']), 'account'])]),
-    ],
-
-    (statusBase, statusReblog, accountBase, accountReblog) => {
-      if (!statusBase) {
-        return null;
-      }
-
-      if (statusReblog) {
-        statusReblog = statusReblog.set('account', accountReblog);
-      } else {
-        statusReblog = null;
-      }
-
-      return statusBase.withMutations(map => {
-        map.set('reblog', statusReblog);
-        map.set('account', accountBase);
-      });
-    }
+    getStatusInputSelectors,
+    (...args) => {
+      const {status} = getStatusResultFunction(...args);
+      return status
+    },
   );
 };
 
-const getAlertsBase = state => state.get('alerts');
-
-export const getAlerts = createSelector([getAlertsBase], (base) => {
-  let arr = [];
-
-  base.forEach(item => {
-    arr.push({
-      message: item.get('message'),
-      title: item.get('title'),
-      key: item.get('key'),
-      dismissAfter: 5000,
-      barStyle: {
-        zIndex: 200
-      }
-    });
-  });
-
-  return arr;
-});
-
-export const makeGetNotification = () => {
-  return createSelector([
-    (_, base)             => base,
-    (state, _, accountId) => state.getIn(['accounts', accountId])
-  ], (base, account) => {
-    return base.set('account', account);
-  });
+/**
+ * This selector extends the `makeGetStatus` with a more detailed
+ * `loadingState`, which is useful to find out why `null` is returned
+ * for the `status` field
+ */
+export const makeGetStatusWithExtraInfo = () => {
+  return createSelector(
+    getStatusInputSelectors,
+    getStatusResultFunction,
+  );
 };
+
+export const makeGetPictureInPicture = () => {
+  return createSelector([
+    (state, { id }) => state.picture_in_picture.statusId === id,
+    (state) => state.getIn(['meta', 'layout']) !== 'mobile',
+  ], (inUse, available) => ImmutableMap({
+    inUse: inUse && available,
+    available,
+  }));
+};
+
+export const makeGetNotification = () => createSelector([
+  (_, base)             => base,
+  (state, _, accountId) => state.getIn(['accounts', accountId]),
+], (base, account) => base.set('account', account));
+
+export const makeGetReport = () => createSelector([
+  (_, base) => base,
+  (state, _, targetAccountId) => state.getIn(['accounts', targetAccountId]),
+], (base, targetAccount) => base.set('target_account', targetAccount));

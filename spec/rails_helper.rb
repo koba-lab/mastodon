@@ -1,36 +1,158 @@
-ENV['RAILS_ENV'] ||= 'test'
-require File.expand_path('../../config/environment', __FILE__)
+# frozen_string_literal: true
 
-abort("The Rails environment is running in production mode!") if Rails.env.production?
+ENV['RAILS_ENV'] ||= 'test'
+
+# This needs to be defined before Rails is initialized
+STREAMING_PORT = ENV.fetch('TEST_STREAMING_PORT', '4020')
+STREAMING_HOST = ENV.fetch('TEST_STREAMING_HOST', 'localhost')
+ENV['STREAMING_API_BASE_URL'] = "http://#{STREAMING_HOST}:#{STREAMING_PORT}"
+
+require_relative '../config/environment'
+
+abort('The Rails environment is running in production mode!') if Rails.env.production?
 
 require 'spec_helper'
 require 'rspec/rails'
 require 'webmock/rspec'
 require 'paperclip/matchers'
 require 'capybara/rspec'
+require 'chewy/rspec'
+require 'pundit/rspec'
+require 'test_prof/recipes/rspec/before_all'
 
-Dir[Rails.root.join('spec/support/**/*.rb')].each { |f| require f }
+Rails.root.glob('spec/support/**/*.rb').each { |f| require f }
 
 ActiveRecord::Migration.maintain_test_schema!
-WebMock.disable_net_connect!
-Sidekiq::Testing.inline!
-Sidekiq::Logging.logger = nil
+WebMock.disable_net_connect!(
+  allow_localhost: true,
+  allow: Chewy.settings[:host]
+)
+Sidekiq.default_configuration.logger = nil
+
+DatabaseCleaner.strategy = [:deletion]
+
+Devise::Test::ControllerHelpers.module_eval do
+  alias_method :original_sign_in, :sign_in
+
+  def sign_in(resource, _deprecated = nil, scope: nil)
+    original_sign_in(resource, scope: scope)
+
+    SessionActivation.deactivate warden.cookies.signed['_session_id']
+
+    warden.cookies.signed['_session_id'] = {
+      value: resource.activate_session(warden.request),
+      expires: 1.year.from_now,
+      httponly: true,
+    }
+  end
+end
 
 RSpec.configure do |config|
-  config.fixture_path = "#{::Rails.root}/spec/fixtures"
+  # By default, skip specs that need full JS browser
+  config.filter_run_excluding :js
+
+  # By default, skip specs that need elastic search server
+  config.filter_run_excluding :search
+
+  # By default, skip specs that need the streaming server
+  config.filter_run_excluding :streaming
+
+  config.fixture_paths = [
+    Rails.root.join('spec', 'fixtures'),
+  ]
   config.use_transactional_fixtures = true
   config.order = 'random'
   config.infer_spec_type_from_file_location!
   config.filter_rails_from_backtrace!
 
-  config.include Devise::Test::ControllerHelpers, type: :controller
-  config.include Devise::Test::ControllerHelpers, type: :view
-  config.include Paperclip::Shoulda::Matchers
-  config.include ActiveSupport::Testing::TimeHelpers
+  # Set type to `cli` for all CLI specs
+  config.define_derived_metadata(file_path: Regexp.new('spec/lib/mastodon/cli')) do |metadata|
+    metadata[:type] = :cli
+  end
 
-  config.before :each, type: :feature do
-    https = ENV['LOCAL_HTTPS'] == 'true'
-    Capybara.app_host = "http#{https ? 's' : ''}://#{ENV.fetch('LOCAL_DOMAIN')}"
+  # Set `search` metadata true for all specs in spec/search/
+  config.define_derived_metadata(file_path: Regexp.new('spec/search/*')) do |metadata|
+    metadata[:search] = true
+  end
+
+  config.include Devise::Test::ControllerHelpers, type: :controller
+  config.include Devise::Test::ControllerHelpers, type: :helper
+  config.include Devise::Test::ControllerHelpers, type: :view
+  config.include Devise::Test::IntegrationHelpers, type: :system
+  config.include Devise::Test::IntegrationHelpers, type: :request
+  config.include ActionMailer::TestHelper
+  config.include Paperclip::Shoulda::Matchers
+  config.include ActiveSupport::Testing::NotificationAssertions
+  config.include ActiveSupport::Testing::TimeHelpers
+  config.include Chewy::Rspec::Helpers
+  config.include Redisable
+  config.include DomainHelpers
+  config.include ThreadingHelpers
+  config.include SignedRequestHelpers, type: :request
+  config.include CommandLineHelpers, type: :cli
+  config.include SystemHelpers, type: :system
+  config.include Shoulda::Matchers::ActiveModel, type: :validator
+  config.include HtmlHeadInspection, type: :request
+
+  # TODO: Remove when Devise fixes https://github.com/heartcombo/devise/issues/5705
+  config.before do
+    Rails.application.reload_routes_unless_loaded
+  end
+
+  config.around(:each, use_transactional_tests: false) do |example|
+    self.use_transactional_tests = false
+    example.run
+    self.use_transactional_tests = true
+  end
+
+  config.around do |example|
+    if example.metadata[:inline_jobs] == true
+      Sidekiq.testing!(:inline)
+    else
+      Sidekiq.testing!(:fake)
+    end
+    example.run
+  end
+
+  config.before :each, type: :cli do
+    stub_reset_connection_pools
+  end
+
+  config.before do |example|
+    allow(Resolv::DNS).to receive(:open).and_raise('Real DNS queries are disabled, stub Resolv::DNS as needed') unless example.metadata[:type] == :system
+  end
+
+  config.before do |example|
+    unless example.metadata[:attachment_processing]
+      # rubocop:disable RSpec/AnyInstance
+      allow_any_instance_of(Paperclip::Attachment).to receive(:post_process).and_return(true)
+      allow_any_instance_of(Paperclip::MediaTypeSpoofDetector).to receive(:spoofed?).and_return(false)
+      # rubocop:enable RSpec/AnyInstance
+    end
+  end
+
+  config.before :each, type: :request do
+    # Use https and configured hostname in request spec requests
+    integration_session.https!
+    host! Rails.configuration.x.local_domain
+  end
+
+  config.before :each, type: :system do
+    # Align with capybara config so that rails helpers called from rspec use matching host
+    host! 'localhost:3000'
+  end
+
+  config.after do
+    Rails.cache.clear
+    redis.del(redis.keys)
+  end
+
+  # Assign types based on dir name for non-inferred types
+  config.define_derived_metadata(file_path: %r{/spec/}) do |metadata|
+    unless metadata.key?(:type)
+      match = metadata[:location].match(%r{/spec/([^/]+)/})
+      metadata[:type] = match[1].singularize.to_sym
+    end
   end
 end
 
@@ -38,10 +160,21 @@ RSpec::Sidekiq.configure do |config|
   config.warn_when_jobs_not_processed_by_sidekiq = false
 end
 
+RSpec::Matchers.define_negated_matcher :not_change, :change
+RSpec::Matchers.define_negated_matcher :not_eq, :eq
+RSpec::Matchers.define_negated_matcher :not_include, :include
+
 def request_fixture(name)
-  File.read(File.join(Rails.root, 'spec', 'fixtures', 'requests', name))
+  Rails.root.join('spec', 'fixtures', 'requests', name).read
 end
 
 def attachment_fixture(name)
-  File.open(File.join(Rails.root, 'spec', 'fixtures', 'files', name))
+  Rails.root.join('spec', 'fixtures', 'files', name).open
+end
+
+def stub_reset_connection_pools
+  # TODO: Is there a better way to correctly run specs without stubbing this?
+  # (Avoids reset_connection_pools! in test env)
+  allow(ActiveRecord::Base).to receive(:establish_connection)
+  allow(RedisConnection).to receive(:establish_pool)
 end

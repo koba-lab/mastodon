@@ -1,8 +1,10 @@
-class AddDeviseToUsers < ActiveRecord::Migration
-  def self.up
-    change_table(:users) do |t|
+# frozen_string_literal: true
+
+class AddDeviseToUsers < ActiveRecord::Migration[4.2]
+  def up
+    change_table(:users, bulk: true) do |t|
       ## Database authenticatable
-      t.string :encrypted_password, null: false, default: ""
+      t.string :encrypted_password, null: false, default: ''
 
       ## Recoverable
       t.string   :reset_password_token
@@ -22,7 +24,7 @@ class AddDeviseToUsers < ActiveRecord::Migration
     add_index :users, :reset_password_token, unique: true
   end
 
-  def self.down
+  def down
     remove_index :users, :reset_password_token
 
     remove_column :users, :encrypted_password

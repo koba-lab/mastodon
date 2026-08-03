@@ -3,6 +3,12 @@
 module Settings
   module Exports
     class MutedAccountsController < BaseController
+      include Settings::ExportControllerConcern
+
+      def index
+        send_export_file
+      end
+
       private
 
       def export_data

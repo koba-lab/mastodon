@@ -1,0 +1,8 @@
+- content_for :page_title do
+  = t('settings.featured_tags')
+
+- content_for :heading do
+  %h1= t('settings.profile')
+  = render partial: 'settings/shared/profile_navigation'
+
+= render partial: 'settings/shared/profile_new_notice'

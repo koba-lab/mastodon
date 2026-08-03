@@ -1,20 +1,48 @@
 - content_for :header_tags do
-  = javascript_pack_tag 'public', integrity: true, crossorigin: 'anonymous'
+  = render_initial_state
+  = vite_typescript_tag 'public.tsx', crossorigin: 'anonymous'
+  = vite_typescript_tag 'admin.tsx', crossorigin: 'anonymous'
+
+- content_for :body_classes, 'admin'
 
 - content_for :content do
+  %a.navigation-skip-link{ href: '#content' }= t('admin.skip_to_content')
   .admin-wrapper
-    .sidebar-wrapper
-      .sidebar
-        = link_to root_path do
-          = image_tag asset_pack_path('logo.png'), class: 'logo'
+    %header.sidebar-wrapper
+      .sidebar-wrapper__inner
+        .sidebar
+          = link_to root_path do
+            = render_logo
 
-        = render_navigation
-    .content-wrapper
+          .sidebar__toggle
+            .sidebar__toggle__logo
+              = link_to root_path do
+                = logo_as_symbol(:wordmark)
+
+            = link_to '#', class: 'sidebar__toggle__icon', 'aria-label': t('navigation.toggle_menu'), 'aria-expanded': 'false' do
+              = material_symbol 'menu'
+              = material_symbol 'close'
+
+          %nav
+            = render_navigation
+
+    %main.content-wrapper#content
       .content
-        %h2= yield :page_title
+        .content__heading
+          - if content_for?(:heading)
+            = yield :heading
+          - else
+            .content__heading__row
+              %h1= yield :page_title
+
+              - if content_for?(:heading_actions)
+                .content__heading__actions
+                  = yield :heading_actions
 
         = render 'application/flashes'
 
         = yield
 
-= render template: 'layouts/application', locals: { body_classes: 'admin' }
+    .sidebar-wrapper.sidebar-wrapper--empty
+
+= render template: 'layouts/application'

@@ -1,75 +1,120 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
 RSpec.describe TagManager do
-  let(:local_domain) { Rails.configuration.x.local_domain }
+  describe '#local_domain?' do
+    # The following comparisons MUST be case-insensitive.
 
-  describe '#unique_tag' do
-    it 'returns a string' do
-      expect(TagManager.instance.unique_tag(Time.now, 12, 'Status')).to be_a String
+    around do |example|
+      original_local_domain = Rails.configuration.x.local_domain
+      Rails.configuration.x.local_domain = 'domain.example.com'
+
+      example.run
+
+      Rails.configuration.x.local_domain = original_local_domain
+    end
+
+    it 'returns true for nil' do
+      expect(described_class.instance.local_domain?(nil)).to be true
+    end
+
+    it 'returns true if the slash-stripped string equals to local domain' do
+      expect(described_class.instance.local_domain?('DoMaIn.Example.com/')).to be true
+    end
+
+    it 'returns false for irrelevant string' do
+      expect(described_class.instance.local_domain?('DoMaIn.Example.com!')).to be false
     end
   end
 
-  describe '#unique_tag_to_local_id' do
-    it 'returns the ID part' do
-      expect(TagManager.instance.unique_tag_to_local_id("tag:#{local_domain};objectId=12:objectType=Status", 'Status')).to eql '12'
+  describe '#web_domain?' do
+    # The following comparisons MUST be case-insensitive.
+
+    around do |example|
+      original_web_domain = Rails.configuration.x.web_domain
+      Rails.configuration.x.web_domain = 'domain.example.com'
+
+      example.run
+
+      Rails.configuration.x.web_domain = original_web_domain
+    end
+
+    it 'returns true for nil' do
+      expect(described_class.instance.web_domain?(nil)).to be true
+    end
+
+    it 'returns true if the slash-stripped string equals to web domain' do
+      expect(described_class.instance.web_domain?('DoMaIn.Example.com/')).to be true
+    end
+
+    it 'returns false for string with irrelevant characters' do
+      expect(described_class.instance.web_domain?('DoMaIn.Example.com!')).to be false
     end
   end
 
-  describe '#local_id?' do
-    it 'returns true for a local ID' do
-      expect(TagManager.instance.local_id?("tag:#{local_domain};objectId=12:objectType=Status")).to be true
+  describe '#normalize_domain' do
+    subject { described_class.instance.normalize_domain(domain) }
+
+    context 'with a nil value' do
+      let(:domain) { nil }
+
+      it { is_expected.to be_nil }
     end
 
-    it 'returns false for a foreign ID' do
-      expect(TagManager.instance.local_id?('tag:foreign.tld;objectId=12:objectType=Status')).to be false
+    context 'with a blank value' do
+      let(:domain) { '' }
+
+      it { is_expected.to be_blank }
+    end
+
+    context 'with a mixed case string' do
+      let(:domain) { 'DoMaIn.Example.com' }
+
+      it { is_expected.to eq('domain.example.com') }
+    end
+
+    context 'with a trailing slash string' do
+      let(:domain) { 'domain.example.com/' }
+
+      it { is_expected.to eq('domain.example.com') }
+    end
+
+    context 'with a space padded string' do
+      let(:domain) { '  domain.example.com  ' }
+
+      it { is_expected.to eq('domain.example.com') }
+    end
+
+    context 'with an invalid domain string' do
+      let(:domain) { '  !@#$@#$@$@#  ' }
+
+      it 'raises invalid uri error' do
+        expect { subject }.to raise_error(Addressable::URI::InvalidURIError)
+      end
     end
   end
 
-  describe '#uri_for' do
-    let(:alice)  { Fabricate(:account, username: 'alice') }
-    let(:bob)    { Fabricate(:account, username: 'bob') }
-    let(:status) { Fabricate(:status, text: 'Hello world', account: alice) }
-
-    subject { TagManager.instance.uri_for(target) }
-
-    context 'Account' do
-      let(:target) { alice }
-
-      it 'returns a string' do
-        expect(subject).to be_a String
-      end
+  describe '#local_url?' do
+    around do |example|
+      original_web_domain = Rails.configuration.x.web_domain
+      example.run
+      Rails.configuration.x.web_domain = original_web_domain
     end
 
-    context 'Status' do
-      let(:target) { status }
-
-      it 'returns a string' do
-        expect(subject).to be_a String
-      end
-    end
-  end
-
-  describe '#url_for' do
-    let(:alice)  { Fabricate(:account, username: 'alice') }
-    let(:bob)    { Fabricate(:account, username: 'bob') }
-    let(:status) { Fabricate(:status, text: 'Hello world', account: alice) }
-
-    subject { TagManager.instance.url_for(target) }
-
-    context 'Account' do
-      let(:target) { alice }
-
-      it 'returns a URL' do
-        expect(subject).to be_a String
-      end
+    it 'returns true if the normalized string with port is local URL' do
+      Rails.configuration.x.web_domain = 'domain.example.com:42'
+      expect(described_class.instance.local_url?('https://DoMaIn.Example.com:42/')).to be true
     end
 
-    context 'Status' do
-      let(:target) { status }
+    it 'returns true if the normalized string without port is local URL' do
+      Rails.configuration.x.web_domain = 'domain.example.com'
+      expect(described_class.instance.local_url?('https://DoMaIn.Example.com/')).to be true
+    end
 
-      it 'returns a URL' do
-        expect(subject).to be_a String
-      end
+    it 'returns false for string with irrelevant characters' do
+      Rails.configuration.x.web_domain = 'domain.example.com'
+      expect(described_class.instance.local_url?('https://domain.example.net/')).to be false
     end
   end
 end

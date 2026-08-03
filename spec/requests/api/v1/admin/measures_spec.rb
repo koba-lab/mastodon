@@ -1,0 +1,56 @@
+# frozen_string_literal: true
+
+require 'rails_helper'
+
+RSpec.describe 'Admin Measures' do
+  include_context 'with API authentication', user_fabricator: :admin_user
+
+  let(:params) do
+    {
+      keys: %w(instance_accounts instance_follows instance_followers),
+      instance_accounts: {
+        domain: 'mastodon.social',
+        include_subdomains: true,
+      },
+      instance_follows: {
+        domain: 'mastodon.social',
+        include_subdomains: true,
+      },
+      instance_followers: {
+        domain: 'mastodon.social',
+        include_subdomains: true,
+      },
+      start_at: '2026-01-01',
+      end_at: '2026-07-01',
+    }
+  end
+
+  describe 'GET /api/v1/admin/measures' do
+    context 'when not authorized' do
+      it 'returns http forbidden' do
+        post '/api/v1/admin/measures', params: params
+
+        expect(response)
+          .to have_http_status(403)
+        expect(response.content_type)
+          .to start_with('application/json')
+      end
+    end
+
+    context 'with correct scope' do
+      let(:scopes) { 'admin:read' }
+
+      it 'returns http success and status json' do
+        post '/api/v1/admin/measures', params: params, headers: headers
+
+        expect(response)
+          .to have_http_status(200)
+        expect(response.content_type)
+          .to start_with('application/json')
+
+        expect(response.parsed_body)
+          .to be_an(Array)
+      end
+    end
+  end
+end

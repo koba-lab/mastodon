@@ -7,23 +7,83 @@ io:
       send_paranoid_instructions: Se tua retpost-adreso existas en nia datumbazo, tu balde revecos retpost-mesajo, qua kontenas la instrucioni por konfirmar tua konto.
     failure:
       already_authenticated: Tu ya esas enirinta.
+      closed_registrations: Vua registroprobo esas blokusita pro reteypoliteso. Se vu kredas ke co esas eroro, kontaktez %{email}.
       inactive: Tua konto ankore ne konfirmesas.
-      invalid: Nejusta retpost-adreso o pasvorto.
+      invalid: Nejusta %{authentication_keys}.
       last_attempt: Tu ankore povas probar unfoye ante ke tua konto esos extingita.
       locked: Tua konto esas extingita.
-      not_found_in_database: Nejusta retpost-adreso o pasvorto.
-      timeout: Tua kunsido expiris. Voluntez rienirar por durar.
+      not_found_in_database: Nejusta %{authentication_keys}.
+      omniauth_user_creation_failure: Eroro dum ke kreas konto por ca identeso.
+      pending: Vua konti ankore kontrolesas.
+      timeout: Vua kunsido expiris. Voluntez rienirar por avancar.
       unauthenticated: Tu devas enirar o membreskar por durar.
       unconfirmed: Tu devas konfirmar tua konto por durar.
     mailer:
       confirmation_instructions:
-        subject: Instrucioni por konfirmar
+        action: Verifikez retpostadreso
+        action_with_app: Konfirmez e retrovenez a %{app}
+        explanation: Vu kreis konto sur %{host} per ca retpostadreso. Se vu ne agis lu, ignorez ca retposto.
+        explanation_when_pending: Vu aplikis por ganar invito a %{host} per ca retpostkonto. Pos vu konfirmas vua retpostkonto, ni kontrolos vua apliko. Vu povas enirar por chanjar vua detali o efacar vua konto, ma vu ne povas acesar maxim de funcioni til vua konto aprobesas. Se vua apliko refuzesas, vua informi efacesos, do plusa ago ne bezonesos de vu. Se vu ne agis lu, ignorez ca retposto.
+        extra_html: Anke videz <a href="%{terms_path}">reguli di la servilo</a> e <a href="%{policy_path}">nia servokondicioni</a>.
+        subject: Instrucioni por konfirmar %{instance}
+        title: Verifikez retpostadreso
+      email_changed:
+        explanation: 'Retpostadreso di vua konto chanjesas a:'
+        extra: Se vu ne chanjesis vua retpostadreso, eble ulu adiris vua konto.
+        subject: 'Mastodon: Retpostadreso chanjesis'
+        title: Nova retpostadreso
       password_change:
+        explanation: La pasvorto di vua konto chanjesis.
+        extra: Se vu ne chanjesis vua pasvorto, eble ulu adiris vua konto.
         subject: Tua pasvorto chanjesis senprobleme.
+        title: Pasvorto chanjesis
+      reconfirmation_instructions:
+        explanation: Konfirmez la nova adreso por chanjar vua retpostadreso.
+        extra: Se ca chanjo ne komencesis da vu, ignorez ca retposto. La retpostadreso por konto di Mastodon ne chanjesos til vu acesas la supera ligilo.
+        subject: 'Mastodon: Konfirmez retpostadreso por %{instance}'
+        title: Verifikez retpostadreso
       reset_password_instructions:
+        action: Chanjez pasvorto
+        explanation: Vu demandis nova pasvorto por vua konto.
+        extra: Se vu ne demandas co, ignorez ca retposto. Vua pasvorto ne chanjesas til vu acesas la supera ligilo e kreas novo.
         subject: Instrucioni por chanjar la pasvorto
+        title: Richanjo di pasvorto
+      two_factor_disabled:
+        explanation: Eniro esas nun posibla per nur retpostoadreso e pasvorto.
+        subject: 'Mastodon: Dufaktora yurizo desebligesis'
+        subtitle: Dufaktora yurizo por vua konto desebligesis.
+        title: 2FA desebligesis
+      two_factor_enabled:
+        explanation: Ficho facesis da parigita softwaro TOTP bezonesos por eniro.
+        subject: 'Mastodon: Dufaktora yurizo ebligesis'
+        subtitle: Dufaktora yurizo ebligesis por vua konto.
+        title: 2FA ebligesis
+      two_factor_recovery_codes_changed:
+        explanation: Antea rigankodexi devalidesis e novo facesis.
+        subject: 'Mastodon: 2-faktorrigankodexi rifacesis'
+        subtitle: Antea rigankodexi desvalidesis e novo facesis.
+        title: 2FA-rigankodexi chanjesis
       unlock_instructions:
         subject: Instructioni por riacendar la konto
+      webauthn_credential:
+        added:
+          explanation: Ca sekuresklefo adjuntesis ad vua konto
+          subject: 'Mastodon: Nova sekurklefo'
+          title: Nova sekuresklefo adjuntesis
+        deleted:
+          explanation: Ca sekurklefo efacesis de vua konto
+          subject: 'Mastodon: Sekurklefo efacesis'
+          title: 1 de vua sekurklefi efacesis
+      webauthn_disabled:
+        explanation: Yurizo kun sekuresklefi desebligesis por vua konto.
+        extra: Eniro esas nun posibla per nur ficho qua facesis da parigita softwaro TOTP.
+        subject: 'Mastodon: Yurizo per sekuresklefi desebligesis'
+        title: Sekuresklefi desebligesis
+      webauthn_enabled:
+        explanation: Sekuresklefyurizo ebligesis por vua konto.
+        extra: Vua sekuresklefo povas nun uzesar por eniro.
+        subject: 'Mastodon: Sekuresklefyurizo ebligesis'
+        title: Sekuresklefi ebligesis
     omniauth_callbacks:
       failure: 'Ni ne povis autentikigar tu per %{kind}: ''%{reason}''.'
       success: Autentikigita senprobleme per %{kind}.
@@ -31,13 +91,10 @@ io:
       no_token: Tu ne povas irar a ta pagino per altra voyo kam retpost-mesajo por chanjar pasvorto. Se tu venas de tala retpost-mesajo, kontrolez ke tu uzis la tota URL.
       send_instructions: Tu recevos retpost-mesajo kun instrucioni por chanjar tua pasvorto pos kelka minuti.
       send_paranoid_instructions: Se tua retpost-adreso existas en nia datumbazo, tu recevos ligilo por chanjar tua pasvorto per retpost-mesajo.
+      updated: Vua konto sucese chanjesis. Vu nun eniras.
       updated_not_active: Tua pasvorto redaktesis senprobleme.
     registrations:
       destroyed: Til! Tua konto efacesis senprobleme. Ni esperas rividar tu balde.
-      signed_up: Bonveno! Tu membreskis senprobleme.
-      signed_up_but_inactive: Tu bone membreskis, ma tu ankore ne povas enirar pro ke tua konto ne konfirmesis.
-      signed_up_but_locked: Tu bone membreskis, ma tu ne povas enirar pro ke tua konto extingesis.
-      signed_up_but_unconfirmed: Retpost-mesajo kun tua ligilo por konfirmar tua konto sendesis a tua retpost-adreso. Voluntez uzar ta ligilo por konfirmar tua konto.
       update_needs_confirmation: Tu vone aktualigis tua konto, ma ni bezonas kontrolar tua nova retpost-adreso. Voluntez kontrolar tua retpost-mesaji ed uzar la ligilo por konfirmar tua nova retpost-adreso.
       updated: Tua konto aktualigesis senprobleme.
     sessions:
@@ -47,7 +104,7 @@ io:
     unlocks:
       send_instructions: Tu recevos retpost-mesajo kun instrucioni por riacendar tua konto pos kelka minuti.
       send_paranoid_instructions: Se tua retpost-adreso existas en nia datumbazo, tu recevos ligilo por riacendar tua konto per retpost-meajo.
-      unlocked: Tua konto riacendesis senprobleme, tu nun esas enirinta.
+      unlocked: Vua konto desklefagesis senprobleme. Voluntez enirar por avancar.
   errors:
     messages:
       already_confirmed: ja konfirmesis, voluntez probar enirar

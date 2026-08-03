@@ -3,111 +3,195 @@ fa:
   activerecord:
     attributes:
       doorkeeper/application:
-        name: Name
-        redirect_uri: Redirect URI
+        name: نام برنامه
+        redirect_uri: نشانی تغییرمسیر
+        scopes: حوزه‌ها
+        website: پایگاه وب برنامه
     errors:
       models:
         doorkeeper/application:
           attributes:
             redirect_uri:
-              fragment_present: cannot contain a fragment.
-              invalid_uri: must be a valid URI.
-              relative_uri: must be an absolute URI.
-              secured_uri: must be an HTTPS/SSL URI.
+              fragment_present: نمی‌تواند چندتکه باشد.
+              invalid_uri: باید یک نشانی معتبر باشد.
+              relative_uri: باید یک نشانی مطلق باشد.
+              secured_uri: باید یک نشانی HTTPS/SSL باشد.
   doorkeeper:
     applications:
       buttons:
-        authorize: Authorize
-        cancel: Cancel
-        destroy: Destroy
-        edit: Edit
-        submit: Submit
+        authorize: اجازه دادن
+        cancel: لغو
+        destroy: پاک کردن
+        edit: ویرایش
+        submit: ثبت
       confirmations:
-        destroy: Are you sure?
+        destroy: آیا مطمئن هستید؟
       edit:
-        title: Edit application
+        title: ویرایش برنامه
       form:
-        error: Whoops! Check your form for possible errors
+        error: اوخ! ببینید چیزی را اشتباهی در فرم وارد نکرده‌اید
       help:
-        native_redirect_uri: Use %{native_redirect_uri} for local tests
-        redirect_uri: Use one line per URI
-        scopes: Separate scopes with spaces. Leave blank to use the default scopes.
-      index:
-        callback_url: Callback URL
-        name: Name
-        new: New Application
-        title: Your applications
-      new:
-        title: New Application
-      show:
-        actions: Actions
-        application_id: Application Id
-        callback_urls: Callback urls
-        scopes: Scopes
-        secret: Secret
-        title: 'Application: %{name}'
-    authorizations:
-      buttons:
-        authorize: Authorize
-        deny: Deny
-      error:
-        title: An error has occurred
-      new:
-        able_to: It will be able to
-        prompt: Application %{client_name} requests access to your account
-        title: Authorization required
-      show:
-        title: Authorization code
-    authorized_applications:
-      buttons:
-        revoke: Revoke
-      confirmations:
-        revoke: Are you sure?
+        native_redirect_uri: برای آزمایش‌های محلی %{native_redirect_uri} را به کار ببرید
+        redirect_uri: هر URI را در یک سطر جدا بنویسید
+        scopes: دامنه‌ها را با فاصلهٔ خالی از هم جدا کنید. برای به‌کاربردن دامنهٔ پیش‌فرض خالی بگذارید.
       index:
         application: برنامه
-        created_at: مجازشده از
-        date_format: "%Y-%m-%d %H:%M:%S"
+        callback_url: نشانی Callback
+        delete: حذف
+        empty: شما هیچ برنامه‌ای ندارید.
+        name: نام
+        new: برنامهٔ تازه
+        scopes: دامنه‌ها
+        show: نمایش
+        title: برنامه‌های شما
+      new:
+        title: برنامهٔ تازه
+      show:
+        actions: کنش‌ها
+        application_id: کلید کلاینت
+        callback_urls: نشانی‌های Callabck
+        scopes: دامنه‌ها
+        secret: کد سری کلاینت
+        title: 'برنامه: %{name}'
+    authorizations:
+      buttons:
+        authorize: اجازه دادن
+        deny: لغو اجازه
+      error:
+        title: خطایی رخ داد
+      new:
+        prompt_html: "%{client_name} برای دسترسی به حساب شما اجازه می‌خواهد. <strong>فقط در صورتی این درخواست را تأیید کنید که این منبع را بشناسید و به آن اعتماد دارید.</strong>"
+        review_permissions: بازبینی اجازه‌ها
+        title: نیاز به اجازه دادن
+      show:
+        title: این کد تأیید را رونوشت کرده و در برنامه بگذارید.
+    authorized_applications:
+      buttons:
+        revoke: فسخ
+      confirmations:
+        revoke: آیا مطمئن هستید؟
+      index:
+        authorized_at: تایید شده در %{date}
+        description_html: این‌ها برنامه‌هاییند که می‌توانند با استفاده از میانای برنامه‌نویسی به حسابتان دسترسی پیدا کنند. اگر برنامه‌ای هست که نمی‌شناسیدش یا رفتار بدی دارد می‌توانید دسترسیش را باطل کنید.
+        last_used_at: آخرین استفاده در %{date}
+        never_used: هرگز استفاده نشده
         scopes: اجازه‌ها
+        superapp: داخلی
         title: برنامه‌های مجاز
     errors:
       messages:
-        access_denied: The resource owner or authorization server denied the request.
-        credential_flow_not_configured: Resource Owner Password Credentials flow failed due to Doorkeeper.configure.resource_owner_from_credentials being unconfigured.
-        invalid_client: Client authentication failed due to unknown client, no client authentication included, or unsupported authentication method.
-        invalid_grant: The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client.
-        invalid_redirect_uri: The redirect uri included is not valid.
-        invalid_request: The request is missing a required parameter, includes an unsupported parameter value, or is otherwise malformed.
-        invalid_resource_owner: The provided resource owner credentials are not valid, or resource owner cannot be found
-        invalid_scope: The requested scope is invalid, unknown, or malformed.
+        access_denied: صاحب منبع یا کارساز تأیید هویت، درخواست را رد کردند.
+        credential_flow_not_configured: جریان اعتبارنامهٔ گذرواژهٔ مالک منبع به دلیل پیکربندی نشده بودن Doorkeeper.configure.resource_owner_from_credentials شکست خورد.
+        invalid_client: تأیید هویت کارخواه به دلیل کارخواه ناشناخته، عدم وجود تأیید هویت کاره یا روش تأیید هویت پشتیبانی‌نشده شکست خورد.
+        invalid_grant: اعطای دسترسی فراهم ‌شده نامعتبر، منقضی یا نامطابق با نشانی بازگشت استفاده‌شده در درخواست تأیید هویت بوده و یا برای کارخواهی دیگر صادر شده است.
+        invalid_redirect_uri: نشانی بازگشت موجود، معتبر نیست.
+        invalid_request:
+          missing_param: 'پارامتر لازم ناموجود: %{value}.'
+          request_not_authorized: درخواست باید تأیید هویت شود. پارامتر موردنیاز برای تأیید هویت درخواست، مفقود یا نامعتبر است.
+          unknown: درخواست بدریخت، فاقد یک پارامتر ضروری یا شامل یک پارامتر پشتیبانی‌نشده است.
+        invalid_resource_owner: اعتبارنامهٔ مالک منبع فراهم‌شده نامعتبر بوده یا مالک منبع نتوانست پیدا شود
+        invalid_scope: حوزهٔ درخواستی نامعتبر، ناشناخته یا دستکاری‌شده است.
         invalid_token:
-          expired: The access token expired
-          revoked: The access token was revoked
-          unknown: The access token is invalid
-        resource_owner_authenticator_not_configured: Resource Owner find failed due to Doorkeeper.configure.resource_owner_authenticator being unconfiged.
-        server_error: The authorization server encountered an unexpected condition which prevented it from fulfilling the request.
-        temporarily_unavailable: The authorization server is currently unable to handle the request due to a temporary overloading or maintenance of the server.
-        unauthorized_client: The client is not authorized to perform this request using this method.
-        unsupported_grant_type: The authorization grant type is not supported by the authorization server.
-        unsupported_response_type: The authorization server does not support this response type.
+          expired: کد دسترسی منقضی شده است
+          revoked: کد دسترسی فسخ شده است
+          unknown: کد دسترسی معتبر نیست
+        resource_owner_authenticator_not_configured: یافتن مالک منبع به دلیل پیکربندی‌نشده بودن Doorkeeper.configure.resource_owner_authenticator شکست خورد.
+        server_error: کارساز تأیید هویت به شرایطی پیش‌بینی نشده که مانع اجرای درخواست شد برخورد.
+        temporarily_unavailable: کارساز تأیید هویت به دلیل سربار موقت یا نگه‌داری کارساز، هم‌اکنون قادر به پذیرش درخواست نیست.
+        unauthorized_client: کارخواه مجاز نیست این درخواست را با استفاده از این روش انجام دهد.
+        unsupported_grant_type: گونهٔ اعطای تأیید هویت توسّط کارساز تأیید هویتپشتیبانی نمی‌شود.
+        unsupported_response_type: کارساز تأیید هویت این گونه از پاسخ را پشتیبانی نمی‌کند.
     flash:
       applications:
         create:
-          notice: Application created.
+          notice: برنامه ساخته شد.
         destroy:
-          notice: Application deleted.
+          notice: برنامه حذف شد.
         update:
-          notice: Application updated.
+          notice: برنامه به‌روز شد.
       authorized_applications:
         destroy:
-          notice: Application revoked.
+          notice: برنامه فسخ شد.
+    grouped_scopes:
+      access:
+        read: فقط دسترسی خواندن
+        read/write: دسترسی خواندن و نوشتن
+        write: فقط دسترسی نوشتن
+      title:
+        accounts: حساب‌ها
+        admin/accounts: مدیریت حساب های کاربری
+        admin/all: تمامی عملکرد های مدیریتی
+        admin/reports: مدیریت بازخورد ها
+        all: دسترسی کامل به حساب ماستودونتان
+        blocks: مسدودها
+        bookmarks: نشانک‌ها
+        conversations: گفت‌وگوها
+        crypto: رمزگذاری سرتاسری
+        favourites: برگزیده‌ها
+        filters: پالایه‌ها
+        follow: پی‌گیری، خموشی و مسدودی‌ها
+        follows: پی‌گرفتن‌ها
+        lists: سیاهه‌ها
+        media: پیوست‌های رسانه‌ای
+        mutes: خموش‌ها
+        notifications: آگاهی‌ها
+        profile: نمایهٔ ماستودونتان
+        push: آگاهی‌های ارسالی
+        reports: گزارش‌ها
+        search: جست‌وجو
+        statuses: فرسته‌ها
     layouts:
       admin:
         nav:
-          applications: Applications
-          oauth2_provider: OAuth2 Provider
+          applications: برنامه‌ها
+          oauth2_provider: فراهم‌کنندهٔ ورود دومرحله‌ای
       application:
-        title: OAuth authorization required
+        title: درخواست اجازهٔ OAuth
     scopes:
-      follow: follow, block, unblock and unfollow accounts
-      read: read your account's data
-      write: post on your behalf
+      admin:read: خواندن تمام داده‌ها روی کارساز
+      admin:read:accounts: خواندن اطّلاعات حساس از همهٔ حساب‌ها
+      admin:read:canonical_email_blocks: خواندن اطّلاعات حسّاس از همهٔ انسدادهای رایانامهٔ متعارف
+      admin:read:domain_allows: خواندن اطّلاعات حساس از همهٔ دامنه ها اجازه داده شد
+      admin:read:domain_blocks: خواندن اطّلاعات حساس از همهٔ دامنه های مسدودشده
+      admin:read:email_domain_blocks: خواندن اطّلاعات حساس از همهٔ دامنه های رایانامه های مسدودشده
+      admin:read:ip_blocks: خواندن اطّلاعات حساس از همهٔ IPهای مسدودشده
+      admin:read:reports: خواندن اطّلاعات حساس از همهٔ گزارش‌ها و حساب‌های گزارش‌شده
+      admin:write: تغییر تمام داده‌ها روی کارساز
+      admin:write:accounts: انجام کنش مدیریتی روی حساب‌ها
+      admin:write:canonical_email_blocks: انجام کنش‌های نظارتی روی همهٔ انسدادهای رایانامهٔ متعارف
+      admin:write:domain_allows: انجام کنش مدیریتی روی اجازه‌های دامنه
+      admin:write:domain_blocks: انجام کنش مدیریتی روی انسدادهای دامنه
+      admin:write:email_domain_blocks: انجام کنش مدیریتی روی انسدادهای دامنهٔ رایانامه
+      admin:write:ip_blocks: انجام کنش مدیریتی روی مسدودسازی های IP
+      admin:write:reports: انجام کنش مدیریتی روی گزارش‌ها
+      crypto: از رمزگذاری سرتاسر استفاده کنید
+      follow: پیگیری، مسدودسازی، لغو مسدودسازی، و لغو پیگیری حساب‌ها
+      profile: فقط خواندن اطّلاعات نمایهٔ حسابتان
+      push: دریافت آگاهی‌ای ارسالیتان
+      read: خواندن اطلاعات حساب شما
+      read:accounts: دیدن اطّلاعات حساب
+      read:blocks: دیدن مسدودهایتان
+      read:bookmarks: دیدن نشانک‌هایتان
+      read:favourites: دیدن برگزیده‌هایتان
+      read:filters: دیدن پالایه‌هایتان
+      read:follows: دیدن پی‌گیری‌هایتان
+      read:lists: دیدن سیاهه‌هایتان
+      read:mutes: دیدن خموشی‌هایتان
+      read:notifications: دیدن آگاهی‌هایتان
+      read:reports: دیدن گزارش‌هایتان
+      read:search: حست‌وجو از سمت خودتان
+      read:statuses: دیدن همهٔ وضعیت‌ها
+      write: انتشار مطالب از طرف شما
+      write:accounts: تغییر نمایه‌تان
+      write:blocks: انسداد حساب‌ها و دامنه‌ها
+      write:bookmarks: نشانک‌گذاری وضعیت‌ها
+      write:conversations: مکالمات را بی‌صدا و حذف کنید
+      write:favourites: فرسته‌های برگزیده
+      write:filters: ایحاد پالایش‌ها
+      write:follows: پی‌گیری افراد
+      write:lists: ایجاد سیاهه‌ها
+      write:media: بارگذاری پرونده‌های رسانه
+      write:mutes: خموش کردن افراد و گفت‌وگوها
+      write:notifications: پام‌سازی آگاهی‌هایتان
+      write:reports: گزارش دیگر افراد
+      write:statuses: انتشار وضعیت‌ها

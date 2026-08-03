@@ -1,28 +1,52 @@
 # frozen_string_literal: true
 
 class ReblogService < BaseService
-  include StreamEntryRenderer
+  include Authorization
+  include Payloadable
 
   # Reblog a status and notify its remote author
   # @param [Account] account Account to reblog from
   # @param [Status] reblogged_status Status to be reblogged
+  # @param [Hash] options
+  # @option [String]  :visibility
+  # @option [Boolean] :with_rate_limit
   # @return [Status]
-  def call(account, reblogged_status)
+  def call(account, reblogged_status, options = {})
     reblogged_status = reblogged_status.reblog if reblogged_status.reblog?
 
-    raise Mastodon::NotPermittedError if reblogged_status.direct_visibility? || reblogged_status.private_visibility? || !reblogged_status.permitted?(account)
+    authorize_with account, reblogged_status, :reblog?
 
-    reblog = account.statuses.create!(reblog: reblogged_status, text: '')
+    reblog = account.statuses.find_by(reblog: reblogged_status)
 
+    return reblog unless reblog.nil?
+
+    visibility = if reblogged_status.hidden?
+                   reblogged_status.visibility
+                 else
+                   options[:visibility] || account.user&.setting_default_privacy
+                 end
+
+    reblog = account.statuses.create!(reblog: reblogged_status, text: '', visibility: visibility, rate_limit: options[:with_rate_limit])
+
+    Trends.register!(reblog)
     DistributionWorker.perform_async(reblog.id)
-    Pubsubhubbub::DistributionWorker.perform_async(reblog.stream_entry.id)
+    ActivityPub::DistributionWorker.perform_async(reblog.id)
 
-    if reblogged_status.local?
-      NotifyService.new.call(reblog.reblog.account, reblog)
-    else
-      NotificationWorker.perform_async(stream_entry_to_xml(reblog.stream_entry), account.id, reblog.reblog.account_id)
-    end
+    create_notification(reblog)
+    increment_statistics
 
     reblog
+  end
+
+  private
+
+  def create_notification(reblog)
+    reblogged_status = reblog.reblog
+
+    LocalNotificationWorker.perform_async(reblogged_status.account_id, reblog.id, reblog.class.name, 'reblog') if reblogged_status.account.local?
+  end
+
+  def increment_statistics
+    ActivityTracker.increment('activity:interactions')
   end
 end

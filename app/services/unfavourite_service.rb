@@ -1,18 +1,23 @@
 # frozen_string_literal: true
 
 class UnfavouriteService < BaseService
+  include Payloadable
+
   def call(account, status)
     favourite = Favourite.find_by!(account: account, status: status)
     favourite.destroy!
-
-    NotificationWorker.perform_async(build_xml(favourite), account.id, status.account_id) unless status.local?
-
+    create_notification(favourite) if !status.account.local? && status.account.activitypub?
     favourite
   end
 
   private
 
-  def build_xml(favourite)
-    AtomSerializer.render(AtomSerializer.new.unfavourite_salmon(favourite))
+  def create_notification(favourite)
+    status = favourite.status
+    ActivityPub::DeliveryWorker.perform_async(build_json(favourite), favourite.account_id, status.account.inbox_url)
+  end
+
+  def build_json(favourite)
+    serialize_payload(favourite, ActivityPub::UndoLikeSerializer).to_json
   end
 end

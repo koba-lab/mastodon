@@ -5,66 +5,62 @@ module Admin
     before_action :set_report, except: [:index]
 
     def index
+      authorize :report, :index?
       @reports = filtered_reports.page(params[:page])
     end
 
-    def show; end
+    def show
+      authorize @report, :show?
 
-    def update
-      process_report
+      @report_note  = @report.notes.new
+      @report_notes = @report.notes.chronological.includes(:account)
+      @action_logs  = @report.history.includes(:target)
+      @form         = Admin::StatusBatchAction.new
+      @collection_form = Admin::CollectionBatchAction.new
+      @collections  = @report.collections
+      @statuses     = @report.statuses.with_includes
+    end
+
+    def assign_to_self
+      authorize @report, :update?
+      @report.update!(assigned_account_id: current_account.id)
+      log_action :assigned_to_self, @report
       redirect_to admin_report_path(@report)
+    end
+
+    def unassign
+      authorize @report, :update?
+      @report.update!(assigned_account_id: nil)
+      log_action :unassigned, @report
+      redirect_to admin_report_path(@report)
+    end
+
+    def reopen
+      authorize @report, :update?
+      @report.unresolve!
+      log_action :reopen, @report
+      redirect_to admin_report_path(@report)
+    end
+
+    def resolve
+      authorize @report, :update?
+      @report.resolve!(current_account)
+      log_action :resolve, @report
+      redirect_to admin_reports_path, notice: I18n.t('admin.reports.resolved_msg')
     end
 
     private
 
-    def process_report
-      case params[:outcome].to_s
-      when 'resolve'
-        @report.update(action_taken_by_current_attributes)
-      when 'suspend'
-        Admin::SuspensionWorker.perform_async(@report.target_account.id)
-        resolve_all_target_account_reports
-      when 'silence'
-        @report.target_account.update(silenced: true)
-        resolve_all_target_account_reports
-      else
-        raise ActiveRecord::RecordNotFound
-      end
-    end
-
-    def action_taken_by_current_attributes
-      { action_taken: true, action_taken_by_account_id: current_account.id }
-    end
-
-    def resolve_all_target_account_reports
-      unresolved_reports_for_target_account.update_all(
-        action_taken_by_current_attributes
-      )
-    end
-
-    def unresolved_reports_for_target_account
-      Report.where(
-        target_account: @report.target_account
-      ).unresolved
-    end
-
     def filtered_reports
-      ReportFilter.new(filter_params).results.order('id desc').includes(
-        :account,
-        :target_account
-      )
+      ReportFilter.new(filter_params).results.order(id: :desc).includes(:account, :target_account, :collections)
     end
 
     def filter_params
-      params.permit(
-        :account_id,
-        :resolved,
-        :target_account_id
-      )
+      params.slice(*ReportFilter::KEYS).permit(*ReportFilter::KEYS)
     end
 
     def set_report
-      @report = Report.find(params[:id])
+      @report = Report.includes(collections: :accepted_collection_items).find(params[:id])
     end
   end
 end

@@ -1,207 +1,255 @@
 # frozen_string_literal: true
 
-require 'sidekiq/web'
 require 'sidekiq-scheduler/web'
 
+class RedirectWithVary < ActionDispatch::Routing::PathRedirect
+  def build_response(req)
+    super.tap do |response|
+      response.headers['Vary'] = 'Origin, Accept'
+    end
+  end
+end
+
+def redirect_with_vary(path)
+  RedirectWithVary.new(301, path, caller(1..1).first)
+end
+
 Rails.application.routes.draw do
+  root 'home#index'
+
   mount LetterOpenerWeb::Engine, at: 'letter_opener' if Rails.env.development?
 
-  authenticate :user, lambda { |u| u.admin? } do
+  get 'health', to: 'health#show'
+
+  authenticate :user, ->(user) { user.role&.can?(:view_devops) } do
     mount Sidekiq::Web, at: 'sidekiq', as: :sidekiq
     mount PgHero::Engine, at: 'pghero', as: :pghero
   end
 
   use_doorkeeper do
-    controllers authorizations: 'oauth/authorizations', authorized_applications: 'oauth/authorized_applications'
+    controllers authorizations: 'oauth/authorizations',
+                authorized_applications: 'oauth/authorized_applications',
+                tokens: 'oauth/tokens'
   end
 
-  get '.well-known/host-meta', to: 'well_known/host_meta#show', as: :host_meta, defaults: { format: 'xml' }
-  get '.well-known/webfinger', to: 'well_known/webfinger#show', as: :webfinger
+  namespace :oauth do
+    # As this is borrowed from OpenID, the specification says we must also support
+    # POST for the userinfo endpoint:
+    # https://openid.net/specs/openid-connect-core-1_0.html#UserInfo
+    match 'userinfo', via: [:get, :post], to: 'userinfo#show', defaults: { format: 'json' }
+  end
 
-  devise_for :users, path: 'auth', controllers: {
-    sessions:           'auth/sessions',
-    registrations:      'auth/registrations',
-    passwords:          'auth/passwords',
-    confirmations:      'auth/confirmations',
-  }
+  scope path: '.well-known' do
+    scope module: :well_known do
+      get 'oauth-authorization-server', to: 'oauth_metadata#show', as: :oauth_metadata, defaults: { format: 'json' }
+      get 'host-meta', to: 'host_meta#show', as: :host_meta
+      get 'nodeinfo', to: 'node_info#index', as: :nodeinfo, defaults: { format: 'json' }
+      get 'webfinger', to: 'webfinger#show', as: :webfinger
+    end
+    get 'change-password', to: redirect('/auth/edit'), as: nil
+    get 'proxy', to: redirect { |_, request| "/authorize_interaction?#{request.params.to_query}" }, as: nil
+  end
 
-  get '/users/:username', to: redirect('/@%{username}'), constraints: { format: :html }
+  get '/nodeinfo/2.0', to: 'well_known/node_info#show', as: :nodeinfo_schema
 
-  resources :accounts, path: 'users', only: [:show], param: :username do
-    resources :stream_entries, path: 'updates', only: [:show] do
-      member do
-        get :embed
+  get 'manifest', to: 'manifests#show', defaults: { format: 'json' }
+  get 'intent', to: 'intents#show'
+  get 'custom.css', to: 'custom_css#show'
+  resources :custom_css, only: :show, path: :css
+
+  get 'remote_interaction_helper', to: 'remote_interaction_helper#index'
+
+  resource :instance_actor, path: 'actor', only: [:show] do
+    scope module: :activitypub do
+      resource :inbox, only: [:create]
+      resource :outbox, only: [:show]
+    end
+  end
+
+  get '/invite/:invite_code', constraints: ->(req) { req.format == :json }, to: 'api/v1/invites#show'
+
+  devise_scope :user do
+    get '/invite/:invite_code', to: 'auth/registrations#new', as: :public_invite
+
+    resource :unsubscribe, only: [:show, :create], controller: :unsubscriptions
+
+    namespace :auth do
+      resource :acceptance, only: [:create]
+      resource :setup, only: [:show, :update], controller: :setup
+      resource :challenge, only: [:create]
+      post 'captcha_confirmation', to: 'confirmations#confirm_captcha', as: :captcha_confirmation
+      namespace :sessions do
+        resource :security_key_options, only: :show
       end
     end
+  end
 
-    get :remote_follow,  to: 'remote_follow#new'
-    post :remote_follow, to: 'remote_follow#create'
+  scope module: :auth do
+    devise_for :users, path: 'auth', format: false
+  end
 
+  with_options constraints: ->(req) { req.format.nil? || req.format.html? } do
+    get '/users/:username', to: redirect_with_vary('/@%{username}')
+    get '/users/:username/following', to: redirect_with_vary('/@%{username}/following')
+    get '/users/:username/followers', to: redirect_with_vary('/@%{username}/followers')
+    get '/users/:username/statuses/:id', to: redirect_with_vary('/@%{username}/%{id}')
+  end
+
+  get '/authorize_follow', to: redirect { |_, request| "/authorize_interaction?#{request.params.to_query}" }
+
+  concern :account_resources do
     resources :followers, only: [:index], controller: :follower_accounts
     resources :following, only: [:index], controller: :following_accounts
-    resource :follow, only: [:create], controller: :account_follow
-    resource :unfollow, only: [:create], controller: :account_unfollow
-  end
 
-  get '/@:username', to: 'accounts#show', as: :short_account
-  get '/@:account_username/:id', to: 'statuses#show', as: :short_account_status
-
-  namespace :settings do
-    resource :profile, only: [:show, :update]
-    resource :preferences, only: [:show, :update]
-    resource :import, only: [:show, :create]
-
-    resource :export, only: [:show]
-    namespace :exports, constraints: { format: :csv } do
-      resources :follows, only: :index, controller: :following_accounts
-      resources :blocks, only: :index, controller: :blocked_accounts
-      resources :mutes, only: :index, controller: :muted_accounts
-    end
-
-    resource :two_factor_authentication, only: [:show, :create, :destroy]
-    namespace :two_factor_authentication do
-      resources :recovery_codes, only: [:create]
-      resource :confirmation, only: [:new, :create]
-    end
-
-    resource :follower_domains, only: [:show, :update]
-  end
-
-  resources :media, only: [:show]
-  resources :tags,  only: [:show]
-
-  # Remote follow
-  resource :authorize_follow, only: [:show, :create]
-
-  namespace :admin do
-    resources :pubsubhubbub, only: [:index]
-    resources :domain_blocks, only: [:index, :new, :create, :show, :destroy]
-    resource :settings, only: [:edit, :update]
-    resources :instances, only: [:index]
-
-    resources :reports, only: [:index, :show, :update] do
-      resources :reported_statuses, only: :destroy
-    end
-
-    resources :accounts, only: [:index, :show] do
-      resource :reset, only: [:create]
-      resource :silence, only: [:create, :destroy]
-      resource :suspension, only: [:create, :destroy]
-      resource :confirmation, only: [:create]
-    end
-
-    resources :users, only: [] do
-      resource :two_factor_authentication, only: [:destroy]
+    scope module: :activitypub do
+      resource :outbox, only: [:show]
+      resource :inbox, only: [:create]
+      resources :collections, only: [:show], as: :actor_collections, constraints: { id: Regexp.union(ActivityPub::CollectionsController::SUPPORTED_COLLECTIONS) }
+      resource :followers_synchronization, only: [:show]
+      resources :quote_authorizations, only: [:show]
     end
   end
 
-  get '/admin', to: redirect('/admin/settings/edit', status: 302)
+  resources :accounts, path: 'users', only: [:show], param: :username, concerns: :account_resources do
+    resources :statuses, only: [:show] do
+      member do
+        get :activity
+        get :embed
+      end
 
-  namespace :api do
-    # PubSubHubbub outgoing subscriptions
-    resources :subscriptions, only: [:show]
-    post '/subscriptions/:id', to: 'subscriptions#update'
-
-    # PubSubHubbub incoming subscriptions
-    post '/push', to: 'push#update', as: :push
-
-    # Salmon
-    post '/salmon/:id', to: 'salmon#update', as: :salmon
-
-    # OEmbed
-    get '/oembed', to: 'oembed#show', as: :oembed
-
-    # ActivityPub
-    namespace :activitypub do
-      get '/users/:id/outbox', to: 'outbox#show', as: :outbox
-      get '/statuses/:id', to: 'activities#show_status', as: :status
-      resources :notes, only: [:show]
+      resources :replies, only: [:index], module: :activitypub
+      resources :likes, only: [:index], module: :activitypub
+      resources :shares, only: [:index], module: :activitypub
     end
+  end
 
-    # JSON / REST API
-    namespace :v1 do
-      resources :statuses, only: [:create, :show, :destroy] do
+  scope path: 'ap', as: 'ap' do
+    resources :accounts, path: 'users', only: [:show], param: :id, concerns: :account_resources, constraints: { id: /-?\d+/ } do
+      resources :collections, only: [:show], constraints: { id: /\d+/ }
+      resources :collection_items, only: [:show]
+      resources :feature_authorizations, only: [:show], module: :activitypub
+      resources :featured_collections, only: [:index], module: :activitypub
+
+      resources :statuses, only: [:show] do
         member do
-          get :context
-          get :card
-          get :reblogged_by
-          get :favourited_by
-
-          post :reblog
-          post :unreblog
-          post :favourite
-          post :unfavourite
+          get :activity
         end
+
+        resources :replies, only: [:index], module: :activitypub
+        resources :likes, only: [:index], module: :activitypub
+        resources :shares, only: [:index], module: :activitypub
       end
-
-      get '/timelines/home',     to: 'timelines#home', as: :home_timeline
-      get '/timelines/public',   to: 'timelines#public', as: :public_timeline
-      get '/timelines/tag/:id',  to: 'timelines#tag', as: :hashtag_timeline
-
-      get '/search', to: 'search#index', as: :search
-
-      resources :follows,    only: [:create]
-      resources :media,      only: [:create]
-      resources :apps,       only: [:create]
-      resources :blocks,     only: [:index]
-      resources :mutes,      only: [:index]
-      resources :favourites, only: [:index]
-      resources :reports,    only: [:index, :create]
-
-      resource :instance, only: [:show]
-
-      resources :follow_requests, only: [:index] do
-        member do
-          post :authorize
-          post :reject
-        end
-      end
-
-      resources :notifications, only: [:index, :show] do
-        collection do
-          post :clear
-          post :dismiss
-        end
-      end
-
-      resources :accounts, only: [:show] do
-        collection do
-          get :relationships
-          get :verify_credentials
-          patch :update_credentials
-          get :search
-        end
-
-        member do
-          get :statuses
-          get :followers
-          get :following
-
-          post :follow
-          post :unfollow
-          post :block
-          post :unblock
-          post :mute
-          post :unmute
-        end
-      end
-    end
-
-    namespace :web do
-      resource :settings, only: [:update]
     end
   end
 
-  get '/web/(*any)', to: 'home#index', as: :web
+  resources :collections, only: [:show], constraints: { id: /\d+/ }
 
+  resource :inbox, only: [:create], module: :activitypub
+  resources :contexts, only: [:show], module: :activitypub, constraints: { id: /[0-9]+-[0-9]+/ } do
+    member do
+      get :items
+    end
+  end
+
+  constraints(encoded_path: /%40.*/) do
+    get '/:encoded_path', to: redirect { |params|
+      "/#{params[:encoded_path].gsub('%40', '@')}"
+    }
+  end
+
+  constraints(username: %r{[^@/.]+}) do
+    with_options to: 'accounts#show' do
+      get '/@:username', as: :short_account
+      get '/@:username/featured'
+      get '/@:username/collections'
+      get '/@:username/with_replies', as: :short_account_with_replies
+      get '/@:username/media', as: :short_account_media
+      get '/@:username/tagged/:tag', as: :short_account_tag
+    end
+  end
+
+  constraints(account_username: %r{[^@/.]+}) do
+    get '/@:account_username/following', to: 'following_accounts#index'
+    get '/@:account_username/followers', to: 'follower_accounts#index'
+    get '/@:account_username/:id', to: 'statuses#show', as: :short_account_status
+    get '/@:account_username/:id/embed', to: 'statuses#embed', as: :embed_short_account_status
+    get '/@:account_username/wrapstodon/:year/:share_key', to: 'wrapstodon#show', as: :public_wrapstodon
+  end
+
+  get '/@:username_with_domain/(*any)', to: 'home#index', constraints: { username_with_domain: %r{([^/])+?} }, as: :account_with_domain, format: false
+  get '/settings', to: redirect('/settings/profile')
+
+  draw(:settings)
+
+  namespace :disputes do
+    resources :strikes, only: [:show, :index] do
+      resource :appeal, only: [:create]
+    end
+  end
+
+  namespace :redirect do
+    resources :accounts, only: :show
+    resources :statuses, only: :show
+    resources :collections, only: :show
+  end
+
+  namespace :email_subscriptions do
+    resource :confirmation, only: :show
+  end
+
+  resources :media, only: [:show] do
+    member { get :player }
+  end
+
+  resources :tags,   only: [:show]
+  resources :emojis, only: [:show]
+  resources :invites, only: [:index, :create, :destroy]
+  resources :filters, except: [:show] do
+    resources :statuses, only: [:index], module: :filters do
+      collection do
+        post :batch
+      end
+    end
+  end
+
+  resource :relationships, only: [:show, :update]
+  resources :severed_relationships, only: [:index] do
+    member do
+      constraints(format: :csv) do
+        get :followers
+        get :following
+      end
+    end
+  end
+  resource :statuses_cleanup, controller: :statuses_cleanup, only: [:show, :update]
+
+  get '/media_proxy/:id/(*any)', to: 'media_proxy#show', as: :media_proxy, format: false
+  resources :backups, only: [] do
+    member { get :download, format: false }
+  end
+
+  resource :authorize_interaction, only: [:show]
+  resource :share, only: [:show]
+
+  draw(:admin)
+
+  get '/admin', to: redirect('/admin/dashboard', status: 302)
+
+  draw(:api)
+
+  draw(:fasp)
+
+  draw(:web_app)
+
+  get '/web/(*any)', to: redirect(path: '/%{any}', status: 302), as: :web, defaults: { any: '' }, format: false
   get '/about',      to: 'about#show'
-  get '/about/more', to: 'about#more'
-  get '/terms',      to: 'about#terms'
+  get '/about/more', to: redirect('/about')
 
-  root 'home#index'
+  get '/privacy-policy',   to: 'privacy#show', as: :privacy_policy
+  get '/terms-of-service', to: 'terms_of_service#show', as: :terms_of_service
+  get '/terms-of-service/:date', to: 'terms_of_service#show', as: :terms_of_service_version
+  get '/terms', to: redirect('/terms-of-service')
 
-  match '*unmatched_route',
-    via: :all,
-    to: 'application#raise_not_found',
-    format: false
+  match '/', via: [:post, :put, :patch, :delete], to: 'application#raise_not_found', format: false
+  match '*unmatched_route', via: :all, to: 'application#raise_not_found', format: false
 end

@@ -1,188 +1,236 @@
-import api, { getLinks } from '../api'
-import Immutable from 'immutable';
+import { Map as ImmutableMap, List as ImmutableList } from 'immutable';
+
+import api, { getLinks } from 'mastodon/api';
+import { compareId } from 'mastodon/compare_id';
+import { usePendingItems as preferPendingItems } from 'mastodon/initial_state';
+
+import { importFetchedStatus, importFetchedStatuses } from './importer';
+import { submitMarkers } from './markers';
+import { timelineDelete } from './timelines_typed';
+
+export { disconnectTimeline } from './timelines_typed';
 
 export const TIMELINE_UPDATE  = 'TIMELINE_UPDATE';
-export const TIMELINE_DELETE  = 'TIMELINE_DELETE';
-
-export const TIMELINE_REFRESH_REQUEST = 'TIMELINE_REFRESH_REQUEST';
-export const TIMELINE_REFRESH_SUCCESS = 'TIMELINE_REFRESH_SUCCESS';
-export const TIMELINE_REFRESH_FAIL    = 'TIMELINE_REFRESH_FAIL';
+export const TIMELINE_CLEAR   = 'TIMELINE_CLEAR';
 
 export const TIMELINE_EXPAND_REQUEST = 'TIMELINE_EXPAND_REQUEST';
 export const TIMELINE_EXPAND_SUCCESS = 'TIMELINE_EXPAND_SUCCESS';
 export const TIMELINE_EXPAND_FAIL    = 'TIMELINE_EXPAND_FAIL';
 
-export const TIMELINE_SCROLL_TOP = 'TIMELINE_SCROLL_TOP';
+export const TIMELINE_SCROLL_TOP   = 'TIMELINE_SCROLL_TOP';
+export const TIMELINE_LOAD_PENDING = 'TIMELINE_LOAD_PENDING';
+export const TIMELINE_CONNECT      = 'TIMELINE_CONNECT';
 
-export const TIMELINE_CONNECT    = 'TIMELINE_CONNECT';
-export const TIMELINE_DISCONNECT = 'TIMELINE_DISCONNECT';
+export const TIMELINE_MARK_AS_PARTIAL = 'TIMELINE_MARK_AS_PARTIAL';
+export const TIMELINE_INSERT          = 'TIMELINE_INSERT';
 
-export function refreshTimelineSuccess(timeline, statuses, skipLoading, next) {
-  return {
-    type: TIMELINE_REFRESH_SUCCESS,
-    timeline,
-    statuses,
-    skipLoading,
-    next
-  };
-};
+// When adding new special markers here, make sure to update TIMELINE_NON_STATUS_MARKERS in actions/timelines_typed.js
+export const TIMELINE_SUGGESTIONS = 'inline-follow-suggestions';
+export const TIMELINE_GAP = null;
+export const TIMELINE_PINNED_VIEW_ALL = 'pinned-view-all';
 
-export function updateTimeline(timeline, status) {
+export const TIMELINE_NON_STATUS_MARKERS = [
+  TIMELINE_GAP,
+  TIMELINE_SUGGESTIONS,
+  TIMELINE_PINNED_VIEW_ALL,
+];
+
+export const loadPending = timeline => ({
+  type: TIMELINE_LOAD_PENDING,
+  timeline,
+});
+
+export function updateTimeline(timeline, status, { accept = undefined, bogusQuotePolicy = false } = {}) {
   return (dispatch, getState) => {
-    const references = status.reblog ? getState().get('statuses').filter((item, itemId) => (itemId === status.reblog.id || item.get('reblog') === status.reblog.id)).map((_, itemId) => itemId) : [];
+    if (typeof accept === 'function' && !accept(status)) {
+      return;
+    }
+
+    if (getState().getIn(['timelines', timeline, 'isPartial'])) {
+      // Prevent new items from being added to a partial timeline,
+      // since it will be reloaded anyway
+
+      return;
+    }
+
+    dispatch(importFetchedStatus(status, { bogusQuotePolicy }));
 
     dispatch({
       type: TIMELINE_UPDATE,
       timeline,
       status,
-      references
+      usePendingItems: preferPendingItems,
     });
+
+    if (timeline === 'home') {
+      dispatch(submitMarkers());
+    }
   };
-};
+}
 
 export function deleteFromTimelines(id) {
   return (dispatch, getState) => {
     const accountId  = getState().getIn(['statuses', id, 'account']);
-    const references = getState().get('statuses').filter(status => status.get('reblog') === id).map(status => [status.get('id'), status.get('account')]);
+    const references = getState().get('statuses').filter(status => status.get('reblog') === id).map(status => status.get('id')).valueSeq().toJSON();
     const reblogOf   = getState().getIn(['statuses', id, 'reblog'], null);
 
-    dispatch({
-      type: TIMELINE_DELETE,
-      id,
-      accountId,
-      references,
-      reblogOf
-    });
+    dispatch(timelineDelete({ statusId: id, accountId, references, reblogOf }));
   };
+}
+
+export function clearTimeline(timeline) {
+  return (dispatch) => {
+    dispatch({ type: TIMELINE_CLEAR, timeline });
+  };
+}
+
+const parseTags = (tags = {}, mode) => {
+  return (tags[mode] || []).map((tag) => {
+    return tag.value;
+  });
 };
 
-export function refreshTimelineRequest(timeline, id, skipLoading) {
-  return {
-    type: TIMELINE_REFRESH_REQUEST,
-    timeline,
-    id,
-    skipLoading
-  };
-};
+export function expandTimeline(timelineId, path, params = {}) {
+  return async (dispatch, getState) => {
+    const timeline = getState().getIn(['timelines', timelineId], ImmutableMap());
+    const isLoadingMore = !!params.max_id;
 
-export function refreshTimeline(timeline, id = null) {
-  return function (dispatch, getState) {
-    if (getState().getIn(['timelines', timeline, 'isLoading'])) {
+    if (timeline.get('isLoading')) {
       return;
     }
 
-    const ids      = getState().getIn(['timelines', timeline, 'items'], Immutable.List());
-    const newestId = ids.size > 0 ? ids.first() : null;
-    let params     = getState().getIn(['timelines', timeline, 'params'], {});
-    const path     = getState().getIn(['timelines', timeline, 'path'])(id);
+    if (!params.max_id && !params.pinned && (timeline.get('items', ImmutableList()).size + timeline.get('pendingItems', ImmutableList()).size) > 0) {
+      const a = timeline.getIn(['pendingItems', 0]);
+      const b = timeline.getIn(['items', 0]);
 
-    let skipLoading = false;
+      if (a && b && compareId(a, b) > 0) {
+        params.since_id = a;
+      } else {
+        params.since_id = b || a;
+      }
+    }
 
-    if (newestId !== null && getState().getIn(['timelines', timeline, 'loaded']) && (id === null || getState().getIn(['timelines', timeline, 'id']) === id)) {
-      if (id === null && getState().getIn(['timelines', timeline, 'online'])) {
-        // Skip refreshing when timeline is live anyway
-        return;
+    const isLoadingRecent = !!params.since_id;
+
+    dispatch(expandTimelineRequest(timelineId, isLoadingMore));
+
+    try {
+      const response = await api().get(path, { params });
+      const next = getLinks(response).refs.find(link => link.rel === 'next');
+
+      dispatch(importFetchedStatuses(response.data));
+      dispatch(expandTimelineSuccess(timelineId, response.data, next ? next.uri : null, response.status === 206, isLoadingRecent, isLoadingMore, isLoadingRecent && preferPendingItems));
+
+      if (timelineId === 'home' && !isLoadingMore && !isLoadingRecent) {
+        const now = new Date();
+        const fittingIndex = response.data.findIndex(status => now - (new Date(status.created_at)) > 4 * 3600 * 1000);
+
+        if (fittingIndex !== -1) {
+          dispatch(insertIntoTimeline(timelineId, TIMELINE_SUGGESTIONS, Math.max(1, fittingIndex)));
+        }
       }
 
-      params          = { ...params, since_id: newestId };
-      skipLoading     = true;
-    } else if (getState().getIn(['timelines', timeline, 'loaded'])) {
-      skipLoading = true;
-    }
-
-    dispatch(refreshTimelineRequest(timeline, id, skipLoading));
-
-    api(getState).get(path, { params }).then(response => {
-      const next = getLinks(response).refs.find(link => link.rel === 'next');
-      dispatch(refreshTimelineSuccess(timeline, response.data, skipLoading, next ? next.uri : null));
-    }).catch(error => {
-      dispatch(refreshTimelineFail(timeline, error, skipLoading));
-    });
-  };
-};
-
-export function refreshTimelineFail(timeline, error, skipLoading) {
-  return {
-    type: TIMELINE_REFRESH_FAIL,
-    timeline,
-    error,
-    skipLoading
-  };
-};
-
-export function expandTimeline(timeline) {
-  return (dispatch, getState) => {
-    if (getState().getIn(['timelines', timeline, 'isLoading'])) {
-      return;
-    }
-
-    if (getState().getIn(['timelines', timeline, 'items']).size === 0) {
-      return;
-    }
-
-    const path   = getState().getIn(['timelines', timeline, 'path'])(getState().getIn(['timelines', timeline, 'id']));
-    const params = getState().getIn(['timelines', timeline, 'params'], {});
-    const lastId = getState().getIn(['timelines', timeline, 'items']).last();
-
-    dispatch(expandTimelineRequest(timeline));
-
-    api(getState).get(path, {
-      params: {
-        ...params,
-        max_id: lastId,
-        limit: 10
+      if (timelineId === 'home') {
+        dispatch(submitMarkers());
       }
-    }).then(response => {
-      const next = getLinks(response).refs.find(link => link.rel === 'next');
-      dispatch(expandTimelineSuccess(timeline, response.data, next ? next.uri : null));
-    }).catch(error => {
-      dispatch(expandTimelineFail(timeline, error));
-    });
+    } catch(error) {
+      dispatch(expandTimelineFail(timelineId, error, isLoadingMore));
+    }
   };
+}
+
+export function fillTimelineGaps(timelineId, path, params = {}) {
+  return async (dispatch, getState) => {
+    const timeline = getState().getIn(['timelines', timelineId], ImmutableMap());
+    const items = timeline.get('items');
+    const nullIndexes = items.map((statusId, index) => statusId === null ? index : null);
+    const gaps = nullIndexes.map(index => index > 0 ? items.get(index - 1) : null);
+
+    // Only expand at most two gaps to avoid doing too many requests
+    for (const maxId of gaps.take(2)) {
+      await dispatch(expandTimeline(timelineId, path, { ...params, maxId }));
+    }
+  };
+}
+
+export const expandHomeTimeline            = ({ maxId } = {}) => expandTimeline('home', '/api/v1/timelines/home', { max_id: maxId });
+export const expandPublicTimeline          = ({ maxId, onlyMedia, onlyRemote } = {}) => expandTimeline(`public${onlyRemote ? ':remote' : ''}${onlyMedia ? ':media' : ''}`, '/api/v1/timelines/public', { remote: !!onlyRemote, max_id: maxId, only_media: !!onlyMedia });
+export const expandCommunityTimeline       = ({ maxId, onlyMedia } = {}) => expandTimeline(`community${onlyMedia ? ':media' : ''}`, '/api/v1/timelines/public', { local: true, max_id: maxId, only_media: !!onlyMedia });
+export const expandAccountTimeline         = (accountId, { maxId, withReplies, tagged } = {}) => expandTimeline(`account:${accountId}${withReplies ? ':with_replies' : ''}${tagged ? `:${tagged}` : ''}`, `/api/v1/accounts/${accountId}/statuses`, { exclude_replies: !withReplies, exclude_reblogs: withReplies, tagged, max_id: maxId });
+export const expandAccountFeaturedTimeline = (accountId, { tagged } = {}) => expandTimeline(`account:${accountId}:pinned${tagged ? `:${tagged}` : ''}`, `/api/v1/accounts/${accountId}/statuses`, { pinned: true, tagged });
+export const expandAccountMediaTimeline    = (accountId, { maxId, withReplies } = {}) => expandTimeline(`account:${accountId}:media${withReplies ? ':with_replies' : ''}`, `/api/v1/accounts/${accountId}/statuses`, { max_id: maxId, only_media: true, limit: 40, exclude_replies: !withReplies });
+export const expandListTimeline            = (id, { maxId } = {}) => expandTimeline(`list:${id}`, `/api/v1/timelines/list/${id}`, { max_id: maxId });
+export const expandLinkTimeline            = (url, { maxId } = {}) => expandTimeline(`link:${url}`, `/api/v1/timelines/link`, { url, max_id: maxId });
+export const expandHashtagTimeline         = (hashtag, { maxId, tags, local } = {}) => {
+  return expandTimeline(`hashtag:${hashtag}${local ? ':local' : ''}`, `/api/v1/timelines/tag/${hashtag}`, {
+    max_id: maxId,
+    any:    parseTags(tags, 'any'),
+    all:    parseTags(tags, 'all'),
+    none:   parseTags(tags, 'none'),
+    local:  local,
+  });
 };
 
-export function expandTimelineRequest(timeline) {
+export const fillHomeTimelineGaps      = () => fillTimelineGaps('home', '/api/v1/timelines/home', {});
+export const fillPublicTimelineGaps    = ({ onlyMedia, onlyRemote } = {}) => fillTimelineGaps(`public${onlyRemote ? ':remote' : ''}${onlyMedia ? ':media' : ''}`, '/api/v1/timelines/public', { remote: !!onlyRemote, only_media: !!onlyMedia });
+export const fillCommunityTimelineGaps = ({ onlyMedia } = {}) => fillTimelineGaps(`community${onlyMedia ? ':media' : ''}`, '/api/v1/timelines/public', { local: true, only_media: !!onlyMedia });
+export const fillListTimelineGaps      = (id) => fillTimelineGaps(`list:${id}`, `/api/v1/timelines/list/${id}`, {});
+
+export function expandTimelineRequest(timeline, isLoadingMore) {
   return {
     type: TIMELINE_EXPAND_REQUEST,
-    timeline
+    timeline,
+    skipLoading: !isLoadingMore,
   };
-};
+}
 
-export function expandTimelineSuccess(timeline, statuses, next) {
+export function expandTimelineSuccess(timeline, statuses, next, partial, isLoadingRecent, isLoadingMore, usePendingItems) {
   return {
     type: TIMELINE_EXPAND_SUCCESS,
     timeline,
     statuses,
-    next
+    next,
+    partial,
+    isLoadingRecent,
+    usePendingItems,
+    skipLoading: !isLoadingMore,
   };
-};
+}
 
-export function expandTimelineFail(timeline, error) {
+export function expandTimelineFail(timeline, error, isLoadingMore) {
   return {
     type: TIMELINE_EXPAND_FAIL,
     timeline,
-    error
+    error,
+    skipLoading: !isLoadingMore,
+    skipNotFound: timeline.startsWith('account:'),
   };
-};
+}
 
 export function scrollTopTimeline(timeline, top) {
   return {
     type: TIMELINE_SCROLL_TOP,
     timeline,
-    top
+    top,
   };
-};
+}
 
 export function connectTimeline(timeline) {
   return {
     type: TIMELINE_CONNECT,
-    timeline
+    timeline,
+    usePendingItems: preferPendingItems,
   };
-};
+}
 
-export function disconnectTimeline(timeline) {
-  return {
-    type: TIMELINE_DISCONNECT,
-    timeline
-  };
-};
+export const markAsPartial = timeline => ({
+  type: TIMELINE_MARK_AS_PARTIAL,
+  timeline,
+});
+
+export const insertIntoTimeline = (timeline, key, index) => ({
+  type: TIMELINE_INSERT,
+  timeline,
+  index,
+  key,
+});

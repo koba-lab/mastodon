@@ -1,127 +1,175 @@
 # frozen_string_literal: true
 
-class Api::V1::StatusesController < ApiController
-  before_action :authorize_if_got_token, except:            [:create, :destroy, :reblog, :unreblog, :favourite, :unfavourite]
-  before_action -> { doorkeeper_authorize! :write }, only:  [:create, :destroy, :reblog, :unreblog, :favourite, :unfavourite]
-  before_action :require_user!, except: [:show, :context, :card, :reblogged_by, :favourited_by]
-  before_action :set_status, only:      [:show, :context, :card, :reblogged_by, :favourited_by]
+class Api::V1::StatusesController < Api::BaseController
+  include Authorization
+  include Api::InteractionPoliciesConcern
 
-  respond_to :json
+  before_action -> { authorize_if_got_token! :read, :'read:statuses' }, except: [:create, :update, :destroy]
+  before_action -> { doorkeeper_authorize! :write, :'write:statuses' }, only:   [:create, :update, :destroy]
+  before_action :require_user!, except:      [:index, :show]
+  before_action :set_statuses, only:         [:index]
+  before_action :set_status, only:           [:show]
+  before_action :set_thread, only:           [:create]
+  before_action :set_quoted_status, only:    [:create]
+  before_action :check_statuses_limit, only: [:index]
+
+  override_rate_limit_headers :create, family: :statuses
+  override_rate_limit_headers :update, family: :statuses
+
+  def index
+    @statuses = preload_collection(@statuses, Status)
+    render json: @statuses, each_serializer: REST::StatusSerializer
+  end
 
   def show
-    cached  = Rails.cache.read(@status.cache_key)
-    @status = cached unless cached.nil?
-  end
-
-  def context
-    ancestors_results   = @status.in_reply_to_id.nil? ? [] : @status.ancestors(current_account)
-    descendants_results = @status.descendants(current_account)
-    loaded_ancestors    = cache_collection(ancestors_results, Status)
-    loaded_descendants  = cache_collection(descendants_results, Status)
-
-    @context = OpenStruct.new(ancestors: loaded_ancestors, descendants: loaded_descendants)
-    statuses = [@status] + @context[:ancestors] + @context[:descendants]
-
-    set_maps(statuses)
-  end
-
-  def card
-    @card = PreviewCard.find_by(status: @status)
-    render_empty if @card.nil?
-  end
-
-  def reblogged_by
-    results   = @status.reblogs.paginate_by_max_id(limit_param(DEFAULT_ACCOUNTS_LIMIT), params[:max_id], params[:since_id])
-    accounts  = Account.where(id: results.map(&:account_id)).map { |a| [a.id, a] }.to_h
-    @accounts = results.map { |r| accounts[r.account_id] }
-
-    next_path = reblogged_by_api_v1_status_url(pagination_params(max_id: results.last.id))    if results.size == limit_param(DEFAULT_ACCOUNTS_LIMIT)
-    prev_path = reblogged_by_api_v1_status_url(pagination_params(since_id: results.first.id)) unless results.empty?
-
-    set_pagination_headers(next_path, prev_path)
-
-    render :accounts
-  end
-
-  def favourited_by
-    results   = @status.favourites.paginate_by_max_id(limit_param(DEFAULT_ACCOUNTS_LIMIT), params[:max_id], params[:since_id])
-    accounts  = Account.where(id: results.map(&:account_id)).map { |a| [a.id, a] }.to_h
-    @accounts = results.map { |f| accounts[f.account_id] }
-
-    next_path = favourited_by_api_v1_status_url(pagination_params(max_id: results.last.id))    if results.size == limit_param(DEFAULT_ACCOUNTS_LIMIT)
-    prev_path = favourited_by_api_v1_status_url(pagination_params(since_id: results.first.id)) unless results.empty?
-
-    set_pagination_headers(next_path, prev_path)
-
-    render :accounts
+    cache_if_unauthenticated!
+    @status = preload_collection([@status], Status).first
+    render json: @status, serializer: REST::StatusSerializer
   end
 
   def create
-    @status = PostStatusService.new.call(current_user.account,
-                                         status_params[:status],
-                                         status_params[:in_reply_to_id].blank? ? nil : Status.find(status_params[:in_reply_to_id]),
-                                         media_ids: status_params[:media_ids],
-                                         sensitive: status_params[:sensitive],
-                                         spoiler_text: status_params[:spoiler_text],
-                                         visibility: status_params[:visibility],
-                                         application: doorkeeper_token.application,
-                                         idempotency: request.headers['Idempotency-Key'])
+    @status = PostStatusService.new.call(
+      current_user.account,
+      text: status_params[:status],
+      thread: @thread,
+      quoted_status: @quoted_status,
+      quote_approval_policy: quote_approval_policy,
+      media_ids: status_params[:media_ids],
+      sensitive: status_params[:sensitive],
+      spoiler_text: status_params[:spoiler_text],
+      visibility: status_params[:visibility],
+      language: status_params[:language],
+      scheduled_at: status_params[:scheduled_at],
+      application: doorkeeper_token.application,
+      poll: status_params[:poll],
+      allowed_mentions: status_params[:allowed_mentions],
+      idempotency: request.headers['Idempotency-Key'],
+      with_rate_limit: true
+    )
 
-    render :show
+    render json: @status, serializer: serializer_for_status
+  rescue PostStatusService::UnexpectedMentionsError => e
+    render json: unexpected_accounts_error_json(e), status: 422
+  end
+
+  def update
+    @status = Status.where(account: current_account).find(params[:id])
+    authorize @status, :update?
+
+    update_options = {
+      text: status_params[:status],
+      media_ids: status_params[:media_ids],
+      media_attributes: status_params[:media_attributes],
+      sensitive: status_params[:sensitive],
+      language: status_params[:language],
+      spoiler_text: status_params[:spoiler_text],
+      poll: status_params[:poll],
+    }
+
+    update_options[:quote_approval_policy] = quote_approval_policy if status_params[:quote_approval_policy].present?
+
+    UpdateStatusService.new.call(@status, current_account.id, update_options)
+
+    render json: @status, serializer: REST::StatusSerializer
   end
 
   def destroy
-    @status = Status.where(account_id: current_user.account).find(params[:id])
-    RemovalWorker.perform_async(@status.id)
-    render_empty
-  end
+    @status = Status.where(account: current_account).find(params[:id])
+    authorize @status, :destroy?
 
-  def reblog
-    @status = ReblogService.new.call(current_user.account, Status.find(params[:id]))
-    render :show
-  end
+    # JSON is generated before `discard_with_reblogs` in order to have the proper URL
+    # for media attachments, as it would otherwise redirect to the media proxy
+    json = render_to_body json: @status, serializer: REST::StatusSerializer, source_requested: true
 
-  def unreblog
-    reblog       = Status.where(account_id: current_user.account, reblog_of_id: params[:id]).first!
-    @status      = reblog.reblog
-    @reblogs_map = { @status.id => false }
+    @status.discard_with_reblogs
+    StatusPin.find_by(status: @status)&.destroy
+    @status.account.statuses_count = @status.account.statuses_count - 1
 
-    RemovalWorker.perform_async(reblog.id)
+    RemovalWorker.perform_async(@status.id, { 'redraft' => !truthy_param?(:delete_media) })
 
-    render :show
-  end
-
-  def favourite
-    @status = FavouriteService.new.call(current_user.account, Status.find(params[:id])).status.reload
-    render :show
-  end
-
-  def unfavourite
-    @status         = Status.find(params[:id])
-    @favourites_map = { @status.id => false }
-
-    UnfavouriteWorker.perform_async(current_user.account_id, @status.id)
-
-    render :show
+    render json: json
   end
 
   private
 
+  def set_statuses
+    @statuses = Status.permitted_statuses_from_ids(status_ids, current_account)
+  end
+
   def set_status
     @status = Status.find(params[:id])
-    raise ActiveRecord::RecordNotFound unless @status.permitted?(current_account)
+    authorize @status, :show?
+  rescue ActiveRecord::RecordNotFound, Mastodon::NotPermittedError
+    not_found
+  end
+
+  def set_thread
+    @thread = Status.find(status_params[:in_reply_to_id]) if status_params[:in_reply_to_id].present?
+    authorize(@thread, :show?) if @thread.present?
+  rescue ActiveRecord::RecordNotFound, Mastodon::NotPermittedError
+    render json: { error: I18n.t('statuses.errors.in_reply_not_found') }, status: 404
+  end
+
+  def set_quoted_status
+    @quoted_status = Status.find(status_params[:quoted_status_id])&.proper if status_params[:quoted_status_id].present?
+    authorize(@quoted_status, :quote?) if @quoted_status.present?
+  rescue ActiveRecord::RecordNotFound, Mastodon::NotPermittedError
+    # TODO: distinguish between non-existing and non-quotable posts
+    render json: { error: I18n.t('statuses.errors.quoted_status_not_found') }, status: 404
+  end
+
+  def check_statuses_limit
+    raise(Mastodon::ValidationError) if status_ids.size > DEFAULT_STATUSES_LIMIT
+  end
+
+  def status_ids
+    Array(statuses_params[:id]).uniq.map(&:to_i)
+  end
+
+  def statuses_params
+    params.permit(id: [])
   end
 
   def status_params
-    params.permit(:status, :in_reply_to_id, :sensitive, :spoiler_text, :visibility, media_ids: [])
+    params.permit(
+      :status,
+      :in_reply_to_id,
+      :quoted_status_id,
+      :quote_approval_policy,
+      :sensitive,
+      :spoiler_text,
+      :visibility,
+      :language,
+      :scheduled_at,
+      allowed_mentions: [],
+      media_ids: [],
+      media_attributes: [
+        :id,
+        :thumbnail,
+        :description,
+        :focus,
+      ],
+      poll: [
+        :multiple,
+        :hide_totals,
+        :expires_in,
+        options: [],
+      ]
+    )
   end
 
-  def pagination_params(core_params)
-    params.permit(:limit).merge(core_params)
+  def serializer_for_status
+    @status.is_a?(ScheduledStatus) ? REST::ScheduledStatusSerializer : REST::StatusSerializer
   end
 
-  def authorize_if_got_token
-    request_token = Doorkeeper::OAuth::Token.from_request(request, *Doorkeeper.configuration.access_token_methods)
-    doorkeeper_authorize! :read if request_token
+  def unexpected_accounts_error_json(error)
+    {
+      error: error.message,
+      unexpected_accounts: serialized_accounts(error.accounts),
+    }
+  end
+
+  def serialized_accounts(accounts)
+    ActiveModel::Serializer::CollectionSerializer.new(accounts, serializer: REST::AccountSerializer, scope_name: :current_user, scope: current_user)
   end
 end

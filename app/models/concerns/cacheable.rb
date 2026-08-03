@@ -3,14 +3,23 @@
 module Cacheable
   extend ActiveSupport::Concern
 
-  class_methods do
+  module ClassMethods
+    @cache_associated = []
+
     def cache_associated(*associations)
       @cache_associated = associations
     end
-  end
 
-  included do
-    scope :with_includes, -> { includes(@cache_associated) }
-    scope :cache_ids, -> { select(:id, :updated_at) }
+    def with_includes
+      includes(@cache_associated)
+    end
+
+    def preload_cacheable_associations(records)
+      ActiveRecord::Associations::Preloader.new(records: records, associations: @cache_associated).call
+    end
+
+    def cache_ids
+      select(:id, :updated_at)
+    end
   end
 end

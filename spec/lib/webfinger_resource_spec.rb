@@ -1,93 +1,137 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
-describe WebfingerResource do
+RSpec.describe WebfingerResource do
   around do |example|
-    before = Rails.configuration.x.local_domain
+    before_local = Rails.configuration.x.local_domain
+    before_web = Rails.configuration.x.web_domain
     example.run
-    Rails.configuration.x.local_domain = before
+    Rails.configuration.x.local_domain = before_local
+    Rails.configuration.x.web_domain = before_web
   end
 
-  describe '#username' do
+  describe '#account' do
+    subject { described_class.new(resource).account }
+
     describe 'with a URL value' do
-      it 'raises with an unrecognized route' do
-        resource = 'https://example.com/users/alice/other'
+      context 'with a route whose controller is not AccountsController' do
+        let(:resource) { 'https://example.com/users/alice/other' }
 
-        expect {
-          WebfingerResource.new(resource).username
-        }.to raise_error(ActiveRecord::RecordNotFound)
+        it 'raises an error' do
+          expect { subject }.to raise_error(ActiveRecord::RecordNotFound)
+        end
       end
 
-      it 'raises with a string that doesnt start with URL' do
-        resource = 'website for http://example.com/users/alice/other'
+      context 'with a string that does not start with an URL' do
+        let(:resource) { 'website for http://example.com/users/alice.other' }
 
-        expect {
-          WebfingerResource.new(resource).username
-        }.to raise_error(ActiveRecord::RecordNotFound)
+        it 'raises an error' do
+          expect { subject }.to raise_error(described_class::InvalidRequest)
+        end
       end
 
-      it 'finds the username in a valid https route' do
-        resource = 'https://example.com/users/alice'
+      context 'with a valid HTTPS route to an existing user' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "https://example.com/users/#{account.username}" }
 
-        result = WebfingerResource.new(resource).username
-        expect(result).to eq 'alice'
+        it { is_expected.to eq(account) }
       end
 
-      it 'finds the username in a mixed case http route' do
-        resource = 'HTTp://exAMPLEe.com/users/alice'
+      context 'with a valid HTTPS route to an existing user using the new API scheme' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "https://example.com/ap/users/#{account.id}" }
 
-        result = WebfingerResource.new(resource).username
-        expect(result).to eq 'alice'
+        it { is_expected.to eq(account) }
       end
 
-      it 'finds the username in a valid http route' do
-        resource = 'http://example.com/users/alice'
+      context 'with a valid HTTPS route to a non-existing user' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { 'https://example.com/users/alice' }
 
-        result = WebfingerResource.new(resource).username
-        expect(result).to eq 'alice'
+        it 'raises an error' do
+          expect { subject }.to raise_error(ActiveRecord::RecordNotFound)
+        end
+      end
+
+      context 'with a mixed case HTTP but valid route to an existing user' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "HTTp://example.com/users/#{account.username}" }
+
+        it { is_expected.to eq(account) }
+      end
+
+      context 'with a valid HTTP route to an existing user' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "http://example.com/users/#{account.username}" }
+
+        it { is_expected.to eq(account) }
       end
     end
 
     describe 'with a username and hostname value' do
-      it 'raises on a non-local domain' do
-        resource = 'user@remote-host.com'
+      context 'with a non-local domain' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "#{account.username}@remote-host.com" }
 
-        expect {
-          WebfingerResource.new(resource).username
-        }.to raise_error(ActiveRecord::RecordNotFound)
+        it 'raises an error' do
+          expect { subject }.to raise_error(ActiveRecord::RecordNotFound)
+        end
       end
 
-      it 'finds username for a local domain' do
-        Rails.configuration.x.local_domain = 'example.com'
-        resource = 'alice@example.com'
+      context 'with a valid handle for a local user with local domain' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "#{account.username}@example.com" }
 
-        result = WebfingerResource.new(resource).username
-        expect(result).to eq 'alice'
+        before { Rails.configuration.x.local_domain = 'example.com' }
+
+        it { is_expected.to eq(account) }
+      end
+
+      context 'with a valid handle for a local user with web domain' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "#{account.username}@example.com" }
+
+        before { Rails.configuration.x.web_domain = 'example.com' }
+
+        it { is_expected.to eq(account) }
       end
     end
 
     describe 'with an acct value' do
-      it 'raises on a non-local domain' do
-        resource = 'acct:user@remote-host.com'
+      context 'with a non-local domain' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "acct:#{account.username}@remote-host.com" }
 
-        expect {
-          WebfingerResource.new(resource).username
-        }.to raise_error(ActiveRecord::RecordNotFound)
+        it 'raises an error' do
+          expect { subject }.to raise_error(ActiveRecord::RecordNotFound)
+        end
       end
 
-      it 'raises on a nonsense domain' do
-        resource = 'acct:user@remote-host@remote-hostess.remote.local@remote'
+      context 'with a valid handle for a local user with local domain' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "acct:#{account.username}@example.com" }
 
-        expect {
-          WebfingerResource.new(resource).username
-        }.to raise_error(ActiveRecord::RecordNotFound)
+        before { Rails.configuration.x.local_domain = 'example.com' }
+
+        it { is_expected.to eq(account) }
       end
 
-      it 'finds the username for a local account' do
-        Rails.configuration.x.local_domain = 'example.com'
-        resource = 'acct:alice@example.com'
+      context 'with a valid handle for a local user with web domain' do
+        let(:account) { Fabricate(:account) }
+        let(:resource) { "acct:#{account.username}@example.com" }
 
-        result = WebfingerResource.new(resource).username
-        expect(result).to eq 'alice'
+        before { Rails.configuration.x.web_domain = 'example.com' }
+
+        it { is_expected.to eq(account) }
+      end
+    end
+
+    describe 'with a nonsense resource' do
+      let(:resource) { 'df/:dfkj' }
+
+      it 'raises an error' do
+        expect { subject }.to raise_error(described_class::InvalidRequest)
       end
     end
   end

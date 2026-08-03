@@ -1,93 +1,238 @@
 # frozen_string_literal: true
+
 # == Schema Information
 #
 # Table name: notifications
 #
-#  id              :integer          not null, primary key
-#  account_id      :integer
-#  activity_id     :integer
-#  activity_type   :string
+#  id              :bigint(8)        not null, primary key
+#  activity_type   :string           not null
+#  filtered        :boolean          default(FALSE), not null
+#  group_key       :string
+#  type            :string
 #  created_at      :datetime         not null
 #  updated_at      :datetime         not null
-#  from_account_id :integer
+#  account_id      :bigint(8)        not null
+#  activity_id     :bigint(8)        not null
+#  from_account_id :bigint(8)        not null
 #
 
 class Notification < ApplicationRecord
-  include Paginable
-  include Cacheable
+  self.inheritance_column = nil
 
-  TYPE_CLASS_MAP = {
-    mention:        'Mention',
-    reblog:         'Status',
-    follow:         'Follow',
-    follow_request: 'FollowRequest',
-    favourite:      'Favourite',
+  include Notification::Groups
+  include Paginable
+  include Redisable
+
+  LEGACY_TYPE_CLASS_MAP = {
+    'Mention' => :mention,
+    'Status' => :reblog,
+    'Follow' => :follow,
+    'FollowRequest' => :follow_request,
+    'Favourite' => :favourite,
+    'Poll' => :poll,
+    'Quote' => :quote,
   }.freeze
 
-  STATUS_INCLUDES = [:account, :stream_entry, :media_attachments, :tags, mentions: :account, reblog: [:stream_entry, :account, :media_attachments, :tags, mentions: :account]].freeze
+  # Please update app/javascript/mastodon/api_types/notifications.ts if you change this
+  PROPERTIES = {
+    mention: {
+      filterable: true,
+      baseline: true,
+    }.freeze,
+    status: {
+      filterable: false,
+      baseline: true,
+    }.freeze,
+    reblog: {
+      filterable: true,
+      baseline: true,
+    }.freeze,
+    follow: {
+      filterable: true,
+      baseline: true,
+    }.freeze,
+    follow_request: {
+      filterable: true,
+      baseline: true,
+    }.freeze,
+    favourite: {
+      filterable: true,
+      baseline: true,
+    }.freeze,
+    poll: {
+      filterable: false,
+      baseline: true,
+    }.freeze,
+    update: {
+      filterable: false,
+      baseline: true,
+    }.freeze,
+    severed_relationships: {
+      filterable: false,
+      baseline: false,
+    }.freeze,
+    moderation_warning: {
+      filterable: false,
+      baseline: false,
+    }.freeze,
+    annual_report: {
+      filterable: false,
+      baseline: true,
+    }.freeze,
+    'admin.sign_up': {
+      filterable: false,
+      baseline: false,
+    }.freeze,
+    'admin.report': {
+      filterable: false,
+      baseline: false,
+    }.freeze,
+    quote: {
+      filterable: true,
+      baseline: true,
+    }.freeze,
+    quoted_update: {
+      filterable: false,
+      baseline: true,
+    }.freeze,
+    added_to_collection: {
+      filterable: true,
+      baseline: false,
+    }.freeze,
+    collection_update: {
+      filterable: false,
+      baseline: false,
+    }.freeze,
+  }.freeze
 
-  belongs_to :account
-  belongs_to :from_account, class_name: 'Account'
-  belongs_to :activity, polymorphic: true
+  TYPES = PROPERTIES.keys.freeze
 
-  belongs_to :mention,        foreign_type: 'Mention',       foreign_key: 'activity_id'
-  belongs_to :status,         foreign_type: 'Status',        foreign_key: 'activity_id'
-  belongs_to :follow,         foreign_type: 'Follow',        foreign_key: 'activity_id'
-  belongs_to :follow_request, foreign_type: 'FollowRequest', foreign_key: 'activity_id'
-  belongs_to :favourite,      foreign_type: 'Favourite',     foreign_key: 'activity_id'
+  TARGET_STATUS_INCLUDES_BY_TYPE = {
+    status: :status,
+    reblog: [status: :reblog],
+    mention: [mention: :status],
+    quote: [quote: :status],
+    favourite: [favourite: :status],
+    poll: [poll: :status],
+    update: :status,
+    quoted_update: :status,
+    'admin.report': [report: :target_account],
+  }.freeze
 
-  validates :account_id, uniqueness: { scope: [:activity_type, :activity_id] }
-  validates :activity_type, inclusion: { in: TYPE_CLASS_MAP.values }
+  belongs_to :account, optional: true
+  belongs_to :from_account, class_name: 'Account', optional: true
+  belongs_to :activity, polymorphic: true, optional: true
 
-  scope :cache_ids, -> { select(:id, :updated_at, :activity_type, :activity_id) }
-
-  scope :browserable, ->(exclude_types = []) {
-    types = TYPE_CLASS_MAP.values - activity_types_from_types(exclude_types + [:follow_request])
-    where(activity_type: types)
-  }
-
-  cache_associated :from_account, status: STATUS_INCLUDES, mention: [status: STATUS_INCLUDES], favourite: [:account, status: STATUS_INCLUDES], follow: :account
-
-  def activity(eager_loaded = true)
-    eager_loaded ? send(activity_type.downcase) : super
+  with_options foreign_key: 'activity_id', optional: true do
+    belongs_to :mention, inverse_of: :notification
+    belongs_to :status, inverse_of: :notification
+    belongs_to :follow, inverse_of: :notification
+    belongs_to :follow_request, inverse_of: :notification
+    belongs_to :favourite, inverse_of: :notification
+    belongs_to :poll, inverse_of: false
+    belongs_to :report, inverse_of: false
+    belongs_to :account_relationship_severance_event, inverse_of: false
+    belongs_to :account_warning, inverse_of: false
+    belongs_to :generated_annual_report, inverse_of: false
+    belongs_to :quote, inverse_of: :notification
+    belongs_to :collection_item, inverse_of: false # TODO: have an inverse?
+    belongs_to :collection, inverse_of: :notifications
   end
 
+  validates :type, inclusion: { in: TYPES }
+
+  scope :without_suspended, -> { joins(:from_account).merge(Account.without_suspended) }
+
   def type
-    @type ||= TYPE_CLASS_MAP.invert[activity_type].to_sym
+    @type ||= (super || LEGACY_TYPE_CLASS_MAP[activity_type]).to_sym
   end
 
   def target_status
     case type
+    when :status, :update, :quoted_update
+      status
     when :reblog
-      activity&.reblog
-    when :favourite, :mention
-      activity&.status
+      status&.reblog
+    when :favourite
+      favourite&.status
+    when :mention
+      mention&.status
+    when :quote
+      quote&.status
+    when :poll
+      poll&.status
     end
   end
 
-  def browserable?
-    type != :follow_request
+  def target_collection
+    case type
+    when :added_to_collection
+      collection_item&.collection
+    when :collection_update
+      collection
+    end
   end
 
   class << self
-    def reload_stale_associations!(cached_items)
-      account_ids = cached_items.map(&:from_account_id).uniq
-      accounts    = Account.where(id: account_ids).map { |a| [a.id, a] }.to_h
+    def browserable(types: [], exclude_types: [], from_account_id: nil, include_filtered: false)
+      requested_types = if types.empty?
+                          TYPES
+                        else
+                          types.map(&:to_sym) & TYPES
+                        end
 
-      cached_items.each do |item|
-        item.from_account = accounts[item.from_account_id]
+      requested_types -= exclude_types.map(&:to_sym)
+
+      all.tap do |scope|
+        scope.merge!(where(filtered: false)) unless include_filtered || from_account_id.present?
+        scope.merge!(where(from_account_id: from_account_id)) if from_account_id.present?
+        scope.merge!(where(type: requested_types)) unless requested_types.size == TYPES.size
       end
     end
 
-    private
+    def preload_cache_collection_target_statuses(notifications, &_block)
+      notifications.group_by(&:type).each do |type, grouped_notifications|
+        associations = TARGET_STATUS_INCLUDES_BY_TYPE[type]
+        next unless associations
 
-    def activity_types_from_types(types)
-      types.map { |type| TYPE_CLASS_MAP[type.to_sym] }.compact
+        # Instead of using the usual `includes`, manually preload each type.
+        # If polymorphic associations are loaded with the usual `includes`, other types of associations will be loaded more.
+        ActiveRecord::Associations::Preloader.new(records: grouped_notifications, associations: associations).call
+      end
+
+      unique_target_statuses = notifications.filter_map(&:target_status).uniq
+      # Call cache_collection in block
+      cached_statuses_by_id = yield(unique_target_statuses).index_by(&:id)
+
+      notifications.each do |notification|
+        next if notification.target_status.nil?
+
+        cached_status = cached_statuses_by_id[notification.target_status.id]
+
+        case notification.type
+        when :status, :update, :quoted_update
+          notification.status = cached_status
+        when :reblog
+          notification.status.reblog = cached_status
+        when :favourite
+          notification.favourite.status = cached_status
+        when :mention
+          notification.mention.status = cached_status
+        when :poll
+          notification.poll.status = cached_status
+        when :quote
+          notification.quote.status = cached_status
+        end
+      end
+
+      notifications
     end
   end
 
   after_initialize :set_from_account
   before_validation :set_from_account
+
+  after_destroy :remove_from_notification_request
 
   private
 
@@ -95,10 +240,26 @@ class Notification < ApplicationRecord
     return unless new_record?
 
     case activity_type
-    when 'Status', 'Follow', 'Favourite', 'FollowRequest'
-      self.from_account_id = activity(false)&.account_id
+    when 'Status'
+      self.from_account_id = type == :quoted_update ? activity&.quote&.quoted_account_id : activity&.account_id
+    when 'Follow', 'Favourite', 'FollowRequest', 'Poll', 'Report', 'Quote', 'Collection'
+      self.from_account_id = activity&.account_id
+    when 'CollectionItem'
+      self.from_account_id = activity&.collection&.account_id
     when 'Mention'
-      self.from_account_id = activity(false)&.status&.account_id
+      self.from_account_id = activity&.status&.account_id
+    when 'Account'
+      self.from_account_id = activity&.id
+    when 'AccountRelationshipSeveranceEvent', 'AccountWarning', 'GeneratedAnnualReport'
+      # These do not really have an originating account, but this is mandatory
+      # in the data model, and the recipient's account will by definition
+      # always exist
+      self.from_account_id = account_id
     end
+  end
+
+  def remove_from_notification_request
+    notification_request = NotificationRequest.find_by(account_id: account_id, from_account_id: from_account_id)
+    notification_request&.reconsider_existence!
   end
 end

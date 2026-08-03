@@ -1,74 +1,112 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
-describe InstancePresenter do
-  let(:instance_presenter) { InstancePresenter.new }
+RSpec.describe InstancePresenter do
+  let(:instance_presenter) { described_class.new }
 
-  it "delegates site_description to Setting" do
-    Setting.site_description = "Site desc"
-
-    expect(instance_presenter.site_description).to eq "Site desc"
-  end
-
-  it "delegates site_extended_description to Setting" do
-    Setting.site_extended_description = "Extended desc"
-
-    expect(instance_presenter.site_extended_description).to eq "Extended desc"
-  end
-
-  it "delegates open_registrations to Setting" do
-    Setting.open_registrations = false
-
-    expect(instance_presenter.open_registrations).to eq false
-  end
-
-  it "delegates closed_registrations_message to Setting" do
-    Setting.closed_registrations_message = "Closed message"
-
-    expect(instance_presenter.closed_registrations_message).to eq "Closed message"
-  end
-
-  it "delegates contact_email to Setting" do
-    Setting.site_contact_email = "admin@example.com"
-
-    expect(instance_presenter.site_contact_email).to eq "admin@example.com"
-  end
-
-  describe "contact_account" do
-    it "returns the account for the site contact username" do
-      Setting.site_contact_username = "aaa"
-      account = Fabricate(:account, username: "aaa")
-
-      expect(instance_presenter.contact_account).to eq(account)
+  describe '#description' do
+    it 'delegates site_description to Setting' do
+      Setting.site_short_description = 'Site desc'
+      expect(instance_presenter.description).to eq 'Site desc'
     end
   end
 
-  describe "user_count" do
-    it "returns the number of site users" do
-      cache = double
-      allow(Rails).to receive(:cache).and_return(cache)
-      allow(cache).to receive(:fetch).with("user_count").and_return(123)
+  describe '#extended_description' do
+    it 'delegates site_extended_description to Setting' do
+      Setting.site_extended_description = 'Extended desc'
+      expect(instance_presenter.extended_description).to eq 'Extended desc'
+    end
+  end
+
+  describe '#email' do
+    it 'delegates contact_email to Setting' do
+      Setting.site_contact_email = 'admin@example.com'
+      expect(instance_presenter.contact.email).to eq 'admin@example.com'
+    end
+  end
+
+  describe '#account' do
+    it 'returns the account for the site contact username' do
+      Setting.site_contact_username = 'aaa'
+      account = Fabricate(:account, username: 'aaa')
+      expect(instance_presenter.contact.account).to eq(account)
+    end
+  end
+
+  describe '#user_count' do
+    it 'returns the number of site users' do
+      Rails.cache.write 'user_count', 123
 
       expect(instance_presenter.user_count).to eq(123)
     end
   end
 
-  describe "status_count" do
-    it "returns the number of local statuses" do
-      cache = double
-      allow(Rails).to receive(:cache).and_return(cache)
-      allow(cache).to receive(:fetch).with("local_status_count").and_return(234)
+  describe '#status_count' do
+    it 'returns the number of local statuses' do
+      Rails.cache.write 'local_status_count', 234
 
       expect(instance_presenter.status_count).to eq(234)
     end
   end
 
-  describe "domain_count" do
-    it "returns the number of known domains" do
-      cache = double
-      allow(Rails).to receive(:cache).and_return(cache)
-      allow(cache).to receive(:fetch).with("distinct_domain_count").and_return(345)
+  describe '#domain_count' do
+    it 'returns the number of known domains' do
+      Rails.cache.write 'distinct_domain_count', 345
 
       expect(instance_presenter.domain_count).to eq(345)
+    end
+  end
+
+  describe '#version' do
+    it 'returns string' do
+      expect(instance_presenter.version).to be_a String
+    end
+  end
+
+  describe '#source_url' do
+    context 'with the GITHUB_REPOSITORY env variable set' do
+      around do |example|
+        ClimateControl.modify GITHUB_REPOSITORY: 'other/repo' do
+          reload_configuration
+          example.run
+        end
+      end
+
+      it 'uses the env variable to build a repo URL' do
+        expect(instance_presenter.source_url).to eq('https://github.com/other/repo')
+      end
+    end
+
+    context 'without the GITHUB_REPOSITORY env variable set' do
+      around do |example|
+        ClimateControl.modify GITHUB_REPOSITORY: nil do
+          reload_configuration
+          example.run
+        end
+      end
+
+      it 'defaults to the core mastodon repo URL' do
+        expect(instance_presenter.source_url).to eq('https://github.com/mastodon/mastodon')
+      end
+    end
+
+    def reload_configuration
+      Rails.configuration.x.mastodon = Rails.application.config_for(:mastodon)
+    end
+  end
+
+  describe '#thumbnail' do
+    it 'returns SiteUpload' do
+      thumbnail = Fabricate(:site_upload, var: 'thumbnail')
+      expect(instance_presenter.thumbnail).to eq(thumbnail)
+    end
+  end
+
+  describe '#mascot' do
+    it 'returns SiteUpload' do
+      mascot = Fabricate(:site_upload, var: 'mascot')
+      expect(instance_presenter.mascot).to eq(mascot)
     end
   end
 end

@@ -1,94 +1,36 @@
-Rails:
-  Enabled: true
-
-Style/PerlBackrefs:
-  AutoCorrect: false
-
-Style/ClassAndModuleChildren:
-  Enabled: false
-
-Metrics/BlockNesting:
-  Max: 2
-
-Metrics/LineLength:
-  AllowURI: true
-  Enabled: false
-
-Metrics/MethodLength:
-  CountComments: false
-  Max: 10
-
-Metrics/AbcSize:
-  Max: 100
-
-Metrics/BlockNesting:
-  Max: 3
-
-Metrics/ClassLength:
-  CountComments: false
-  Max: 200
-
-Metrics/CyclomaticComplexity:
-  Max: 15
-
-Metrics/MethodLength:
-  Max: 55
-
-Metrics/ModuleLength:
-  CountComments: false
-  Max: 200
-
-Metrics/PerceivedComplexity:
-  Max: 10
-
-Metrics/ParameterLists:
-  Max: 4
-  CountKeywordArgs: true
-
-Style/AccessModifierIndentation:
-  EnforcedStyle: indent
-
-Style/CollectionMethods:
-  Enabled: true
-  PreferredMethods:
-    find_all: 'select'
-
-Style/Documentation:
-  Enabled: false
-
-Style/DoubleNegation:
-  Enabled: true
-
-Style/FrozenStringLiteralComment:
-  Enabled: true
-
-Style/SpaceInsideHashLiteralBraces:
-  EnforcedStyle: space
-
-Style/TrailingCommaInLiteral:
-  EnforcedStyleForMultiline: 'comma'
-
-Style/RegexpLiteral:
-  Enabled: false
-
-Style/Lambda:
-  Enabled: false
-
-Rails/HasAndBelongsToMany:
-  Enabled: false
-
-Bundler/OrderedGems:
-  Enabled: false
-
+---
 AllCops:
-  TargetRubyVersion: 2.3
+  CacheRootDirectory: tmp
+  DisplayStyleGuide: true
   Exclude:
-  - 'spec/**/*'
-  - 'db/**/*'
-  - 'app/views/**/*'
-  - 'config/**/*'
-  - 'bin/*'
-  - 'Rakefile'
-  - 'node_modules/**/*'
-  - 'Vagrantfile'
-  - 'vendor/**/*'
+    - Vagrantfile
+    - config/initializers/json_ld*
+    - lib/mastodon/migration_helpers.rb
+  ExtraDetails: true
+  NewCops: enable
+  TargetRubyVersion: 3.3 # Oldest supported ruby version
+
+inherit_from:
+  - .rubocop/layout.yml
+  - .rubocop/metrics.yml
+  - .rubocop/naming.yml
+  - .rubocop/rails.yml
+  - .rubocop/rspec_rails.yml
+  - .rubocop/rspec.yml
+  - .rubocop/style.yml
+  - .rubocop/i18n.yml
+  - .rubocop/custom.yml
+  - .rubocop_todo.yml
+  - .rubocop/strict.yml
+
+inherit_mode:
+  merge:
+    - Exclude
+
+plugins:
+  - rubocop-capybara
+  - rubocop-i18n
+  - rubocop-performance
+  - rubocop-rails
+  - rubocop-rspec
+  - rubocop-rspec_rails

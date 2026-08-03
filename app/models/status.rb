@@ -1,88 +1,230 @@
 # frozen_string_literal: true
+
 # == Schema Information
 #
 # Table name: statuses
 #
-#  id                     :integer          not null, primary key
-#  uri                    :string
-#  account_id             :integer          not null
-#  text                   :text             default(""), not null
-#  created_at             :datetime         not null
-#  updated_at             :datetime         not null
-#  in_reply_to_id         :integer
-#  reblog_of_id           :integer
-#  url                    :string
-#  sensitive              :boolean          default(FALSE)
-#  visibility             :integer          default("public"), not null
-#  in_reply_to_account_id :integer
-#  application_id         :integer
-#  spoiler_text           :text             default(""), not null
-#  reply                  :boolean          default(FALSE)
-#  favourites_count       :integer          default(0), not null
-#  reblogs_count          :integer          default(0), not null
-#  language               :string           default("en"), not null
+#  id                           :bigint(8)        not null, primary key
+#  deleted_at                   :datetime
+#  edited_at                    :datetime
+#  fetched_replies_at           :datetime
+#  language                     :string
+#  local                        :boolean
+#  ordered_media_attachment_ids :bigint(8)        is an Array
+#  quote_approval_policy        :integer          default(0), not null
+#  reply                        :boolean          default(FALSE), not null
+#  sensitive                    :boolean          default(FALSE), not null
+#  spoiler_text                 :text             default(""), not null
+#  text                         :text             default(""), not null
+#  trendable                    :boolean
+#  uri                          :string
+#  url                          :string
+#  visibility                   :integer          default("public"), not null
+#  created_at                   :datetime         not null
+#  updated_at                   :datetime         not null
+#  account_id                   :bigint(8)        not null
+#  application_id               :bigint(8)
+#  conversation_id              :bigint(8)
+#  in_reply_to_account_id       :bigint(8)
+#  in_reply_to_id               :bigint(8)
+#  poll_id                      :bigint(8)
+#  reblog_of_id                 :bigint(8)
 #
 
 class Status < ApplicationRecord
-  include Paginable
-  include Streamable
   include Cacheable
+  include Discard::Model
+  include Paginable
+  include RateLimitable
+  include Status::FaspConcern
+  include Status::FetchRepliesConcern
+  include Status::SafeReblogInsert
+  include Status::SearchConcern
+  include Status::SnapshotConcern
+  include Status::ThreadingConcern
+  include Status::Visibility
+  include Status::InteractionPolicyConcern
 
-  enum visibility: [:public, :unlisted, :private, :direct], _suffix: :visibility
+  CACHEABLE_ASSOCIATIONS = [
+    :application,
+    :conversation,
+    :media_attachments,
+    :preloadable_poll,
+    :status_stat,
+    :tags,
+    account: [:account_stat, user: :role],
+    active_mentions: :account,
+    tagged_objects: :object,
+    preview_cards_status: { preview_card: { author_account: [:account_stat, user: :role] } },
+    quote: { status: { account: [:account_stat, user: :role] } },
+  ].freeze
 
-  belongs_to :application, class_name: 'Doorkeeper::Application'
+  MEDIA_ATTACHMENTS_LIMIT = 4
 
-  belongs_to :account, inverse_of: :statuses, counter_cache: true, required: true
-  belongs_to :in_reply_to_account, foreign_key: 'in_reply_to_account_id', class_name: 'Account'
+  rate_limit by: :account, family: :statuses
 
-  belongs_to :thread, foreign_key: 'in_reply_to_id', class_name: 'Status', inverse_of: :replies
-  belongs_to :reblog, foreign_key: 'reblog_of_id', class_name: 'Status', inverse_of: :reblogs, counter_cache: :reblogs_count
+  self.discard_column = :deleted_at
+
+  # If `override_timestamps` is set at creation time, Snowflake ID creation
+  # will be based on current time instead of `created_at`
+  attr_accessor :override_timestamps
+
+  update_index('statuses', :proper)
+  update_index('public_statuses', :proper)
+
+  belongs_to :application, class_name: 'Doorkeeper::Application', optional: true
+
+  belongs_to :account, inverse_of: :statuses
+  belongs_to :in_reply_to_account, class_name: 'Account', optional: true
+  belongs_to :conversation, optional: true
+  belongs_to :preloadable_poll, class_name: 'Poll', foreign_key: 'poll_id', optional: true, inverse_of: false
+
+  with_options class_name: 'Status', optional: true do
+    belongs_to :thread, foreign_key: 'in_reply_to_id', inverse_of: :replies
+    belongs_to :reblog, foreign_key: 'reblog_of_id', inverse_of: :reblogs
+  end
+
+  has_one :owned_conversation, class_name: 'Conversation', foreign_key: 'parent_status_id', inverse_of: :parent_status, dependent: nil
 
   has_many :favourites, inverse_of: :status, dependent: :destroy
+  has_many :bookmarks, inverse_of: :status, dependent: :destroy
   has_many :reblogs, foreign_key: 'reblog_of_id', class_name: 'Status', inverse_of: :reblog, dependent: :destroy
-  has_many :replies, foreign_key: 'in_reply_to_id', class_name: 'Status', inverse_of: :thread
-  has_many :mentions, dependent: :destroy
-  has_many :media_attachments, dependent: :destroy
-  has_and_belongs_to_many :tags
+  has_many :reblogged_by_accounts, through: :reblogs, class_name: 'Account', source: :account
+  has_many :replies, foreign_key: 'in_reply_to_id', class_name: 'Status', inverse_of: :thread, dependent: nil
+  has_many :mentions, dependent: :destroy, inverse_of: :status
+  has_many :mentioned_accounts, through: :mentions, source: :account, class_name: 'Account'
+  has_many :media_attachments, dependent: :nullify
+  has_many :tagged_objects, dependent: :destroy
+  has_many :quotes, foreign_key: 'quoted_status_id', inverse_of: :quoted_status, dependent: :nullify
+
+  # The `dependent` option is enabled by the initial `mentions` association declaration
+  has_many :active_mentions, -> { active }, class_name: 'Mention', inverse_of: :status # rubocop:disable Rails/HasManyOrHasOneDependent
+
+  # Those associations are used for the private search index
+  has_many :local_mentioned, -> { merge(Account.local) }, through: :active_mentions, source: :account
+  has_many :local_favorited, -> { merge(Account.local) }, through: :favourites, source: :account
+  has_many :local_reblogged, -> { merge(Account.local) }, through: :reblogs, source: :account
+  has_many :local_bookmarked, -> { merge(Account.local) }, through: :bookmarks, source: :account
+  has_many :local_replied, -> { merge(Account.local) }, through: :replies, source: :account
+
+  has_and_belongs_to_many :tags # rubocop:disable Rails/HasAndBelongsToMany
+
+  has_one :preview_cards_status, inverse_of: :status, dependent: :delete
 
   has_one :notification, as: :activity, dependent: :destroy
-  has_one :preview_card, dependent: :destroy
+  has_one :status_stat, inverse_of: :status, dependent: nil
+  has_one :poll, inverse_of: :status, dependent: :destroy
+  has_one :trend, class_name: 'StatusTrend', inverse_of: :status, dependent: nil
+  has_one :quote, inverse_of: :status, dependent: :destroy
 
-  validates :uri, uniqueness: true, unless: 'local?'
-  validates :text, presence: true, unless: 'reblog?'
+  validates :uri, uniqueness: true, presence: true, unless: :local?
+  validates :text, presence: true, unless: -> { with_media? || reblog? || with_quote? }
   validates_with StatusLengthValidator
-  validates :reblog, uniqueness: { scope: :account }, if: 'reblog?'
+  validates_with DisallowedHashtagsValidator
+  validates :reblog, uniqueness: { scope: :account }, if: :reblog?
 
-  default_scope { order('id desc') }
+  accepts_nested_attributes_for :poll
 
-  scope :remote, -> { where.not(uri: nil) }
-  scope :local, -> { where(uri: nil) }
+  default_scope { recent.kept }
 
-  scope :without_replies, -> { where('statuses.reply = FALSE OR statuses.in_reply_to_account_id = statuses.account_id') }
-  scope :without_reblogs, -> { where('statuses.reblog_of_id IS NULL') }
-  scope :with_public_visibility, -> { where(visibility: :public) }
-  scope :tagged_with, ->(tag) { joins(:statuses_tags).where(statuses_tags: { tag_id: tag }) }
-  scope :local_only, -> { left_outer_joins(:account).where(accounts: { domain: nil }) }
-  scope :excluding_silenced_accounts, -> { left_outer_joins(:account).where(accounts: { silenced: false }) }
-  scope :including_silenced_accounts, -> { left_outer_joins(:account).where(accounts: { silenced: true }) }
+  scope :recent, -> { reorder(id: :desc) }
+  scope :remote, -> { where(local: false).where.not(uri: nil) }
+  scope :local,  -> { where(local: true).or(where(uri: nil)) }
+  scope :with_accounts, ->(ids) { where(id: ids).includes(:account) }
+  scope :without_replies, -> { not_reply.or(reply_to_account) }
+  scope :not_reply, -> { where(reply: false) }
+  scope :only_reblogs, -> { where.not(reblog_of_id: nil) }
+  scope :only_polls, -> { where.not(poll_id: nil) }
+  scope :without_polls, -> { where(poll_id: nil) }
+  scope :reply_to_account, -> { where(arel_table[:in_reply_to_account_id].eq arel_table[:account_id]) }
+  scope :not_replying_to_account, ->(account) { where.not(in_reply_to_account: account) }
+  scope :without_reblogs, -> { where(statuses: { reblog_of_id: nil }) }
+  scope :tagged_with, ->(tag_ids) { joins(:statuses_tags).where(statuses_tags: { tag_id: tag_ids }) }
   scope :not_excluded_by_account, ->(account) { where.not(account_id: account.excluded_from_timeline_account_ids) }
+  scope :not_domain_blocked_by_account, ->(account) { account.excluded_from_timeline_domains.blank? ? left_outer_joins(:account) : left_outer_joins(:account).merge(Account.not_domain_blocked_by_account(account)) }
+  scope :tagged_with_all, lambda { |tag_ids|
+    Array(tag_ids).map(&:to_i).reduce(self) do |result, id|
+      result.where(<<~SQL.squish, tag_id: id)
+        EXISTS(SELECT 1 FROM statuses_tags WHERE statuses_tags.status_id = statuses.id AND statuses_tags.tag_id = :tag_id)
+      SQL
+    end
+  }
+  scope :tagged_with_none, lambda { |tag_ids|
+    where('NOT EXISTS (SELECT * FROM statuses_tags forbidden WHERE forbidden.status_id = statuses.id AND forbidden.tag_id IN (?))', tag_ids)
+  }
+  scope :without_empty_attachments, -> { where(ordered_media_attachment_ids: nil).or(where.not(ordered_media_attachment_ids: [])) }
 
-  cache_associated :account, :application, :media_attachments, :tags, :stream_entry, mentions: :account, reblog: [:account, :application, :stream_entry, :tags, :media_attachments, mentions: :account], thread: :account
+  after_create_commit :trigger_create_webhooks
+  after_update_commit :trigger_update_webhooks
+
+  after_create_commit  :increment_counter_caches
+  after_destroy_commit :decrement_counter_caches
+
+  after_create_commit :store_uri, if: :local?
+  after_create_commit :update_statistics, if: :local?
+
+  before_validation :prepare_contents, if: :local?
+  before_validation :set_reblog
+  before_validation :set_conversation
+  before_validation :set_local
+
+  around_create Mastodon::Snowflake::Callbacks
+
+  after_create :set_poll_id
+  after_create :update_conversation
+
+  # The `prepend: true` option below ensures this runs before
+  # the `dependent: destroy` callbacks remove relevant records
+  before_destroy :unlink_from_conversations!, prepend: true
+
+  cache_associated(
+    *CACHEABLE_ASSOCIATIONS,
+    reblog: [*CACHEABLE_ASSOCIATIONS],
+    thread: :account
+  )
+
+  delegate :domain, :indexable?, to: :account, prefix: true
+
+  REAL_TIME_WINDOW = 6.hours
+
+  def cache_key
+    "v3:#{super}"
+  end
+
+  def to_log_human_identifier
+    account.acct
+  end
+
+  def to_log_permalink
+    ActivityPub::TagManager.instance.uri_for(self)
+  end
 
   def reply?
-    !in_reply_to_id.nil? || super
+    !in_reply_to_id.nil? || attributes['reply']
   end
 
   def local?
-    uri.nil?
+    attributes['local'] || uri.nil?
+  end
+
+  def in_reply_to_local_account?
+    reply? && thread&.account&.local?
   end
 
   def reblog?
     !reblog_of_id.nil?
   end
 
+  def within_realtime_window?
+    created_at >= REAL_TIME_WINDOW.ago
+  end
+
   def verb
-    reblog? ? :share : :post
+    if destroyed?
+      :delete
+    else
+      reblog? ? :share : :post
+    end
   end
 
   def object_type
@@ -101,160 +243,260 @@ class Status < ApplicationRecord
     reblog
   end
 
-  def title
-    reblog? ? "#{account.acct} shared a status by #{reblog.account.acct}" : "New status by #{account.acct}"
+  def preview_card
+    preview_cards_status&.preview_card&.tap { |x| x.original_url = preview_cards_status.url }
   end
 
-  def hidden?
-    private_visibility? || direct_visibility?
+  def reset_preview_card!
+    PreviewCardsStatus.where(status_id: id).delete_all
   end
 
-  def permitted?(other_account = nil)
-    if direct_visibility?
-      account.id == other_account&.id || mentions.where(account: other_account).exists?
-    elsif private_visibility?
-      account.id == other_account&.id || other_account&.following?(account) || mentions.where(account: other_account).exists?
-    else
-      other_account.nil? || !account.blocking?(other_account)
-    end
+  def with_media?
+    ordered_media_attachments.any?
   end
 
-  def ancestors(account = nil)
-    ids      = Rails.cache.fetch("ancestors:#{id}") { (Status.find_by_sql(['WITH RECURSIVE search_tree(id, in_reply_to_id, path) AS (SELECT id, in_reply_to_id, ARRAY[id] FROM statuses WHERE id = ? UNION ALL SELECT statuses.id, statuses.in_reply_to_id, path || statuses.id FROM search_tree JOIN statuses ON statuses.id = search_tree.in_reply_to_id WHERE NOT statuses.id = ANY(path)) SELECT id FROM search_tree ORDER BY path DESC', id]) - [self]).pluck(:id) }
-    statuses = Status.where(id: ids).group_by(&:id)
-    results  = ids.map { |id| statuses[id].first }
-    results  = results.reject { |status| filter_from_context?(status, account) }
-
-    results
+  def with_quote?
+    quote.present?
   end
 
-  def descendants(account = nil)
-    ids      = (Status.find_by_sql(['WITH RECURSIVE search_tree(id, path) AS (SELECT id, ARRAY[id] FROM statuses WHERE id = ? UNION ALL SELECT statuses.id, path || statuses.id FROM search_tree JOIN statuses ON statuses.in_reply_to_id = search_tree.id WHERE NOT statuses.id = ANY(path)) SELECT id FROM search_tree ORDER BY path', id]) - [self]).pluck(:id)
-    statuses = Status.where(id: ids).group_by(&:id)
-    results  = ids.map { |id| statuses[id].first }
-    results  = results.reject { |status| filter_from_context?(status, account) }
+  def with_preview_card?
+    preview_cards_status.present?
+  end
 
-    results
+  def with_poll?
+    preloadable_poll.present?
   end
 
   def non_sensitive_with_media?
-    !sensitive? && media_attachments.any?
+    !sensitive? && with_media?
+  end
+
+  def reported?
+    @reported ||= account.targeted_reports.unresolved.exists?(['? = ANY(status_ids)', id]) || account.strikes.exists?(['? = ANY(status_ids)', id.to_s])
+  end
+
+  def emojis
+    return @emojis if defined?(@emojis)
+
+    fields  = [spoiler_text, text]
+    fields += preloadable_poll.options unless preloadable_poll.nil?
+
+    @emojis = CustomEmoji.from_text(fields.join(' '), account.domain)
+  end
+
+  def ordered_media_attachments
+    if ordered_media_attachment_ids.nil?
+      # NOTE: sort Ruby-side to avoid hitting the database when the status is
+      # not persisted to database yet
+      media_attachments.sort_by(&:id)
+    else
+      map = media_attachments.index_by(&:id)
+      ordered_media_attachment_ids.filter_map { |media_attachment_id| map[media_attachment_id] }
+    end.take(MEDIA_ATTACHMENTS_LIMIT)
+  end
+
+  def replies_count
+    status_stat&.replies_count || 0
+  end
+
+  def reblogs_count
+    status_stat&.reblogs_count || 0
+  end
+
+  def favourites_count
+    status_stat&.favourites_count || 0
+  end
+
+  def quotes_count
+    status_stat&.quotes_count || 0
+  end
+
+  # Reblogs count received from an external instance
+  def untrusted_reblogs_count
+    status_stat&.untrusted_reblogs_count unless local?
+  end
+
+  # Favourites count received from an external instance
+  def untrusted_favourites_count
+    status_stat&.untrusted_favourites_count unless local?
+  end
+
+  def increment_count!(key)
+    if key == :favourites_count && !untrusted_favourites_count.nil?
+      update_status_stat!(favourites_count: favourites_count + 1, untrusted_favourites_count: untrusted_favourites_count + 1)
+    elsif key == :reblogs_count && !untrusted_reblogs_count.nil?
+      update_status_stat!(reblogs_count: reblogs_count + 1, untrusted_reblogs_count: untrusted_reblogs_count + 1)
+    else
+      update_status_stat!(key => public_send(key) + 1)
+    end
+  end
+
+  def decrement_count!(key)
+    if key == :favourites_count && !untrusted_favourites_count.nil?
+      update_status_stat!(favourites_count: [favourites_count - 1, 0].max, untrusted_favourites_count: [untrusted_favourites_count - 1, 0].max)
+    elsif key == :reblogs_count && !untrusted_reblogs_count.nil?
+      update_status_stat!(reblogs_count: [reblogs_count - 1, 0].max, untrusted_reblogs_count: [untrusted_reblogs_count - 1, 0].max)
+    else
+      update_status_stat!(key => [public_send(key) - 1, 0].max)
+    end
+  end
+
+  def trendable?
+    if attributes['trendable'].nil?
+      account.trendable?
+    else
+      attributes['trendable']
+    end
+  end
+
+  def requires_review?
+    attributes['trendable'].nil? && account.requires_review?
+  end
+
+  def requires_review_notification?
+    attributes['trendable'].nil? && account.requires_review_notification?
   end
 
   class << self
-    def in_allowed_languages(account)
-      where(language: account.allowed_languages)
-    end
-
-    def as_home_timeline(account)
-      where(account: [account] + account.following)
-    end
-
-    def as_public_timeline(account = nil, local_only = false)
-      query = timeline_scope(local_only).without_replies
-
-      apply_timeline_filters(query, account)
-    end
-
-    def as_tag_timeline(tag, account = nil, local_only = false)
-      query = timeline_scope(local_only).tagged_with(tag)
-
-      apply_timeline_filters(query, account)
-    end
-
-    def as_outbox_timeline(account)
-      where(account: account, visibility: :public)
-    end
-
     def favourites_map(status_ids, account_id)
-      Favourite.select('status_id').where(status_id: status_ids).where(account_id: account_id).map { |f| [f.status_id, true] }.to_h
+      Favourite.select(:status_id).where(status_id: status_ids).where(account_id: account_id).to_h { |f| [f.status_id, true] }
+    end
+
+    def bookmarks_map(status_ids, account_id)
+      Bookmark.select(:status_id).where(status_id: status_ids).where(account_id: account_id).to_h { |f| [f.status_id, true] }
     end
 
     def reblogs_map(status_ids, account_id)
-      select('reblog_of_id').where(reblog_of_id: status_ids).where(account_id: account_id).map { |s| [s.reblog_of_id, true] }.to_h
+      unscoped.select(:reblog_of_id).where(reblog_of_id: status_ids).where(account_id: account_id).to_h { |s| [s.reblog_of_id, true] }
     end
 
-    def reload_stale_associations!(cached_items)
-      account_ids = []
-
-      cached_items.each do |item|
-        account_ids << item.account_id
-        account_ids << item.reblog.account_id if item.reblog?
-      end
-
-      accounts = Account.where(id: account_ids.uniq).map { |a| [a.id, a] }.to_h
-
-      cached_items.each do |item|
-        item.account = accounts[item.account_id]
-        item.reblog.account = accounts[item.reblog.account_id] if item.reblog?
-      end
+    def mutes_map(conversation_ids, account_id)
+      ConversationMute.select(:conversation_id).where(conversation_id: conversation_ids).where(account_id: account_id).to_h { |m| [m.conversation_id, true] }
     end
 
-    def permitted_for(target_account, account)
-      return where.not(visibility: [:private, :direct]) if account.nil?
-
-      if target_account.blocking?(account) # get rid of blocked peeps
-        none
-      elsif account.id == target_account.id # author can see own stuff
-        all
-      elsif account.following?(target_account) # followers can see followers-only stuff, but also things they are mentioned in
-        joins('LEFT OUTER JOIN mentions ON statuses.id = mentions.status_id AND mentions.account_id = ' + account.id.to_s)
-          .where('statuses.visibility != ? OR mentions.id IS NOT NULL', Status.visibilities[:direct])
-      else # non-followers can see everything that isn't private/direct, but can see stuff they are mentioned in
-        joins('LEFT OUTER JOIN mentions ON statuses.id = mentions.status_id AND mentions.account_id = ' + account.id.to_s)
-          .where('statuses.visibility NOT IN (?) OR mentions.id IS NOT NULL', [Status.visibilities[:direct], Status.visibilities[:private]])
-      end
+    def pins_map(status_ids, account_id)
+      StatusPin.select(:status_id).where(status_id: status_ids).where(account_id: account_id).to_h { |p| [p.status_id, true] }
     end
 
-    private
+    def from_text(text)
+      return [] if text.blank?
 
-    def timeline_scope(local_only = false)
-      starting_scope = local_only ? Status.local_only : Status
-      starting_scope
-        .with_public_visibility
-        .without_reblogs
-    end
+      text.scan(FetchLinkCardService::URL_PATTERN).map(&:second).uniq.filter_map do |url|
+        status = if TagManager.instance.local_url?(url)
+                   ActivityPub::TagManager.instance.uri_to_resource(url, Status)
+                 else
+                   EntityCache.instance.status(url)
+                 end
 
-    def apply_timeline_filters(query, account)
-      if account.nil?
-        filter_timeline_default(query)
-      else
-        filter_timeline_for_account(query, account)
-      end
-    end
-
-    def filter_timeline_for_account(query, account)
-      query = query.not_excluded_by_account(account)
-      query = query.in_allowed_languages(account) if account.allowed_languages.present?
-      query.merge(account_silencing_filter(account))
-    end
-
-    def filter_timeline_default(query)
-      query.excluding_silenced_accounts
-    end
-
-    def account_silencing_filter(account)
-      if account.silenced?
-        including_silenced_accounts
-      else
-        excluding_silenced_accounts
+        status&.distributable? ? status : nil
       end
     end
   end
 
-  before_validation do
-    text&.strip!
-    spoiler_text&.strip!
+  def status_stat
+    super || build_status_stat
+  end
 
-    self.reply                  = !(in_reply_to_id.nil? && thread.nil?) unless reply
-    self.reblog                 = reblog.reblog if reblog? && reblog.reblog?
-    self.in_reply_to_account_id = (thread.account_id == account_id && thread.reply? ? thread.in_reply_to_account_id : thread.account_id) if reply? && !thread.nil?
-    self.visibility             = (account.locked? ? :private : :public) if visibility.nil?
+  def discard_with_reblogs
+    discard_time = Time.current
+    Status.unscoped.where(reblog_of_id: id, deleted_at: [nil, deleted_at]).in_batches.update_all(deleted_at: discard_time) unless reblog?
+    update_attribute(:deleted_at, discard_time)
+  end
+
+  def unlink_from_conversations!
+    return unless direct_visibility?
+
+    inbox_owners = mentioned_accounts.local
+    inbox_owners += [account] if account.local?
+
+    inbox_owners.each do |inbox_owner|
+      AccountConversation.remove_status(inbox_owner, self)
+    end
   end
 
   private
 
-  def filter_from_context?(status, account)
-    account&.blocking?(status.account_id) || account&.muting?(status.account_id) || (status.account.silenced? && !account&.following?(status.account_id)) || !status.permitted?(account)
+  def update_status_stat!(attrs)
+    return if marked_for_destruction? || destroyed?
+
+    status_stat.update(attrs)
+  end
+
+  def store_uri
+    update_column(:uri, ActivityPub::TagManager.instance.uri_for(self)) if uri.nil?
+  end
+
+  def prepare_contents
+    text&.strip!
+    spoiler_text&.strip!
+  end
+
+  def set_reblog
+    self.reblog = reblog.reblog if reblog? && reblog.reblog?
+  end
+
+  def set_poll_id
+    update_column(:poll_id, poll.id) if association(:poll).loaded? && poll.present?
+  end
+
+  def set_conversation
+    self.thread = thread.reblog if thread&.reblog?
+
+    self.reply = !(in_reply_to_id.nil? && thread.nil?) unless reply
+
+    if reply? && !thread.nil?
+      self.in_reply_to_account_id = carried_over_reply_to_account_id
+      self.conversation_id        = thread.conversation_id if conversation_id.nil?
+    elsif conversation_id.nil?
+      build_conversation
+    end
+  end
+
+  def update_conversation
+    return if reply?
+
+    conversation.update!(parent_status: self, parent_account: account) if conversation && conversation.parent_status.nil?
+  end
+
+  def carried_over_reply_to_account_id
+    if thread.account_id == account_id && thread.reply?
+      thread.in_reply_to_account_id
+    else
+      thread.account_id
+    end
+  end
+
+  def set_local
+    self.local = account.local?
+  end
+
+  def update_statistics
+    return unless distributable?
+
+    ActivityTracker.increment('activity:statuses:local')
+  end
+
+  def increment_counter_caches
+    return if direct_visibility?
+
+    account&.increment_count!(:statuses_count, status_created_at: created_at)
+    reblog&.increment_count!(:reblogs_count) if reblog?
+    thread&.increment_count!(:replies_count) if in_reply_to_id.present? && distributable?
+  end
+
+  def decrement_counter_caches
+    return if direct_visibility? || new_record?
+
+    account&.decrement_count!(:statuses_count)
+    reblog&.decrement_count!(:reblogs_count) if reblog?
+    thread&.decrement_count!(:replies_count) if in_reply_to_id.present? && distributable?
+  end
+
+  def trigger_create_webhooks
+    TriggerWebhookWorker.perform_async('status.created', 'Status', id) if local?
+  end
+
+  def trigger_update_webhooks
+    TriggerWebhookWorker.perform_async('status.updated', 'Status', id) if local?
   end
 end

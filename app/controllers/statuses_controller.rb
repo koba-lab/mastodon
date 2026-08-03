@@ -1,39 +1,78 @@
 # frozen_string_literal: true
 
 class StatusesController < ApplicationController
-  layout 'public'
+  include WebAppControllerConcern
+  include SignatureAuthentication
+  include Authorization
+  include AccountOwnedConcern
 
-  before_action :set_account
+  vary_by -> { public_fetch_mode? ? 'Accept, Accept-Language, Cookie' : 'Accept, Accept-Language, Cookie, Signature' }
+
+  before_action :require_account_signature!, only: [:show, :activity], if: -> { request.format == :json && authorized_fetch_mode? }
   before_action :set_status
-  before_action :set_link_headers
-  before_action :check_account_suspension
+  before_action :redirect_to_original, only: :show
+  before_action :verify_embed_allowed, only: :embed
+
+  after_action :set_link_headers
+
+  skip_around_action :set_locale, if: -> { request.format == :json }
+  skip_before_action :require_functional!, only: [:show, :embed], unless: :limited_federation_mode?
+
+  content_security_policy only: :embed do |policy|
+    policy.frame_ancestors(false)
+  end
 
   def show
-    @ancestors   = @status.reply? ? cache_collection(@status.ancestors(current_account), Status) : []
-    @descendants = cache_collection(@status.descendants(current_account), Status)
+    respond_to do |format|
+      format.html do
+        expires_in 10.seconds, public: true if current_account.nil?
 
-    render 'stream_entries/show'
+        redirect_to short_account_status_path(@account, @status) if account_id_param.present? && username_param.blank?
+      end
+
+      format.json do
+        expires_in @status.quote&.pending? ? 5.seconds : 3.minutes, public: true if @status.distributable? && public_fetch_mode?
+        render_with_cache json: @status, content_type: 'application/activity+json', serializer: ActivityPub::NoteSerializer, adapter: ActivityPub::Adapter
+      end
+    end
+  end
+
+  def activity
+    expires_in 3.minutes, public: @status.distributable? && public_fetch_mode?
+    render_with_cache json: @status, content_type: 'application/activity+json', serializer: activity_serializer, adapter: ActivityPub::Adapter
+  end
+
+  def embed
+    expires_in 180, public: true
+    response.headers.delete('X-Frame-Options')
+
+    render layout: 'embedded'
   end
 
   private
 
-  def set_account
-    @account = Account.find_local!(params[:account_username])
+  def verify_embed_allowed
+    not_found if @status.hidden? || @status.reblog?
   end
 
   def set_link_headers
-    response.headers['Link'] = LinkHeader.new([[account_stream_entry_url(@account, @status.stream_entry, format: 'atom'), [%w(rel alternate), %w(type application/atom+xml)]]])
+    response.headers['Link'] = LinkHeader.new(
+      [[ActivityPub::TagManager.instance.uri_for(@status), [%w(rel alternate), %w(type application/activity+json)]]]
+    ).to_s
   end
 
   def set_status
-    @status       = @account.statuses.find(params[:id])
-    @stream_entry = @status.stream_entry
-    @type         = @stream_entry.activity_type.downcase
-
-    raise ActiveRecord::RecordNotFound unless @status.permitted?(current_account)
+    @status = @account.statuses.find(params[:id])
+    authorize @status, :show?
+  rescue ActiveRecord::RecordNotFound, Mastodon::NotPermittedError
+    not_found
   end
 
-  def check_account_suspension
-    gone if @account.suspended?
+  def redirect_to_original
+    redirect_to(ActivityPub::TagManager.instance.url_for(@status.reblog), allow_other_host: true) if @status.reblog?
+  end
+
+  def activity_serializer
+    @status.reblog? ? ActivityPub::AnnounceNoteSerializer : ActivityPub::CreateNoteSerializer
   end
 end

@@ -1,80 +1,158 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
 RSpec.describe FollowService do
+  subject { described_class.new }
+
   let(:sender) { Fabricate(:account, username: 'alice') }
 
-  subject { FollowService.new }
-
-  context 'local account' do
+  context 'when local account' do
     describe 'locked account' do
-      let(:bob) { Fabricate(:user, email: 'bob@example.com', account: Fabricate(:account, locked: true, username: 'bob')).account }
+      let(:bob) { Fabricate(:account, locked: true, username: 'bob') }
 
       before do
-        subject.call(sender, bob.acct)
+        subject.call(sender, bob)
       end
 
-      it 'creates a follow request' do
-        expect(FollowRequest.find_by(account: sender, target_account: bob)).to_not be_nil
+      it 'creates a follow request with reblogs' do
+        expect(FollowRequest.find_by(account: sender, target_account: bob, show_reblogs: true)).to_not be_nil
+      end
+    end
+
+    describe 'locked account, no reblogs' do
+      let(:bob) { Fabricate(:account, locked: true, username: 'bob') }
+
+      before do
+        subject.call(sender, bob, reblogs: false)
+      end
+
+      it 'creates a follow request without reblogs' do
+        expect(FollowRequest.find_by(account: sender, target_account: bob, show_reblogs: false)).to_not be_nil
+      end
+    end
+
+    describe 'unlocked account, from silenced account' do
+      let(:bob) { Fabricate(:account, username: 'bob') }
+
+      before do
+        sender.touch(:silenced_at)
+        subject.call(sender, bob)
+      end
+
+      it 'creates a follow request with reblogs' do
+        expect(FollowRequest.find_by(account: sender, target_account: bob, show_reblogs: true)).to_not be_nil
+      end
+    end
+
+    describe 'unlocked account, from a muted account' do
+      let(:bob) { Fabricate(:account, username: 'bob') }
+
+      before do
+        bob.mute!(sender)
+        subject.call(sender, bob)
+      end
+
+      it 'creates a following relation with reblogs' do
+        expect(sender.following?(bob)).to be true
+        expect(sender.muting_reblogs?(bob)).to be false
       end
     end
 
     describe 'unlocked account' do
-      let(:bob) { Fabricate(:user, email: 'bob@example.com', account: Fabricate(:account, username: 'bob')).account }
+      let(:bob) { Fabricate(:account, username: 'bob') }
 
       before do
-        subject.call(sender, bob.acct)
+        subject.call(sender, bob)
       end
 
-      it 'creates a following relation' do
+      it 'creates a following relation with reblogs' do
         expect(sender.following?(bob)).to be true
+        expect(sender.muting_reblogs?(bob)).to be false
+      end
+    end
+
+    describe 'unlocked account, no reblogs' do
+      let(:bob) { Fabricate(:account, username: 'bob') }
+
+      before do
+        subject.call(sender, bob, reblogs: false)
+      end
+
+      it 'creates a following relation without reblogs' do
+        expect(sender.following?(bob)).to be true
+        expect(sender.muting_reblogs?(bob)).to be true
+      end
+    end
+
+    describe 'already followed account' do
+      let(:bob) { Fabricate(:account, username: 'bob') }
+
+      before do
+        sender.follow!(bob)
+        subject.call(sender, bob)
+      end
+
+      it 'keeps a following relation' do
+        expect(sender.following?(bob)).to be true
+      end
+    end
+
+    describe 'already followed account, turning reblogs off' do
+      let(:bob) { Fabricate(:account, username: 'bob') }
+
+      before do
+        sender.follow!(bob, reblogs: true)
+        subject.call(sender, bob, reblogs: false)
+      end
+
+      it 'disables reblogs' do
+        expect(sender.muting_reblogs?(bob)).to be true
+      end
+    end
+
+    describe 'already followed account, turning reblogs on' do
+      let(:bob) { Fabricate(:account, username: 'bob') }
+
+      before do
+        sender.follow!(bob, reblogs: false)
+        subject.call(sender, bob, reblogs: true)
+      end
+
+      it 'disables reblogs' do
+        expect(sender.muting_reblogs?(bob)).to be false
+      end
+    end
+
+    describe 'already followed account, changing languages' do
+      let(:bob) { Fabricate(:account, username: 'bob') }
+
+      before do
+        sender.follow!(bob)
+        subject.call(sender, bob, languages: %w(en es))
+      end
+
+      it 'changes languages' do
+        expect(Follow.find_by(account: sender, target_account: bob)&.languages).to match_array %w(en es)
       end
     end
   end
 
-  context 'remote account' do
-    describe 'locked account' do
-      let(:bob) { Fabricate(:user, email: 'bob@example.com', account: Fabricate(:account, locked: true, username: 'bob', domain: 'example.com', salmon_url: 'http://salmon.example.com')).account }
+  context 'when remote ActivityPub account' do
+    let(:bob) { Fabricate(:account, username: 'bob', domain: 'example.com', protocol: :activitypub, inbox_url: 'http://example.com/inbox') }
 
-      before do
-        stub_request(:post, "http://salmon.example.com/").to_return(:status => 200, :body => "", :headers => {})
-        subject.call(sender, bob.acct)
-      end
-
-      it 'creates a follow request' do
-        expect(FollowRequest.find_by(account: sender, target_account: bob)).to_not be_nil
-      end
-
-      it 'sends a follow request salmon slap' do
-        expect(a_request(:post, "http://salmon.example.com/").with { |req|
-          xml = OStatus2::Salmon.new.unpack(req.body)
-          xml.match(TagManager::VERBS[:request_friend])
-        }).to have_been_made.once
-      end
+    before do
+      stub_request(:post, 'http://example.com/inbox').to_return(status: 200, body: '', headers: {})
     end
 
-    describe 'unlocked account' do
-      let(:bob) { Fabricate(:user, email: 'bob@example.com', account: Fabricate(:account, username: 'bob', domain: 'example.com', salmon_url: 'http://salmon.example.com', hub_url: 'http://hub.example.com')).account }
+    it 'creates follow request and sends an activity to inbox', :inline_jobs do
+      subject.call(sender, bob)
 
-      before do
-        stub_request(:post, "http://salmon.example.com/").to_return(:status => 200, :body => "", :headers => {})
-        stub_request(:post, "http://hub.example.com/").to_return(status: 202)
-        subject.call(sender, bob.acct)
-      end
+      expect(FollowRequest.find_by(account: sender, target_account: bob))
+        .to_not be_nil
 
-      it 'creates a following relation' do
-        expect(sender.following?(bob)).to be true
-      end
-
-      it 'sends a follow salmon slap' do
-        expect(a_request(:post, "http://salmon.example.com/").with { |req|
-          xml = OStatus2::Salmon.new.unpack(req.body)
-          xml.match(TagManager::VERBS[:follow])
-        }).to have_been_made.once
-      end
-
-      it 'subscribes to PuSH' do
-        expect(a_request(:post, "http://hub.example.com/")).to have_been_made.once
-      end
+      expect(a_request(:post, 'http://example.com/inbox'))
+        .to have_been_made.once
     end
   end
 end

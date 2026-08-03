@@ -1,27 +1,108 @@
 # frozen_string_literal: true
 
 class AccountsController < ApplicationController
+  PAGE_SIZE     = 20
+  PAGE_SIZE_MAX = 200
+
   include AccountControllerConcern
+  include SignatureAuthentication
+
+  vary_by -> { public_fetch_mode? ? 'Accept, Accept-Language, Cookie' : 'Accept, Accept-Language, Cookie, Signature' }
+
+  before_action :require_account_signature!, if: -> { request.format == :json && authorized_fetch_mode? }
+
+  skip_around_action :set_locale, if: -> { [:json, :rss].include?(request.format&.to_sym) }
+  skip_before_action :require_functional!, unless: :limited_federation_mode?
 
   def show
     respond_to do |format|
       format.html do
-        @statuses = @account.statuses.permitted_for(@account, current_account).order('id desc').paginate_by_max_id(20, params[:max_id], params[:since_id])
-        @statuses = cache_collection(@statuses, Status)
+        expires_in(15.seconds, public: true, stale_while_revalidate: 30.seconds, stale_if_error: 1.hour) unless user_signed_in?
+
+        redirect_to short_account_path(@account) if account_id_param.present? && username_param.blank?
       end
 
-      format.atom do
-        @entries = @account.stream_entries.order('id desc').where(hidden: false).with_includes.paginate_by_max_id(20, params[:max_id], params[:since_id])
-        render xml: AtomSerializer.render(AtomSerializer.new.feed(@account, @entries.to_a))
+      format.rss do
+        expires_in 1.minute, public: true
+
+        limit     = params[:limit].present? ? [params[:limit].to_i, PAGE_SIZE_MAX].min : PAGE_SIZE
+        @statuses = filtered_statuses.without_reblogs.limit(limit)
+        @statuses = preload_collection(@statuses, Status)
       end
 
-      format.activitystreams2
+      format.json do
+        expires_in 3.minutes, public: !(authorized_fetch_mode? && signed_request_account.present?)
+        render_with_cache json: @account, content_type: 'application/activity+json', serializer: ActivityPub::ActorSerializer, adapter: ActivityPub::Adapter
+      end
     end
   end
 
   private
 
-  def set_account
-    @account = Account.find_local!(params[:username])
+  def filtered_statuses
+    default_statuses.tap do |statuses|
+      statuses.merge!(hashtag_scope)    if tag_requested?
+      statuses.merge!(only_media_scope) if media_requested?
+      statuses.merge!(no_replies_scope) unless replies_requested?
+    end
+  end
+
+  def default_statuses
+    @account.statuses.distributable_visibility
+  end
+
+  def only_media_scope
+    Status.joins(:media_attachments).merge(@account.media_attachments).group(:id)
+  end
+
+  def no_replies_scope
+    Status.without_replies
+  end
+
+  def hashtag_scope
+    tag = Tag.find_normalized(params[:tag])
+
+    if tag
+      Status.tagged_with(tag.id)
+    else
+      Status.none
+    end
+  end
+
+  def username_param
+    params[:username]
+  end
+
+  def account_id_param
+    params[:id]
+  end
+
+  def skip_temporary_suspension_response?
+    request.format == :json
+  end
+
+  def rss_url
+    if tag_requested?
+      short_account_tag_url(@account, params[:tag], format: 'rss')
+    else
+      short_account_url(@account, format: 'rss')
+    end
+  end
+  helper_method :rss_url
+
+  def media_requested?
+    path_without_format.end_with?('/media') && !tag_requested?
+  end
+
+  def replies_requested?
+    path_without_format.end_with?('/with_replies') && !tag_requested?
+  end
+
+  def tag_requested?
+    path_without_format.end_with?(Addressable::URI.parse("/tagged/#{params[:tag]}").normalize)
+  end
+
+  def path_without_format
+    request.path.split('.').first
   end
 end

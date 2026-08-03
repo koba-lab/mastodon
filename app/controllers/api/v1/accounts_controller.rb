@@ -1,124 +1,84 @@
 # frozen_string_literal: true
 
-class Api::V1::AccountsController < ApiController
-  before_action -> { doorkeeper_authorize! :read }, except: [:follow, :unfollow, :block, :unblock, :mute, :unmute, :update_credentials]
-  before_action -> { doorkeeper_authorize! :follow }, only: [:follow, :unfollow, :block, :unblock, :mute, :unmute]
-  before_action -> { doorkeeper_authorize! :write }, only: [:update_credentials]
-  before_action :require_user!, except: [:show, :following, :followers, :statuses]
-  before_action :set_account, except: [:verify_credentials, :update_credentials, :suggestions, :search]
+class Api::V1::AccountsController < Api::BaseController
+  include RegistrationHelper
 
-  respond_to :json
+  before_action -> { authorize_if_got_token! :read, :'read:accounts' }, except: [:create, :follow, :unfollow, :remove_from_followers, :block, :unblock, :mute, :unmute]
+  before_action -> { doorkeeper_authorize! :follow, :write, :'write:follows' }, only: [:follow, :unfollow, :remove_from_followers]
+  before_action -> { doorkeeper_authorize! :follow, :write, :'write:mutes' }, only: [:mute, :unmute]
+  before_action -> { doorkeeper_authorize! :follow, :write, :'write:blocks' }, only: [:block, :unblock]
+  before_action -> { doorkeeper_authorize! :write, :'write:accounts' }, only: [:create]
 
-  def show; end
+  before_action :require_user!, except: [:index, :show, :create]
+  before_action :require_client_credentials!, only: [:create]
+  before_action :set_account, except: [:index, :create]
+  before_action :set_accounts, only: [:index]
+  before_action :check_account_approval, except: [:index, :create]
+  before_action :check_account_confirmation, except: [:index, :create]
+  before_action :check_enabled_registrations, only: [:create]
+  before_action :check_accounts_limit, only: [:index]
+  before_action :check_following_self, only: [:follow]
 
-  def verify_credentials
-    @account = current_user.account
-    render :show
+  skip_before_action :require_authenticated_user!, only: :create
+
+  override_rate_limit_headers :follow, family: :follows
+
+  def index
+    render json: @accounts, each_serializer: REST::AccountSerializer
   end
 
-  def update_credentials
-    current_account.update!(account_params)
-    @account = current_account
-    render :show
+  def show
+    cache_if_unauthenticated!
+    render json: @account, serializer: REST::AccountSerializer
   end
 
-  def following
-    results   = Follow.where(account: @account).paginate_by_max_id(limit_param(DEFAULT_ACCOUNTS_LIMIT), params[:max_id], params[:since_id])
-    accounts  = Account.where(id: results.map(&:target_account_id)).map { |a| [a.id, a] }.to_h
-    @accounts = results.map { |f| accounts[f.target_account_id] }
+  def create
+    token    = AppSignUpService.new.call(doorkeeper_token.application, request.remote_ip, account_params)
+    response = Doorkeeper::OAuth::TokenResponse.new(token)
 
-    next_path = following_api_v1_account_url(pagination_params(max_id: results.last.id))    if results.size == limit_param(DEFAULT_ACCOUNTS_LIMIT)
-    prev_path = following_api_v1_account_url(pagination_params(since_id: results.first.id)) unless results.empty?
+    headers.merge!(response.headers)
 
-    set_pagination_headers(next_path, prev_path)
-
-    render :index
-  end
-
-  def followers
-    results   = Follow.where(target_account: @account).paginate_by_max_id(limit_param(DEFAULT_ACCOUNTS_LIMIT), params[:max_id], params[:since_id])
-    accounts  = Account.where(id: results.map(&:account_id)).map { |a| [a.id, a] }.to_h
-    @accounts = results.map { |f| accounts[f.account_id] }
-
-    next_path = followers_api_v1_account_url(pagination_params(max_id: results.last.id))    if results.size == limit_param(DEFAULT_ACCOUNTS_LIMIT)
-    prev_path = followers_api_v1_account_url(pagination_params(since_id: results.first.id)) unless results.empty?
-
-    set_pagination_headers(next_path, prev_path)
-
-    render :index
-  end
-
-  def statuses
-    @statuses = @account.statuses.permitted_for(@account, current_account).paginate_by_max_id(limit_param(DEFAULT_STATUSES_LIMIT), params[:max_id], params[:since_id])
-    @statuses = @statuses.where(id: MediaAttachment.where(account: @account).where.not(status_id: nil).reorder('').select('distinct status_id')) if params[:only_media]
-    @statuses = @statuses.without_replies if params[:exclude_replies]
-    @statuses = cache_collection(@statuses, Status)
-
-    set_maps(@statuses)
-
-    next_path = statuses_api_v1_account_url(statuses_pagination_params(max_id: @statuses.last.id))    unless @statuses.empty?
-    prev_path = statuses_api_v1_account_url(statuses_pagination_params(since_id: @statuses.first.id)) unless @statuses.empty?
-
-    set_pagination_headers(next_path, prev_path)
+    self.response_body = response.body.to_json
+    self.status        = response.status
+  rescue ActiveRecord::RecordInvalid => e
+    render json: ValidationErrorFormatter.new(e, 'account.username': :username, 'invite_request.text': :reason).as_json, status: 422
   end
 
   def follow
-    FollowService.new.call(current_user.account, @account.acct)
-    set_relationship
-    render :relationship
+    follow  = FollowService.new.call(current_user.account, @account, reblogs: params.key?(:reblogs) ? truthy_param?(:reblogs) : nil, notify: params.key?(:notify) ? truthy_param?(:notify) : nil, languages: params.key?(:languages) ? params[:languages] : nil, with_rate_limit: true)
+    options = @account.locked? || current_user.account.silenced? ? {} : { following_map: { @account.id => { reblogs: follow.show_reblogs?, notify: follow.notify?, languages: follow.languages } }, requested_map: { @account.id => false } }
+
+    render json: @account, serializer: REST::RelationshipSerializer, relationships: relationships(**options)
   end
 
   def block
     BlockService.new.call(current_user.account, @account)
-
-    @following   = { @account.id => false }
-    @followed_by = { @account.id => false }
-    @blocking    = { @account.id => true }
-    @requested   = { @account.id => false }
-    @muting      = { @account.id => current_user.account.muting?(@account.id) }
-
-    render :relationship
+    render json: @account, serializer: REST::RelationshipSerializer, relationships: relationships
   end
 
   def mute
-    MuteService.new.call(current_user.account, @account)
-    set_relationship
-    render :relationship
+    MuteService.new.call(current_user.account, @account, notifications: truthy_param?(:notifications), duration: params[:duration].to_i)
+    render json: @account, serializer: REST::RelationshipSerializer, relationships: relationships
   end
 
   def unfollow
     UnfollowService.new.call(current_user.account, @account)
-    set_relationship
-    render :relationship
+    render json: @account, serializer: REST::RelationshipSerializer, relationships: relationships
+  end
+
+  def remove_from_followers
+    RemoveFromFollowersService.new.call(current_user.account, @account)
+    render json: @account, serializer: REST::RelationshipSerializer, relationships: relationships
   end
 
   def unblock
     UnblockService.new.call(current_user.account, @account)
-    set_relationship
-    render :relationship
+    render json: @account, serializer: REST::RelationshipSerializer, relationships: relationships
   end
 
   def unmute
     UnmuteService.new.call(current_user.account, @account)
-    set_relationship
-    render :relationship
-  end
-
-  def relationships
-    ids = params[:id].is_a?(Enumerable) ? params[:id].map(&:to_i) : [params[:id].to_i]
-
-    @accounts    = Account.where(id: ids).select('id')
-    @following   = Account.following_map(ids, current_user.account_id)
-    @followed_by = Account.followed_by_map(ids, current_user.account_id)
-    @blocking    = Account.blocking_map(ids, current_user.account_id)
-    @muting      = Account.muting_map(ids, current_user.account_id)
-    @requested   = Account.requested_map(ids, current_user.account_id)
-  end
-
-  def search
-    @accounts = AccountSearchService.new.call(params[:q], limit_param(DEFAULT_ACCOUNTS_LIMIT), params[:resolve] == 'true', current_account)
-
-    render :index
+    render json: @account, serializer: REST::RelationshipSerializer, relationships: relationships
   end
 
   private
@@ -127,23 +87,47 @@ class Api::V1::AccountsController < ApiController
     @account = Account.find(params[:id])
   end
 
-  def set_relationship
-    @following   = Account.following_map([@account.id], current_user.account_id)
-    @followed_by = Account.followed_by_map([@account.id], current_user.account_id)
-    @blocking    = Account.blocking_map([@account.id], current_user.account_id)
-    @muting      = Account.muting_map([@account.id], current_user.account_id)
-    @requested   = Account.requested_map([@account.id], current_user.account_id)
+  def set_accounts
+    @accounts = Account.where(id: account_ids).without_unapproved
   end
 
-  def pagination_params(core_params)
-    params.permit(:limit).merge(core_params)
+  def check_account_approval
+    raise(ActiveRecord::RecordNotFound) if @account.local? && @account.user_pending?
   end
 
-  def statuses_pagination_params(core_params)
-    params.permit(:limit, :only_media, :exclude_replies).merge(core_params)
+  def check_account_confirmation
+    raise(ActiveRecord::RecordNotFound) if @account.local? && !@account.user_confirmed?
+  end
+
+  def check_accounts_limit
+    raise(Mastodon::ValidationError) if account_ids.size > DEFAULT_ACCOUNTS_LIMIT
+  end
+
+  def check_following_self
+    render json: { error: I18n.t('accounts.self_follow_error') }, status: 403 if current_user.account.id == @account.id
+  end
+
+  def relationships(**)
+    AccountRelationshipsPresenter.new([@account], current_user.account_id, **)
+  end
+
+  def account_ids
+    Array(accounts_params[:id]).uniq.map(&:to_i)
+  end
+
+  def accounts_params
+    params.permit(id: [])
   end
 
   def account_params
-    params.permit(:display_name, :note, :avatar, :header)
+    params.permit(:username, :email, :password, :agreement, :locale, :reason, :time_zone, :invite_code, :date_of_birth)
+  end
+
+  def invite
+    Invite.find_by(code: params[:invite_code]) if params[:invite_code].present?
+  end
+
+  def check_enabled_registrations
+    forbidden unless allowed_registration?(request.remote_ip, invite)
   end
 end

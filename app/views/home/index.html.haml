@@ -1,6 +1,7 @@
 - content_for :header_tags do
-  %script#initial-state{ type: 'application/json' }!= json_escape(render(file: 'home/initial_state', formats: :json))
+  - unless request.path == '/'
+    %meta{ name: 'robots', content: 'noindex' }/
 
-  = javascript_pack_tag 'application', integrity: true, crossorigin: 'anonymous'
+  = render partial: 'shared/og'
 
-.app-holder#mastodon{ data: { props: Oj.dump(default_props) } }
+= render 'shared/web_app'

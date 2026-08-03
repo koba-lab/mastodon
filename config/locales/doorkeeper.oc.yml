@@ -5,6 +5,8 @@ oc:
       doorkeeper/application:
         name: Nom
         redirect_uri: URL de redireccion
+        scopes: Encastres
+        website: Site de l’aplicacion
     errors:
       models:
         doorkeeper/application:
@@ -23,20 +25,25 @@ oc:
         edit: Modificar
         submit: Mandar
       confirmations:
-        destroy: Sètz segur ?
+        destroy: Sètz segur ?
       edit:
-        title: Modificar l'aplicacion
+        title: Modificar l’aplicacion
       form:
-        error: Ops ! Verificatz vòstre formulari
+        error: Ops ! Verificatz vòstre formulari
       help:
-        native_redirect_uri: Emplegatz %{native_redirect_uri} per d'ensages locales
+        native_redirect_uri: Emplegatz %{native_redirect_uri} per d’ensages locales
         redirect_uri: Utilizatz una linha per URI
         scopes: Separatz los encastres amb d’espacis. Daissatz void per utilizar l’encastre per defaut.
       index:
+        application: Aplicacion
         callback_url: URL de rapèl
+        delete: Suprimir
+        empty: Avètz pas cap d’aplicacion.
         name: Nom
         new: Nòva aplicacion
-        title: Vòstra aplicacions
+        scopes: Encastres
+        show: Veire
+        title: Vòstras aplicacions
       new:
         title: Nòva aplicacion
       show:
@@ -45,7 +52,7 @@ oc:
         callback_urls: urls de rapèls
         scopes: Encastres
         secret: Secret
-        title: 'Aplicacion: %{name}'
+        title: Aplicacion : %{name}
     authorizations:
       buttons:
         authorize: Autorizar
@@ -53,21 +60,22 @@ oc:
       error:
         title: I a agut un error
       new:
-        able_to: Aquesta aplicacion poirà
-        prompt: L’aplicacion %{client_name} demanda l’accès al vòstre compte.
+        review_permissions: Repassar las autorizacions
         title: Cal l’autorizacion
       show:
-        title: Còdi d’autorizacion
+        title: Copiatz lo còdi d’autorizacion e pegatz-lo dins l’aplicacion.
     authorized_applications:
       buttons:
         revoke: Revocar
       confirmations:
-        revoke: Ne sètz segur?
+        revoke: Ne sètz segur ?
       index:
-        application: Aplicacion
-        created_at: Creada lo
-        date_format: "%d-%m-%Y %Ho%M %S"
-        scopes: Encastres
+        authorized_at: Autorizada lo %{date}
+        description_html: Aquestas aplicacions pòdon accedir a vòstre compte via l’API. S’i a d’aplicacions que coneissètz pas aicí o qu’una aplicacion se compòrta pas coma cal, podètz revocar son accès.
+        last_used_at: Darrièra utilizacion lo %{date}
+        never_used: Pas jamai utilizada
+        scopes: Autorizacions
+        superapp: Intèrna
         title: Las vòstras aplicacions autorizadas
     errors:
       messages:
@@ -75,10 +83,13 @@ oc:
         credential_flow_not_configured: Lo flux de qualificacion del senhal del proprietari de la ressorça capitèt pas pr’amor que Doorkeeper.configure.resource_owner_from_credentials es pas configurat.
         invalid_client: L’autorizacion del client capitèt pas pr’amor que lo client es desconegut, l’autorizacion del client es pas enclús, o lo metòde d’autorizacion es pas suportat.
         invalid_grant: L’acòrdi d’autorizacion donadat es pas valid, expirat, revocat, una redireccion URI utilizat en la demanda d’autorizacion no correspond, o a estat desliurat a un altre client.
-        invalid_redirect_uri: L'URL de redireccion es pas valida.
-        invalid_request: La demanda a un paramètre que li manca, a una valor qu’es pas suportada, o quicòm mal format.
-        invalid_resource_owner: La qualificacion del proprietari de la ressorça donada es pas valid, o lo proprietari de la ressorça se pòt pas trobar.
-        invalid_scope: L’encastre demandat es pas valid, o mal format.
+        invalid_redirect_uri: L’URL de redireccion es pas valida.
+        invalid_request:
+          missing_param: 'Paramètre requerit absent : %{value}.'
+          request_not_authorized: La requèsta deu èsser autorizada. Lo paramètre requerit per autorizar las requèstas es absent o invalid.
+          unknown: Li manca un paramètre requerit a la requèsta, inclutz un paramètre pas pres en carga, o es mal formatada.
+        invalid_resource_owner: La qualificacion del proprietari de la ressorça donada es pas valida, o lo proprietari de la ressorça es pas trobable
+        invalid_scope: L’encastre demandat es pas valid, o d’un marrit format.
         invalid_token:
           expired: Lo geton d’accès a expirat
           revoked: Lo geton d’accès a estat revocat
@@ -100,6 +111,32 @@ oc:
       authorized_applications:
         destroy:
           notice: Aplicacion revocada.
+    grouped_scopes:
+      access:
+        read: Accès lectura sola
+        read/write: Accès lectura e escritura
+        write: Accès escritura sola
+      title:
+        accounts: Comptes
+        admin/accounts: Administracion de comptes
+        admin/all: Totas las foncions administrativas
+        admin/reports: Administracion de senhalaments
+        all: Accès complèt a vòstre compte Mastodon
+        blocks: Blocatges
+        bookmarks: Marcadors
+        conversations: Conversacions
+        crypto: Chiframent del cap a la fin
+        filters: Filtres
+        follow: Seguidors, Silenciats e blocats
+        follows: Abonaments
+        lists: Listas
+        media: Fichièrs junts
+        mutes: Resconduts
+        notifications: Notificacions
+        push: Notificacions Push
+        reports: Senhalament
+        search: Recercar
+        statuses: Publicacions
     layouts:
       admin:
         nav:
@@ -108,6 +145,42 @@ oc:
       application:
         title: Cal una autorizacion OAuth
     scopes:
-      follow: sègre, blocar, quitar de blocar e quitar de sègre de comptes
-      read: legissètz las donadas de vòstre compte
-      write: publicatz per vos
+      admin:read: lectura de totas las donadas del servidor
+      admin:read:accounts: lectura de las informacions sensiblas dels comptes
+      admin:read:canonical_email_blocks: legir las informacions sensiblas de totes los blocs d’e-mails canonics
+      admin:read:domain_allows: legir las informacions sensiblas de totes los domenis autorizats
+      admin:read:domain_blocks: legir las informacions sensiblas de totes los domenis blocats
+      admin:read:email_domain_blocks: legir las informacions sensiblas de totes los blocs de domenis d’e-mail
+      admin:read:ip_blocks: legir las informacions sensiblas de totes los blocats d’IP
+      admin:read:reports: lectura de las informacions sensiblas dels senhalaments e dels comptes senhalats
+      admin:write: modificacion de las donadas del servidor
+      admin:write:accounts: realizacion d’accions de moderacion suls comptes
+      admin:write:reports: realizacion d’accions suls senhalaments
+      crypto: utilizar lo chiframent del cap a la fin
+      follow: modificar las relacions del compte
+      push: recebre vòstras notificacions push
+      read: legir totas las donadas de vòstre compte
+      read:accounts: veire las informacions del compte
+      read:blocks: veire vòstres blocatges
+      read:bookmarks: veire vòstres marcadors
+      read:filters: veire vòstres filtres
+      read:follows: veire vòstres abonaments
+      read:lists: veire vòstras listas
+      read:mutes: veire qual rescondètz
+      read:notifications: veire vòstras notificacions
+      read:reports: veire vòstres senhalaments
+      read:search: recercar per vos
+      read:statuses: veire los estatuts
+      write: modificar totas las donadas de vòstre compte
+      write:accounts: modificar vòstre perfil
+      write:blocks: blocar de comptes e de domenis
+      write:bookmarks: ajustar als marcadors
+      write:conversations: amudir e suprimir las conversacions
+      write:filters: crear de filtres
+      write:follows: sègre de mond
+      write:lists: crear de listas
+      write:media: mandar de fichièrs mèdias
+      write:mutes: rescondre de mond e de conversacions
+      write:notifications: escafar vòstras notificacions
+      write:reports: senhalar de mond
+      write:statuses: publicar d’estatuts

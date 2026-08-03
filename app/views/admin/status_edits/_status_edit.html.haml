@@ -1,0 +1,20 @@
+%li
+  .history__entry
+    %h5
+      - if status_edit_iteration.first?
+        = t('admin.statuses.original_status')
+      - else
+        = t('admin.statuses.status_changed')
+      ·
+      %time.formatted{ datetime: status_edit.created_at.iso8601, title: l(status_edit.created_at) }= l(status_edit.created_at)
+
+    .status
+      = render partial: 'admin/shared/status_content', locals: { status: status_edit }
+
+      .detailed-status__meta
+        %time.formatted{ datetime: status_edit.created_at.iso8601, title: l(status_edit.created_at) }= l(status_edit.created_at)
+
+        - if status_edit.sensitive?
+          ·
+          = material_symbol('visibility_off')
+          = t('stream_entries.sensitive_content')

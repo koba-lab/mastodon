@@ -2,17 +2,13 @@
 
 module Admin
   class ResetsController < BaseController
-    before_action :set_account
+    before_action :set_user
 
     def create
-      @account.user.send_reset_password_instructions
-      redirect_to admin_accounts_path
-    end
-
-    private
-
-    def set_account
-      @account = Account.find(params[:account_id])
+      authorize @user, :reset_password?
+      @user.reset_password!
+      log_action :reset_password, @user
+      redirect_to admin_account_path(@user.account_id)
     end
   end
 end

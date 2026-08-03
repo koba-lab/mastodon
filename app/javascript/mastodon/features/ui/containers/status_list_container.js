@@ -1,70 +1,84 @@
+import { createSelector } from '@reduxjs/toolkit';
+import { Map as ImmutableMap, List as ImmutableList } from 'immutable';
 import { connect } from 'react-redux';
-import StatusList from '../../../components/status_list';
-import { expandTimeline, scrollTopTimeline } from '../../../actions/timelines';
-import Immutable from 'immutable';
-import { createSelector } from 'reselect';
+
 import { debounce } from 'lodash';
 
-const makeGetStatusIds = () => createSelector([
-  (state, { type }) => state.getIn(['settings', type], Immutable.Map()),
-  (state, { type }) => state.getIn(['timelines', type, 'items'], Immutable.List()),
-  (state)           => state.get('statuses'),
-  (state)           => state.getIn(['meta', 'me'])
-], (columnSettings, statusIds, statuses, me) => statusIds.filter(id => {
-  const statusForId = statuses.get(id);
-  let showStatus    = true;
+import { scrollTopTimeline, loadPending } from '@/mastodon/actions/timelines';
+import { isNonStatusId } from '@/mastodon/actions/timelines_typed';
+import StatusList from '@/mastodon/components/status_list';
+import { me } from '@/mastodon/initial_state';
 
-  if (columnSettings.getIn(['shows', 'reblog']) === false) {
-    showStatus = showStatus && statusForId.get('reblog') === null;
-  }
+const makeGetStatusIds = (pending = false) => createSelector([
+  (state, { type }) => state.getIn(['settings', type], ImmutableMap()),
+  (state, { type, maxItems }) => {
+    const items = state.getIn(['timelines', type, pending ? 'pendingItems' : 'items'], ImmutableList());
 
-  if (columnSettings.getIn(['shows', 'reply']) === false) {
-    showStatus = showStatus && (statusForId.get('in_reply_to_id') === null || statusForId.get('in_reply_to_account_id') === me);
-  }
-
-  if (columnSettings.getIn(['regex', 'body'], '').trim().length > 0) {
-    try {
-      if (showStatus) {
-        const regex = new RegExp(columnSettings.getIn(['regex', 'body']).trim(), 'i');
-        showStatus = !regex.test(statusForId.get('reblog') ? statuses.getIn([statusForId.get('reblog'), 'search_index']) : statusForId.get('search_index'));
-      }
-    } catch(e) {
-      // Bad regex, don't affect filters
+    if (maxItems) {
+      return items.take(maxItems);
     }
-  }
 
-  return showStatus;
-}));
+    return items;
+  },
+  (state)           => state.get('statuses'),
+], (columnSettings, statusIds, statuses) => {
+  return statusIds.filter(id => {
+    if (isNonStatusId(id)) return true;
+
+    const statusForId = statuses.get(id);
+
+    if (statusForId.get('account') === me) return true;
+
+    if (columnSettings.getIn(['shows', 'reblog']) === false && statusForId.get('reblog') !== null) {
+      return false;
+    }
+
+    if (columnSettings.getIn(['shows', 'reply']) === false && statusForId.get('in_reply_to_id') !== null && statusForId.get('in_reply_to_account_id') !== me) {
+      return false;
+    }
+
+    if (columnSettings.getIn(['shows', 'quote']) === false && statusForId.get('quote') !== null) {
+      return false;
+    }
+
+    return true;
+  });
+});
 
 const makeMapStateToProps = () => {
   const getStatusIds = makeGetStatusIds();
+  const getPendingStatusIds = makeGetStatusIds(true);
 
-  const mapStateToProps = (state, props) => ({
-    scrollKey: props.scrollKey,
-    shouldUpdateScroll: props.shouldUpdateScroll,
-    statusIds: getStatusIds(state, props),
-    isLoading: state.getIn(['timelines', props.type, 'isLoading'], true),
-    isUnread: state.getIn(['timelines', props.type, 'unread']) > 0,
-    hasMore: !!state.getIn(['timelines', props.type, 'next'])
+  /**
+   * @param {import('mastodon/store').RootState} state
+   * @param {Object} props
+   * @param {string} props.timelineId
+   * @param {boolean} [props.initialLoadingState]
+   * @param {number} [props.maxItems]
+   */
+  const mapStateToProps = (state, { timelineId, initialLoadingState = true, maxItems }) => ({
+    statusIds: getStatusIds(state, { type: timelineId, maxItems }),
+    lastId:    state.getIn(['timelines', timelineId, 'items'])?.last(),
+    isLoading: state.getIn(['timelines', timelineId, 'isLoading'], initialLoadingState),
+    isPartial: state.getIn(['timelines', timelineId, 'isPartial'], false),
+    hasMore:   state.getIn(['timelines', timelineId, 'hasMore']),
+    numPending: getPendingStatusIds(state, { type: timelineId }).size,
   });
 
   return mapStateToProps;
 };
 
-const mapDispatchToProps = (dispatch, { type, id }) => ({
-
-  onScrollToBottom: debounce(() => {
-    dispatch(scrollTopTimeline(type, false));
-    dispatch(expandTimeline(type, id));
-  }, 300, {leading: true}),
+const mapDispatchToProps = (dispatch, { timelineId }) => ({
 
   onScrollToTop: debounce(() => {
-    dispatch(scrollTopTimeline(type, true));
+    dispatch(scrollTopTimeline(timelineId, true));
   }, 100),
 
   onScroll: debounce(() => {
-    dispatch(scrollTopTimeline(type, false));
-  }, 100)
+    dispatch(scrollTopTimeline(timelineId, false));
+  }, 100),
+
+  onLoadPending: () => dispatch(loadPending(timelineId)),
 
 });
 

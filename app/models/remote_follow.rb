@@ -2,26 +2,58 @@
 
 class RemoteFollow
   include ActiveModel::Validations
+  include RoutingHelper
 
   attr_accessor :acct, :addressable_template
 
+  validates :acct, presence: true, domain: { acct: true }
+
   def initialize(attrs = {})
-    @acct = attrs[:acct].gsub(/\A@/, '').strip unless attrs[:acct].nil?
+    @acct = normalize_acct(attrs[:acct])
   end
 
   def valid?
-    populate_template
+    return false unless super
+
+    fetch_template!
+
     errors.empty?
   end
 
   def subscribe_address_for(account)
-    addressable_template.expand(uri: account.local_username_and_domain).to_s
+    addressable_template.expand(uri: ActivityPub::TagManager.instance.uri_for(account)).to_s
+  end
+
+  def interact_address_for(status)
+    addressable_template.expand(uri: ActivityPub::TagManager.instance.uri_for(status)).to_s
   end
 
   private
 
-  def populate_template
-    if acct.blank? || redirect_url_link.nil? || redirect_url_link.template.nil?
+  def normalize_acct(value)
+    return if value.blank?
+
+    username, domain = value.strip.gsub(/\A@/, '').split('@')
+
+    domain = if TagManager.instance.local_domain?(domain)
+               nil
+             else
+               TagManager.instance.normalize_domain(domain)
+             end
+
+    [username, domain].compact.join('@')
+  rescue Addressable::URI::InvalidURIError
+    value
+  end
+
+  def fetch_template!
+    return missing_resource_error if acct.blank?
+
+    _, domain = acct.split('@')
+
+    if domain.nil?
+      @addressable_template = Addressable::Template.new("#{authorize_interaction_url}?uri={uri}")
+    elsif redirect_uri_template.nil?
       missing_resource_error
     else
       @addressable_template = Addressable::Template.new(redirect_uri_template)
@@ -29,17 +61,12 @@ class RemoteFollow
   end
 
   def redirect_uri_template
-    redirect_url_link.template
-  end
-
-  def redirect_url_link
-    acct_resource&.link('http://ostatus.org/schema/1.0/subscribe')
+    acct_resource&.link('http://ostatus.org/schema/1.0/subscribe', 'template')
   end
 
   def acct_resource
-    @_acct_resource ||= Goldfinger.finger("acct:#{acct}")
-  rescue Goldfinger::Error
-    missing_resource_error
+    @acct_resource ||= Webfinger.new("acct:#{acct}").perform
+  rescue Webfinger::Error, *Mastodon::HTTP_CONNECTION_ERRORS
     nil
   end
 

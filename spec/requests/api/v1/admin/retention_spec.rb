@@ -1,0 +1,38 @@
+# frozen_string_literal: true
+
+require 'rails_helper'
+
+RSpec.describe 'Admin Retention' do
+  include_context 'with API authentication', user_fabricator: :admin_user
+
+  let(:account) { Fabricate(:account) }
+
+  describe 'GET /api/v1/admin/retention' do
+    context 'when not authorized' do
+      it 'returns http forbidden' do
+        post '/api/v1/admin/retention', params: { start_at: '2025-01-04', end_at: '2025-07-05', frequency: 'month' }
+
+        expect(response)
+          .to have_http_status(403)
+        expect(response.content_type)
+          .to start_with('application/json')
+      end
+    end
+
+    context 'with correct scope' do
+      let(:scopes) { 'admin:read' }
+
+      it 'returns http success and status json' do
+        post '/api/v1/admin/retention', params: { start_at: '2025-01-04', end_at: '2025-07-05', frequency: 'month' }, headers: headers
+
+        expect(response)
+          .to have_http_status(200)
+        expect(response.content_type)
+          .to start_with('application/json')
+
+        expect(response.parsed_body)
+          .to be_an(Array)
+      end
+    end
+  end
+end

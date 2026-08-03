@@ -1,0 +1,13 @@
+= content_for :heading do
+  = render 'application/mailer/heading',
+           image_url: frontend_asset_url('images/mailer-new/heading/archive.png'),
+           subtitle: t('user_mailer.backup_ready.explanation'),
+           title: t('user_mailer.backup_ready.title')
+%table.email-w-full{ cellspacing: 0, cellpadding: 0, border: 0, role: 'presentation' }
+  %tr
+    %td.email-body-padding-td
+      %table.email-inner-card-table{ cellspacing: 0, cellpadding: 0, border: 0, role: 'presentation' }
+        %tr
+          %td.email-inner-card-td.email-prose
+            %p= t 'user_mailer.backup_ready.extra'
+            = render 'application/mailer/button', text: t('exports.archive_takeout.download'), url: download_backup_url(@backup)

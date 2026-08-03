@@ -1,18 +1,8 @@
-- content_for :page_title do
-  = "##{@tag.name}"
+- content_for :header_tags do
+  %link{ rel: :alternate, type: 'application/rss+xml', href: tag_url(@tag) }/
+  %link{ rel: :alternate, type: 'application/activity+json', href: tag_url(@tag) }/
+  %link{ rel: :alternate, type: 'application/ld+json; profile="https://www.w3.org/ns/activitystreams"', href: tag_url(@tag) }/
+  %meta{ name: 'robots', content: 'noindex' }/
+  = render partial: 'shared/og'
 
-.compact-header
-  %h1<
-    = link_to site_title, root_path
-    %small ##{@tag.name}
-
-- if @statuses.empty?
-  .accounts-grid
-    = render partial: 'accounts/nothing_here'
-- else
-  .activity-stream.h-feed
-    = render partial: 'stream_entries/status', collection: @statuses, as: :status
-
-- if @statuses.size == 20
-  .pagination
-    = link_to safe_join([t('pagination.next'), fa_icon('chevron-right')], ' '), tag_url(@tag, max_id: @statuses.last.id), class: 'next', rel: 'next'
+= render partial: 'shared/web_app'

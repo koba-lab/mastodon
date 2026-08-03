@@ -1,95 +1,176 @@
-require "rails_helper"
+# frozen_string_literal: true
 
-RSpec.describe NotificationMailer, type: :mailer do
-  let(:receiver)       { Fabricate(:user, account: Fabricate(:account, username: 'alice')) }
+require 'rails_helper'
+
+RSpec.describe NotificationMailer do
+  shared_examples 'delivery to non functional user' do
+    context 'when user is not functional' do
+      before { receiver.update(confirmed_at: nil) }
+
+      it 'does not deliver mail' do
+        emails = capture_emails { mail.deliver_now }
+        expect(emails).to be_empty
+      end
+    end
+  end
+
+  shared_examples 'delivery without status' do
+    context 'when notification target_status is missing' do
+      before { allow(notification).to receive(:target_status).and_return(nil) }
+
+      it 'does not deliver mail' do
+        emails = capture_emails { mail.deliver_now }
+        expect(emails).to be_empty
+      end
+    end
+  end
+
+  let(:receiver)       { Fabricate(:user, account_attributes: { username: 'alice' }) }
   let(:sender)         { Fabricate(:account, username: 'bob') }
-  let(:foreign_status) { Fabricate(:status, account: sender) }
-  let(:own_status)     { Fabricate(:status, account: receiver.account) }
+  let(:foreign_status) { Fabricate(:status, account: sender, text: 'The body of the foreign status') }
+  let(:own_status)     { Fabricate(:status, account: receiver.account, text: 'The body of the own status') }
 
-  describe "mention" do
+  describe 'mention' do
     let(:mention) { Mention.create!(account: receiver.account, status: foreign_status) }
-    let(:mail) { NotificationMailer.mention(receiver.account, Notification.create!(account: receiver.account, activity: mention)) }
+    let(:notification) { Notification.create!(account: receiver.account, activity: mention) }
+    let(:mail) { prepared_mailer_for(receiver.account).mention }
 
-    it "renders the headers" do
-      expect(mail.subject).to eq("You were mentioned by bob")
-      expect(mail.to).to eq([receiver.email])
+    it_behaves_like 'localized subject', 'notification_mailer.mention.subject', name: 'bob'
+
+    it 'renders the email' do
+      expect { mail.deliver }
+        .to send_email(
+          subject: 'You were mentioned by bob'
+        )
+      expect(mail.text_part.body)
+        .to match('You were mentioned by bob')
+        .and match('The body of the foreign status')
+      expect(mail)
+        .to have_thread_headers
+        .and have_standard_headers('mention').for(receiver)
     end
 
-    it "renders the body" do
-      expect(mail.body.encoded).to match("You were mentioned by bob")
-    end
+    it_behaves_like 'delivery to non functional user'
+    it_behaves_like 'delivery without status'
   end
 
-  describe "follow" do
+  describe 'quote' do
+    let(:quote) { Fabricate(:quote, state: :accepted, status: foreign_status, quoted_status: own_status) }
+    let(:notification) { Notification.create!(account: receiver.account, activity: quote) }
+    let(:mail) { prepared_mailer_for(own_status.account).quote }
+
+    it_behaves_like 'localized subject', 'notification_mailer.quote.subject', name: 'bob'
+
+    it 'renders the email' do
+      expect { mail.deliver }
+        .to send_email(
+          subject: 'bob quoted your post'
+        )
+      expect(mail.text_part.body)
+        .to match('Your post was quoted by bob')
+        .and match('The body of the foreign status')
+      expect(mail)
+        .to have_thread_headers
+        .and have_standard_headers('quote').for(receiver)
+    end
+
+    it_behaves_like 'delivery to non functional user'
+    it_behaves_like 'delivery without status'
+  end
+
+  describe 'follow' do
     let(:follow) { sender.follow!(receiver.account) }
-    let(:mail) { NotificationMailer.follow(receiver.account, Notification.create!(account: receiver.account, activity: follow)) }
+    let(:notification) { Notification.create!(account: receiver.account, activity: follow) }
+    let(:mail) { prepared_mailer_for(receiver.account).follow }
 
-    it "renders the headers" do
-      expect(mail.subject).to eq("bob is now following you")
-      expect(mail.to).to eq([receiver.email])
+    it_behaves_like 'localized subject', 'notification_mailer.follow.subject', name: 'bob'
+
+    it 'renders the email' do
+      expect { mail.deliver }
+        .to send_email(
+          subject: 'bob is now following you'
+        )
+      expect(mail.text_part.body)
+        .to match('bob is now following you')
+      expect(mail)
+        .to have_standard_headers('follow').for(receiver)
     end
 
-    it "renders the body" do
-      expect(mail.body.encoded).to match("bob is now following you")
-    end
+    it_behaves_like 'delivery to non functional user'
   end
 
-  describe "favourite" do
+  describe 'favourite' do
     let(:favourite) { Favourite.create!(account: sender, status: own_status) }
-    let(:mail) { NotificationMailer.favourite(own_status.account, Notification.create!(account: receiver.account, activity: favourite)) }
+    let(:notification) { Notification.create!(account: receiver.account, activity: favourite) }
+    let(:mail) { prepared_mailer_for(own_status.account).favourite }
 
-    it "renders the headers" do
-      expect(mail.subject).to eq("bob favourited your status")
-      expect(mail.to).to eq([receiver.email])
+    it_behaves_like 'localized subject', 'notification_mailer.favourite.subject', name: 'bob'
+
+    it 'renders the email' do
+      expect { mail.deliver }
+        .to send_email(
+          subject: 'bob favorited your post'
+        )
+      expect(mail.text_part.body)
+        .to match('Your post was favorited by bob')
+        .and match('The body of the own status')
+      expect(mail)
+        .to have_thread_headers
+        .and have_standard_headers('favourite').for(receiver)
     end
 
-    it "renders the body" do
-      expect(mail.body.encoded).to match("Your status was favourited by bob")
-    end
+    it_behaves_like 'delivery to non functional user'
+    it_behaves_like 'delivery without status'
   end
 
-  describe "reblog" do
+  describe 'reblog' do
     let(:reblog) { Status.create!(account: sender, reblog: own_status) }
-    let(:mail) { NotificationMailer.reblog(own_status.account, Notification.create!(account: receiver.account, activity: reblog)) }
+    let(:notification) { Notification.create!(account: receiver.account, activity: reblog) }
+    let(:mail) { prepared_mailer_for(own_status.account).reblog }
 
-    it "renders the headers" do
-      expect(mail.subject).to eq("bob boosted your status")
-      expect(mail.to).to eq([receiver.email])
+    it_behaves_like 'localized subject', 'notification_mailer.reblog.subject', name: 'bob'
+
+    it 'renders the email' do
+      expect { mail.deliver }
+        .to send_email(
+          subject: 'bob boosted your post'
+        )
+      expect(mail.text_part.body)
+        .to match('Your post was boosted by bob')
+        .and match('The body of the own status')
+      expect(mail)
+        .to have_thread_headers
+        .and have_standard_headers('reblog').for(receiver)
     end
 
-    it "renders the body" do
-      expect(mail.body.encoded).to match("Your status was boosted by bob")
-    end
+    it_behaves_like 'delivery to non functional user'
+    it_behaves_like 'delivery without status'
   end
 
   describe 'follow_request' do
     let(:follow_request) { Fabricate(:follow_request, account: sender, target_account: receiver.account) }
-    let(:mail) { NotificationMailer.follow_request(receiver.account, Notification.create!(account: receiver.account, activity: follow_request)) }
+    let(:notification) { Notification.create!(account: receiver.account, activity: follow_request) }
+    let(:mail) { prepared_mailer_for(receiver.account).follow_request }
 
-    it 'renders the headers' do
-      expect(mail.subject).to eq('Pending follower: bob')
-      expect(mail.to).to eq([receiver.email])
+    it_behaves_like 'localized subject', 'notification_mailer.follow_request.subject', name: 'bob'
+
+    it 'renders the email' do
+      expect { mail.deliver }
+        .to send_email(
+          subject: 'Pending follower: bob'
+        )
+      expect(mail.text_part.body)
+        .to match('bob has requested to follow you')
+      expect(mail)
+        .to have_standard_headers('follow_request').for(receiver)
     end
 
-    it 'renders the body' do
-      expect(mail.body.encoded).to match("bob has requested to follow you")
-    end
+    it_behaves_like 'delivery to non functional user'
   end
 
-  describe 'digest' do
-    before do
-      mention = Fabricate(:mention, account: receiver.account)
-      Fabricate(:notification, account: receiver.account, activity: mention)
-    end
-    let(:mail) { NotificationMailer.digest(receiver.account, since: 5.days.ago) }
+  private
 
-    it 'renders the headers' do
-      expect(mail.subject).to match('notification since your last')
-      expect(mail.to).to eq([receiver.email])
-    end
-
-    it 'renders the body' do
-      expect(mail.body.encoded).to match('brief summary')
-    end
+  def prepared_mailer_for(recipient)
+    described_class.with(recipient: recipient, notification: notification)
   end
 end

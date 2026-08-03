@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 require 'csv'
 
 class Export
@@ -8,32 +9,67 @@ class Export
     @account = account
   end
 
+  def to_bookmarks_csv
+    CSV.generate do |csv|
+      account.bookmarks.includes(:status).reorder(id: :desc).each do |bookmark|
+        csv << [ActivityPub::TagManager.instance.uri_for(bookmark.status)] if bookmark.status.present?
+      end
+    end
+  end
+
   def to_blocked_accounts_csv
-    to_csv account.blocking
+    to_csv account.blocking.select(:username, :domain)
   end
 
   def to_muted_accounts_csv
-    to_csv account.muting
+    CSV.generate(headers: ['Account address', 'Hide notifications'], write_headers: true) do |csv|
+      account.mute_relationships.includes(:target_account).reorder(id: :desc).each do |mute|
+        csv << [acct(mute.target_account), mute.hide_notifications]
+      end
+    end
   end
 
   def to_following_accounts_csv
-    to_csv account.following
+    CSV.generate(headers: ['Account address', 'Show boosts', 'Notify on new posts', 'Languages'], write_headers: true) do |csv|
+      account.active_relationships.includes(:target_account).reorder(id: :desc).each do |follow|
+        csv << [acct(follow.target_account), follow.show_reblogs, follow.notify, follow.languages&.join(', ')]
+      end
+    end
   end
 
-  def total_storage
-    account.media_attachments.sum(:file_file_size)
+  def to_lists_csv
+    CSV.generate do |csv|
+      account.owned_lists.select(:title, :id).each do |list|
+        list.accounts.select(:username, :domain).each do |account|
+          csv << [list.title, acct(account)]
+        end
+      end
+    end
   end
 
-  def total_follows
-    account.following.count
+  def to_blocked_domains_csv
+    CSV.generate do |csv|
+      account.domain_blocks.pluck(:domain).each do |domain|
+        csv << [domain]
+      end
+    end
   end
 
-  def total_blocks
-    account.blocking.count
-  end
+  def to_custom_filters_json
+    data_collection = { custom_filters: [] }
+    account.custom_filters.includes(:keywords, :statuses).order(:phrase).each do |filter|
+      keywords_attributes = filter.keywords.map { |k| { keyword: k.keyword, whole_word: k.whole_word } }
 
-  def total_mutes
-    account.muting.count
+      data_collection[:custom_filters] << {
+        title: filter.title,
+        expires_at: filter.expires_at,
+        context: filter.context,
+        action: filter.action,
+        keywords_attributes: keywords_attributes,
+        statuses: filter.statuses.map { |s| ActivityPub::TagManager.instance.uri_for(s.status) },
+      }
+    end
+    JSON.generate(data_collection)
   end
 
   private
@@ -41,8 +77,12 @@ class Export
   def to_csv(accounts)
     CSV.generate do |csv|
       accounts.each do |account|
-        csv << [(account.local? ? account.local_username_and_domain : account.acct)]
+        csv << [acct(account)]
       end
     end
+  end
+
+  def acct(account)
+    account.local? ? account.local_username_and_domain : account.acct
   end
 end

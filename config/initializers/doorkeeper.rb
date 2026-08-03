@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 Doorkeeper.configure do
   # Change the ORM that doorkeeper will use (needs plugins)
   orm :active_record
@@ -7,15 +9,19 @@ Doorkeeper.configure do
     current_user || redirect_to(new_user_session_url)
   end
 
-  resource_owner_from_credentials do |routes|
-    request.params[:user] = { email: request.params[:username], password: request.params[:password] }
-    request.env["devise.allow_params_authentication"] = true
-    request.env["warden"].authenticate!(scope: :user)
+  # Disable Resource Owner Password Credentials Grant Flow
+  resource_owner_from_credentials do
+    nil
   end
 
-  # If you want to restrict access to the web interface for adding oauth authorized applications, you need to declare the block below.
+  # Doorkeeper provides some administrative interfaces for managing OAuth
+  # Applications, allowing creation, edit, and deletion of applications from the
+  # server. At present, these administrative routes are not integrated into
+  # Mastodon, and as such, we've disabled them by always return a 403 forbidden
+  # response for them. This does not affect the ability for users to manage
+  # their own OAuth Applications.
   admin_authenticator do
-    (current_user && current_user.admin?) || redirect_to(new_user_session_url)
+    head 403
   end
 
   # Authorization Code expiration time (default 10 minutes).
@@ -34,6 +40,11 @@ Doorkeeper.configure do
   # https://github.com/doorkeeper-gem/doorkeeper#custom-access-token-generator
   # access_token_generator "::Doorkeeper::JWT"
 
+  # The controller Doorkeeper::ApplicationController inherits from.
+  # Defaults to ActionController::Base.
+  # https://github.com/doorkeeper-gem/doorkeeper#custom-base-controller
+  base_controller 'ApplicationController'
+
   # Reuse access token for the same resource owner within an application (disabled by default)
   # Rationale: https://github.com/doorkeeper-gem/doorkeeper/issues/383
   reuse_access_token
@@ -41,17 +52,71 @@ Doorkeeper.configure do
   # Issue access tokens with refresh token (disabled by default)
   # use_refresh_token
 
+  # Proof of Key Code Exchange
+  pkce_code_challenge_methods ['S256']
+
+  # Forbids creating/updating applications with arbitrary scopes that are
+  # not in configuration, i.e. `default_scopes` or `optional_scopes`.
+  # (Disabled by default)
+  enforce_configured_scopes
+
   # Provide support for an owner to be assigned to each registered application (disabled by default)
   # Optional parameter :confirmation => true (default false) if you want to enforce ownership of
   # a registered application
   # Note: you must also run the rails g doorkeeper:application_owner generator to provide the necessary support
-  # enable_application_owner :confirmation => true
+  enable_application_owner
 
   # Define access token scopes for your provider
   # For more information go to
   # https://github.com/doorkeeper-gem/doorkeeper/wiki/Using-Scopes
   default_scopes  :read
-  optional_scopes :write, :follow
+  optional_scopes :profile,
+                  :write,
+                  :'write:accounts',
+                  :'write:blocks',
+                  :'write:bookmarks',
+                  :'write:collections',
+                  :'write:conversations',
+                  :'write:favourites',
+                  :'write:filters',
+                  :'write:follows',
+                  :'write:lists',
+                  :'write:media',
+                  :'write:mutes',
+                  :'write:notifications',
+                  :'write:reports',
+                  :'write:statuses',
+                  :read,
+                  :'read:accounts',
+                  :'read:blocks',
+                  :'read:bookmarks',
+                  :'read:collections',
+                  :'read:favourites',
+                  :'read:filters',
+                  :'read:follows',
+                  :'read:lists',
+                  :'read:mutes',
+                  :'read:notifications',
+                  :'read:search',
+                  :'read:statuses',
+                  :follow,
+                  :push,
+                  :'admin:read',
+                  :'admin:read:accounts',
+                  :'admin:read:reports',
+                  :'admin:read:domain_allows',
+                  :'admin:read:domain_blocks',
+                  :'admin:read:ip_blocks',
+                  :'admin:read:email_domain_blocks',
+                  :'admin:read:canonical_email_blocks',
+                  :'admin:write',
+                  :'admin:write:accounts',
+                  :'admin:write:reports',
+                  :'admin:write:domain_allows',
+                  :'admin:write:domain_blocks',
+                  :'admin:write:ip_blocks',
+                  :'admin:write:email_domain_blocks',
+                  :'admin:write:canonical_email_blocks'
 
   # Change the way client credentials are retrieved from the request object.
   # By default it retrieves first from the `HTTP_AUTHORIZATION` header, then
@@ -78,6 +143,13 @@ Doorkeeper.configure do
   #
   force_ssl_in_redirect_uri false
 
+  # Specify what redirect URI's you want to block during Application creation.
+  # Any redirect URI is allowed by default.
+  #
+  # You can use this option in order to forbid URI's with 'javascript' scheme
+  # for example.
+  forbid_redirect_uri { |uri| %w(data vbscript javascript).include?(uri.scheme.to_s.downcase) }
+
   # Specify what grant flows are enabled in array of Strings. The valid
   # strings and the flows they enable are:
   #
@@ -95,12 +167,12 @@ Doorkeeper.configure do
   #   http://tools.ietf.org/html/rfc6819#section-4.4.3
   #
 
-  grant_flows %w(authorization_code password client_credentials)
+  grant_flows %w(authorization_code client_credentials)
 
   # Under some circumstances you might want to have applications auto-approved,
   # so that the user skips the authorization step.
   # For example if dealing with a trusted application.
-  skip_authorization do |resource_owner, client|
+  skip_authorization do |_resource_owner, client|
     client.application.superapp?
   end
 

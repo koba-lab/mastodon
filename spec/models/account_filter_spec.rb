@@ -1,11 +1,13 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
-describe AccountFilter do
+RSpec.describe AccountFilter do
   describe 'with empty params' do
-    it 'defaults to alphabetic account list' do
+    it 'excludes instance actor by default' do
       filter = described_class.new({})
 
-      expect(filter.results).to eq Account.alphabetic
+      expect(filter.results).to eq Account.without_instance_actor
     end
   end
 
@@ -17,27 +19,48 @@ describe AccountFilter do
     end
   end
 
-  describe 'with valid params' do
-    it 'combines filters on Account' do
-      filter = described_class.new(by_domain: 'test.com', silenced: true)
+  describe 'with origin and by_domain interacting' do
+    let!(:local_account) { Fabricate(:account, domain: nil) }
+    let!(:remote_account_one) { Fabricate(:account, domain: 'example.org') }
+    let(:remote_account_two) { Fabricate(:account, domain: 'other.domain') }
 
-      allow(Account).to receive(:where).and_return(Account.none)
-      allow(Account).to receive(:silenced).and_return(Account.none)
-      filter.results
-      expect(Account).to have_received(:where).with(domain: 'test.com')
-      expect(Account).to have_received(:silenced)
+    it 'works with domain first and origin remote' do
+      filter = described_class.new(by_domain: 'example.org', origin: 'remote')
+      expect(filter.results).to contain_exactly(remote_account_one)
     end
 
-    describe 'that call account methods' do
-      %i(local remote silenced recent).each do |option|
-        it "delegates the #{option} option" do
-          allow(Account).to receive(option).and_return(Account.none)
-          filter = described_class.new({ option => true })
-          filter.results
+    it 'works with domain last and origin remote' do
+      filter = described_class.new(origin: 'remote', by_domain: 'example.org')
+      expect(filter.results).to contain_exactly(remote_account_one)
+    end
 
-          expect(Account).to have_received(option)
-        end
-      end
+    it 'works with domain first and origin local' do
+      filter = described_class.new(by_domain: 'example.org', origin: 'local')
+      expect(filter.results).to contain_exactly(local_account)
+    end
+
+    it 'works with domain last and origin local' do
+      filter = described_class.new(origin: 'local', by_domain: 'example.org')
+      expect(filter.results).to contain_exactly(remote_account_one)
+    end
+  end
+
+  describe 'with username' do
+    let!(:local_account) { Fabricate(:account, domain: nil, username: 'validUserName') }
+
+    it 'works with @ at the beginning of the username' do
+      filter = described_class.new(username: '@validUserName')
+      expect(filter.results).to contain_exactly(local_account)
+    end
+
+    it 'does not work with more than one @ at the beginning of the username' do
+      filter = described_class.new(username: '@@validUserName')
+      expect(filter.results).to_not contain_exactly(local_account)
+    end
+
+    it 'does not work with @ outside the beginning of the username' do
+      filter = described_class.new(username: 'validUserName@')
+      expect(filter.results).to_not contain_exactly(local_account)
     end
   end
 end

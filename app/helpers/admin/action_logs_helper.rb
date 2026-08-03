@@ -1,0 +1,49 @@
+# frozen_string_literal: true
+
+module Admin::ActionLogsHelper
+  def log_target(log)
+    case log.target_type
+    when 'Account'
+      link_to (log.human_identifier.presence || I18n.t('admin.action_logs.deleted_account')), admin_account_path(log.target_id)
+    when 'User'
+      if log.route_param.present?
+        link_to log.human_identifier, admin_account_path(log.route_param)
+      else
+        I18n.t('admin.action_logs.deleted_account')
+      end
+    when 'UserRole'
+      link_to log.human_identifier, admin_roles_path(log.target_id)
+    when 'UsernameBlock'
+      link_to log.human_identifier, edit_admin_username_block_path(log.target_id)
+    when 'Report'
+      link_to "##{log.human_identifier.presence || log.target_id}", admin_report_path(log.target_id)
+    when 'Instance', 'DomainBlock', 'DomainAllow', 'UnavailableDomain'
+      log.human_identifier.present? ? link_to(log.human_identifier, admin_instance_path(log.human_identifier)) : I18n.t('admin.action_logs.unavailable_instance')
+    when 'Status', 'Collection'
+      link_to log.human_identifier, log.permalink
+    when 'AccountWarning'
+      link_to log.human_identifier, disputes_strike_path(log.target_id)
+    when 'Announcement'
+      link_to truncate(log.human_identifier), edit_admin_announcement_path(log.target_id)
+    when 'IpBlock', 'EmailDomainBlock', 'CustomEmoji'
+      log.human_identifier
+    when 'CanonicalEmailBlock'
+      content_tag(:samp, (log.human_identifier.presence || '')[0...7], title: log.human_identifier)
+    when 'Appeal'
+      if log.route_param.present?
+        link_to log.human_identifier, disputes_strike_path(log.route_param.presence)
+      else
+        I18n.t('admin.action_logs.deleted_account')
+      end
+    when 'Relay'
+      link_to log.human_identifier, admin_relays_path
+    end
+  end
+
+  def sorted_action_log_types
+    Admin::ActionLogFilter::ACTION_TYPE_MAP
+      .keys
+      .map { |key| [I18n.t("admin.action_logs.action_types.#{key}"), key] }
+      .sort_by(&:first)
+  end
+end

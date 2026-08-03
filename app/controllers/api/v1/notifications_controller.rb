@@ -1,49 +1,96 @@
 # frozen_string_literal: true
 
-class Api::V1::NotificationsController < ApiController
-  before_action -> { doorkeeper_authorize! :read }
+class Api::V1::NotificationsController < Api::BaseController
+  before_action -> { doorkeeper_authorize! :read, :'read:notifications' }, except: [:clear, :dismiss]
+  before_action -> { doorkeeper_authorize! :write, :'write:notifications' }, only: [:clear, :dismiss]
   before_action :require_user!
+  after_action :insert_pagination_headers, only: :index
 
-  respond_to :json
-
-  DEFAULT_NOTIFICATIONS_LIMIT = 15
+  DEFAULT_NOTIFICATIONS_LIMIT = 40
+  DEFAULT_NOTIFICATIONS_COUNT_LIMIT = 100
+  MAX_NOTIFICATIONS_COUNT_LIMIT = 1_000
 
   def index
-    @notifications = Notification.where(account: current_account).browserable(exclude_types).paginate_by_max_id(limit_param(DEFAULT_NOTIFICATIONS_LIMIT), params[:max_id], params[:since_id])
-    @notifications = cache_collection(@notifications, Notification)
-    statuses       = @notifications.select { |n| !n.target_status.nil? }.map(&:target_status)
+    with_read_replica do
+      @notifications = load_notifications
+      @relationships = StatusRelationshipsPresenter.new(target_statuses_from_notifications, current_user&.account_id)
+    end
 
-    set_maps(statuses)
+    render json: @notifications, each_serializer: REST::NotificationSerializer, relationships: @relationships, supported_notification_types: params[:supported_types]
+  end
 
-    next_path = api_v1_notifications_url(pagination_params(max_id: @notifications.last.id))    unless @notifications.empty?
-    prev_path = api_v1_notifications_url(pagination_params(since_id: @notifications.first.id)) unless @notifications.empty?
+  def unread_count
+    limit = limit_param(DEFAULT_NOTIFICATIONS_COUNT_LIMIT, MAX_NOTIFICATIONS_COUNT_LIMIT)
 
-    set_pagination_headers(next_path, prev_path)
+    with_read_replica do
+      render json: { count: browserable_account_notifications.paginate_by_min_id(limit, notification_marker&.last_read_id).count }
+    end
   end
 
   def show
-    @notification = Notification.where(account: current_account).find(params[:id])
+    @notification = current_account.notifications.without_suspended.find(params[:id])
+    render json: @notification, serializer: REST::NotificationSerializer, supported_notification_types: params[:supported_types]
   end
 
   def clear
-    Notification.where(account: current_account).delete_all
+    current_account.notifications.delete_all
     render_empty
   end
 
   def dismiss
-    Notification.find_by!(account: current_account, id: params[:id]).destroy!
+    current_account.notifications.find(params[:id]).destroy!
     render_empty
   end
 
   private
 
-  def exclude_types
-    val = params.permit(exclude_types: [])[:exclude_types] || []
-    val = [val] unless val.is_a?(Enumerable)
-    val
+  def load_notifications
+    notifications = browserable_account_notifications.includes(from_account: [:account_stat, :user]).to_a_paginated_by_id(
+      limit_param(DEFAULT_NOTIFICATIONS_LIMIT),
+      params_slice(:max_id, :since_id, :min_id)
+    )
+
+    Notification.preload_cache_collection_target_statuses(notifications) do |target_statuses|
+      preload_collection(target_statuses, Status)
+    end
+  end
+
+  def browserable_account_notifications
+    current_account.notifications.without_suspended.browserable(
+      types: Array(browserable_params[:types]),
+      exclude_types: Array(browserable_params[:exclude_types]),
+      from_account_id: browserable_params[:account_id],
+      include_filtered: truthy_param?(:include_filtered)
+    )
+  end
+
+  def notification_marker
+    current_user.markers.find_by(timeline: 'notifications')
+  end
+
+  def target_statuses_from_notifications
+    @notifications.reject { |notification| notification.target_status.nil? }.map(&:target_status)
+  end
+
+  def next_path
+    api_v1_notifications_url pagination_params(max_id: pagination_max_id) unless @notifications.empty?
+  end
+
+  def prev_path
+    api_v1_notifications_url pagination_params(min_id: pagination_since_id) unless @notifications.empty?
+  end
+
+  def pagination_collection
+    @notifications
+  end
+
+  def browserable_params
+    params.permit(:account_id, :include_filtered, types: [], exclude_types: [])
   end
 
   def pagination_params(core_params)
-    params.permit(:limit, exclude_types: []).merge(core_params)
+    params.slice(:limit, :account_id, :types, :exclude_types, :include_filtered, :supported_types)
+      .permit(:limit, :account_id, :include_filtered, types: [], exclude_types: [], supported_types: [])
+      .merge(core_params)
   end
 end

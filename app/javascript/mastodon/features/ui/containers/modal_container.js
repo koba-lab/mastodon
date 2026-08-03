@@ -1,15 +1,39 @@
 import { connect } from 'react-redux';
-import { closeModal } from '../../../actions/modal';
+
+import { openModal, closeModal } from '../../../actions/modal';
 import ModalRoot from '../components/modal_root';
 
+const defaultProps = {};
+
 const mapStateToProps = state => ({
-  type: state.get('modal').modalType,
-  props: state.get('modal').modalProps
+  ignoreFocus: state.getIn(['modal', 'ignoreFocus']),
+  type: state.getIn(['modal', 'stack', 0, 'modalType'], null),
+  props: state.getIn(['modal', 'stack', 0, 'modalProps'], defaultProps),
 });
 
 const mapDispatchToProps = dispatch => ({
-  onClose () {
-    dispatch(closeModal());
+  onClose (confirmationMessage, ignoreFocus = false) {
+    if (confirmationMessage) {
+      dispatch(
+        openModal({
+          previousModalProps: confirmationMessage.props,
+          modalType: 'CONFIRM',
+          modalProps: {
+            message: confirmationMessage.message,
+            confirm: confirmationMessage.confirm,
+            onConfirm: () => dispatch(closeModal({
+              modalType: undefined,
+              ignoreFocus,
+            })),
+          },
+        }),
+      );
+    } else {
+      dispatch(closeModal({
+        modalType: undefined,
+        ignoreFocus,
+      }));
+    }
   },
 });
 

@@ -1,21 +1,12 @@
 {
   "name": "Mastodon",
   "description": "A GNU Social-compatible microblogging server",
-  "repository": "https://github.com/tootsuite/mastodon",
-  "logo": "https://github.com/tootsuite/mastodon/raw/master/app/assets/images/logo.png",
+  "repository": "https://github.com/mastodon/mastodon",
+  "logo": "https://github.com/mastodon.png",
   "env": {
     "LOCAL_DOMAIN": {
       "description": "The domain that your Mastodon instance will run on (this can be appname.scalingo.io or a custom domain)",
       "required": true
-    },
-    "LOCAL_HTTPS": {
-      "description": "Will your domain support HTTPS? (Automatic for *.scalingo.io, requires manual configuration for custom domains)",
-      "value": "true",
-      "required": true
-    },
-    "PAPERCLIP_SECRET": {
-      "description": "The secret key for storing media files",
-      "generator": "secret"
     },
     "SECRET_KEY_BASE": {
       "description": "The secret key base",
@@ -36,7 +27,7 @@
       "required": false
     },
     "S3_REGION": {
-      "description": "Amazon S3 region that the bucket is located in",
+      "description": "Amazon S3 region that the bucket is located in; see regions list here: http://docs.aws.amazon.com/general/latest/gr/rande.html",
       "required": false
     },
     "AWS_ACCESS_KEY_ID": {
@@ -79,21 +70,28 @@
       "description": "SMTP server certificate verification mode. Defaults is 'peer'.",
       "required": false
     },
+    "SMTP_ENABLE_STARTTLS": {
+      "description": "Enable STARTTLS? Default is 'auto'.",
+      "value": "auto",
+      "required": false
+    },
     "SMTP_ENABLE_STARTTLS_AUTO": {
-      "description": "Enable STARTTLS if SMTP server supports it? Default is true.",
+      "description": "Enable STARTTLS if SMTP server supports it? Deprecated by SMTP_ENABLE_STARTTLS.",
       "required": false
     },
     "BUILDPACK_URL": {
       "description": "Internal scalingo configuration",
       "required": true,
       "value": "https://github.com/Scalingo/multi-buildpack.git"
+    },
+    "WITH_FFPROBE": {
+      "description": "Internal scalingo configuration to install ffprobe",
+      "required": true,
+      "value": "true"
     }
   },
   "scripts": {
     "postdeploy": "bundle exec rails db:migrate && bundle exec rails db:seed"
   },
-  "addons": [
-    "scalingo-postgresql",
-    "scalingo-redis"
-  ]
+  "addons": ["postgresql", "redis"]
 }

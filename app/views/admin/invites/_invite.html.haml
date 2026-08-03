@@ -1,0 +1,32 @@
+%tr{ id: dom_id(invite) }
+  %td
+    .input-copy
+      .input-copy__wrapper
+        = copyable_input value: public_invite_url(invite_code: invite.code)
+      %button.button{ type: :button }= t('generic.copy')
+
+  %td
+    .name-tag
+      = image_tag invite.user.account.avatar.url(:original), alt: '', width: 16, height: 16, class: 'avatar'
+      %span.username= invite.user.account.username
+
+  %td
+    = material_symbol 'person'
+    = invite.uses
+    = " / #{invite.max_uses}" unless invite.max_uses.nil?
+
+  - if invite.valid_for_use?
+    %td
+      - if invite.expires_at.nil?
+        ∞
+      - else
+        %time.formatted{ datetime: invite.expires_at.iso8601, title: l(invite.expires_at) }
+          = l invite.expires_at
+    %td
+      = table_link_to 'close', t('invites.delete'), admin_invite_path(invite), method: :delete if policy(invite).destroy?
+  - elsif invite.expired?
+    %td{ colspan: 2 }
+      = t('invites.expired')
+  - else
+    %td{ colspan: 2 }
+      = t('invites.invalid')

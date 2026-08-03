@@ -2,21 +2,68 @@
 
 require 'rails_helper'
 
-describe SettingsHelper do
-  describe 'the HUMAN_LOCALES constant' do
-    it 'has the same number of keys as I18n locales exist' do
-      options = I18n.available_locales
+RSpec.describe SettingsHelper do
+  describe '#user_settings_collection' do
+    subject { helper.user_settings_collection(value) }
 
-      expect(described_class::HUMAN_LOCALES.keys).to eq(options)
+    context 'with valid value' do
+      let(:value) { 'web.contrast' }
+
+      it { is_expected.to eq(%w(auto high)) }
+    end
+
+    context 'with invalid value' do
+      let(:value) { 'web.nothing_at_this_key_at_all_fake_fake_fake' }
+
+      it { is_expected.to be_empty }
     end
   end
 
-  describe 'human_locale' do
-    it 'finds the human readable local description from a key' do
-      # Ensure the value is as we expect
-      expect(described_class::HUMAN_LOCALES[:en]).to eq('English')
+  describe 'session_device_icon' do
+    context 'with a mobile device' do
+      let(:session) { SessionActivation.new(user_agent: 'Mozilla/5.0 (iPhone)') }
 
-      expect(helper.human_locale(:en)).to eq('English')
+      it 'detects the device and returns a descriptive string' do
+        result = helper.session_device_icon(session)
+
+        expect(result).to eq('smartphone')
+      end
+    end
+
+    context 'with a tablet device' do
+      let(:session) { SessionActivation.new(user_agent: 'Mozilla/5.0 (iPad)') }
+
+      it 'detects the device and returns a descriptive string' do
+        result = helper.session_device_icon(session)
+
+        expect(result).to eq('tablet')
+      end
+    end
+
+    context 'with a desktop device' do
+      let(:session) { SessionActivation.new(user_agent: 'Mozilla/5.0 (Macintosh)') }
+
+      it 'detects the device and returns a descriptive string' do
+        result = helper.session_device_icon(session)
+
+        expect(result).to eq('desktop_mac')
+      end
+    end
+  end
+
+  describe '#time_zone_options' do
+    subject { helper.time_zone_options }
+
+    context 'when summer time is in effect' do
+      before { travel_to(Date.new(2026, 6, 1)) }
+
+      it { is_expected.to include(['(GMT-08:00) Alaska', 'America/Juneau']) }
+    end
+
+    context 'when summer time is not in effect' do
+      before { travel_to(Date.new(2025, 12, 1)) }
+
+      it { is_expected.to include(['(GMT-09:00) Alaska', 'America/Juneau']) }
     end
   end
 end

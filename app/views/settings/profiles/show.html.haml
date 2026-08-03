@@ -1,16 +1,8 @@
 - content_for :page_title do
   = t('settings.edit_profile')
 
-= simple_form_for @account, url: settings_profile_path, html: { method: :put } do |f|
-  = render 'shared/error_messages', object: @account
+- content_for :heading do
+  %h1= t('settings.profile')
+  = render partial: 'settings/shared/profile_navigation'
 
-  .fields-group
-    = f.input :display_name, placeholder: t('simple_form.labels.defaults.display_name'), hint: t('simple_form.hints.defaults.display_name', counter: "<span class=\"name-counter\">#{30 - @account.display_name.size}</span>").html_safe
-    = f.input :note, placeholder: t('simple_form.labels.defaults.note'), hint: t('simple_form.hints.defaults.note', counter: "<span class=\"note-counter\">#{160 - @account.note.size}</span>").html_safe
-    = f.input :avatar, wrapper: :with_label, input_html: { accept: AccountAvatar::IMAGE_MIME_TYPES.join(',') }, hint: t('simple_form.hints.defaults.avatar')
-    = f.input :header, wrapper: :with_label, input_html: { accept: AccountHeader::IMAGE_MIME_TYPES.join(',') }, hint: t('simple_form.hints.defaults.header')
-
-  = f.input :locked, as: :boolean, wrapper: :with_label, hint: t('simple_form.hints.defaults.locked')
-
-  .actions
-    = f.button :button, t('generic.save_changes'), type: :submit
+= render partial: 'settings/shared/profile_new_notice'

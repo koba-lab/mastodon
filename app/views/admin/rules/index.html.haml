@@ -1,0 +1,15 @@
+- content_for :page_title do
+  = t('admin.rules.title')
+
+- content_for :heading_actions do
+  - if can? :create, :rule
+    = link_to t('admin.rules.add_new'), new_admin_rule_path, class: 'button'
+
+%hr.spacer/
+
+- if @rules.empty?
+  .muted-hint.center-text
+    = t 'admin.rules.empty'
+- else
+  .announcements-list
+    = render partial: 'rule', collection: @rules

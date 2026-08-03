@@ -1,14 +1,16 @@
 - content_for :header_tags do
-  = javascript_pack_tag 'public', integrity: true, crossorigin: 'anonymous'
+  = vite_typescript_tag 'public.tsx', crossorigin: 'anonymous'
 
 - content_for :content do
-  .container
-    .logo-container
-      %h1
+  .container-alt
+    %header.logo-container
+      - if within_authorization_flow?
+        = logo_as_symbol(:wordmark)
+      - else
         = link_to root_path do
-          = image_tag asset_pack_path('logo.png')
+          = logo_as_symbol(:wordmark)
 
-    .form-container
+    %main.form-container
       = render 'flashes'
 
       = yield

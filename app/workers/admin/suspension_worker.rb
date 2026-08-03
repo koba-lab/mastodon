@@ -7,5 +7,7 @@ class Admin::SuspensionWorker
 
   def perform(account_id)
     SuspendAccountService.new.call(Account.find(account_id))
+  rescue ActiveRecord::RecordNotFound
+    true
   end
 end

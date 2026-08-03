@@ -1,6 +1,15 @@
 # frozen_string_literal: true
 
 class ReportFilter
+  KEYS = %i(
+    resolved
+    unresolved
+    account_id
+    target_account_id
+    by_target_domain
+    target_origin
+  ).freeze
+
   attr_reader :params
 
   def initialize(params)
@@ -8,23 +17,60 @@ class ReportFilter
   end
 
   def results
-    scope = Report.unresolved
-    params.each do |key, value|
+    scope = status_scope
+
+    relevant_params.each do |key, value|
       scope = scope.merge scope_for(key, value)
     end
+
     scope
+  end
+
+  private
+
+  def relevant_params
+    params.except(:resolved, :unresolved).tap do |args|
+      args.delete(:target_origin) if origin_is_remote_and_domain_present?
+    end
+  end
+
+  def origin_is_remote_and_domain_present?
+    params[:target_origin] == 'remote' && params[:by_target_domain].present?
+  end
+
+  def status_scope
+    resolved = ActiveModel::Type::Boolean.new.cast(params[:resolved])
+    unresolved = ActiveModel::Type::Boolean.new.cast(params[:unresolved])
+
+    return Report.all if resolved && unresolved
+    return Report.resolved if resolved
+
+    Report.unresolved
   end
 
   def scope_for(key, value)
     case key.to_sym
-    when :resolved
-      Report.resolved
+    when :by_target_domain
+      Report.where(target_account: Account.where(domain: value))
     when :account_id
       Report.where(account_id: value)
     when :target_account_id
       Report.where(target_account_id: value)
+    when :target_origin
+      target_origin_scope(value)
     else
-      raise "Unknown filter: #{key}"
+      raise Mastodon::InvalidParameterError, "Unknown filter: #{key}"
+    end
+  end
+
+  def target_origin_scope(value)
+    case value.to_sym
+    when :local
+      Report.where(target_account: Account.local)
+    when :remote
+      Report.where(target_account: Account.remote)
+    else
+      raise Mastodon::InvalidParameterError, "Unknown value: #{value}"
     end
   end
 end

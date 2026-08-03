@@ -1,27 +1,11 @@
 # frozen_string_literal: true
 
 class AboutController < ApplicationController
-  before_action :set_body_classes
-  before_action :set_instance_presenter, only: [:show, :more]
+  include WebAppControllerConcern
 
-  def show; end
+  skip_before_action :require_functional!
 
-  def more; end
-
-  def terms; end
-
-  private
-
-  def new_user
-    User.new.tap(&:build_account)
-  end
-  helper_method :new_user
-
-  def set_instance_presenter
-    @instance_presenter = InstancePresenter.new
-  end
-
-  def set_body_classes
-    @body_classes = 'about-body'
+  def show
+    expires_in(15.seconds, public: true, stale_while_revalidate: 30.seconds, stale_if_error: 1.day) unless user_signed_in?
   end
 end

@@ -1,48 +1,97 @@
 # frozen_string_literal: true
 
 class ProcessMentionsService < BaseService
-  include StreamEntryRenderer
+  include Payloadable
 
-  # Scan status for mentions and fetch remote mentioned users, create
-  # local mention pointers, send Salmon notifications to mentioned
-  # remote users
+  # Scan status for mentions and fetch remote mentioned users,
+  # and create local mention pointers
   # @param [Status] status
   def call(status)
-    return unless status.local?
+    @status = status
 
-    text = [status.text, status.spoiler_text].reject(&:blank?).join(' ')
+    return unless @status.local?
 
-    text.scan(Account::MENTION_RE).each do |match|
-      username, domain  = match.first.split('@')
-      mentioned_account = Account.find_remote(username, domain)
+    @previous_mentions = @status.mentions.includes(:account).to_a
+    @current_mentions  = []
 
-      if mentioned_account.nil? && !domain.nil?
-        begin
-          mentioned_account = follow_remote_account_service.call(match.first.to_s)
-        rescue Goldfinger::Error, HTTP::Error
-          mentioned_account = nil
-        end
-      end
-
-      next if mentioned_account.nil?
-
-      mentioned_account.mentions.where(status: status).first_or_create(status: status)
-    end
-
-    status.mentions.includes(:account).each do |mention|
-      mentioned_account = mention.account
-
-      if mentioned_account.local?
-        NotifyService.new.call(mentioned_account, mention)
-      else
-        NotificationWorker.perform_async(stream_entry_to_xml(status.stream_entry), status.account_id, mentioned_account.id)
-      end
+    Status.transaction do
+      scan_text!
+      assign_mentions!
     end
   end
 
   private
 
-  def follow_remote_account_service
-    @follow_remote_account_service ||= FollowRemoteAccountService.new
+  def scan_text!
+    @status.text = @status.text.gsub(Account::MENTION_RE) do |match|
+      username, domain = Regexp.last_match(1).split('@')
+
+      domain = if TagManager.instance.local_domain?(domain)
+                 nil
+               else
+                 TagManager.instance.normalize_domain(domain)
+               end
+
+      mentioned_account = Account.find_remote(username, domain)
+
+      # Unapproved and unconfirmed accounts should not be mentionable
+      next match if mentioned_account&.local? && !(mentioned_account.user_confirmed? && mentioned_account.user_approved?)
+
+      # If the account cannot be found or isn't the right protocol,
+      # first try to resolve it
+      if mention_undeliverable?(mentioned_account)
+        begin
+          mentioned_account = ResolveAccountService.new.call(Regexp.last_match(1))
+        rescue Webfinger::Error, *Mastodon::HTTP_CONNECTION_ERRORS, Mastodon::UnexpectedResponseError
+          mentioned_account = nil
+        end
+      end
+
+      # If after resolving it still isn't found or isn't the right
+      # protocol, then give up
+      next match if mention_undeliverable?(mentioned_account) || mentioned_account&.unavailable?
+
+      mention   = @previous_mentions.find { |x| x.account_id == mentioned_account.id }
+      mention ||= @current_mentions.find  { |x| x.account_id == mentioned_account.id }
+      mention ||= @status.mentions.new(account: mentioned_account)
+
+      mention.silent = false
+
+      @current_mentions << mention
+
+      "@#{mentioned_account.acct}"
+    end
+
+    @status.save! if @status.persisted?
+  end
+
+  def assign_mentions!
+    # Make sure we never mention blocked accounts
+    unless @current_mentions.empty?
+      mentioned_domains = @current_mentions.filter_map { |m| m.account.domain }.uniq
+      blocked_domains   = Set.new(mentioned_domains.empty? ? [] : AccountDomainBlock.where(account_id: @status.account_id, domain: mentioned_domains).pluck(:domain))
+      mentioned_account_ids = @current_mentions.map(&:account_id)
+      blocked_account_ids = Set.new(@status.account.block_relationships.where(target_account_id: mentioned_account_ids).pluck(:target_account_id))
+
+      dropped_mentions, @current_mentions = @current_mentions.partition { |mention| blocked_account_ids.include?(mention.account_id) || blocked_domains.include?(mention.account.domain) }
+      dropped_mentions.each(&:destroy)
+    end
+
+    return unless @status.persisted?
+
+    @current_mentions.each do |mention|
+      mention.save if mention.new_record? || mention.silent_changed?
+    end
+
+    # If previous mentions are no longer contained in the text, convert them
+    # to silent mentions, since withdrawing access from someone who already
+    # received a notification might be more confusing
+    removed_mentions = @previous_mentions - @current_mentions
+
+    Mention.where(id: removed_mentions.map(&:id), silent: false).update_all(silent: true) unless removed_mentions.empty?
+  end
+
+  def mention_undeliverable?(mentioned_account)
+    mentioned_account.nil? || (!mentioned_account.local? && !mentioned_account.activitypub?)
   end
 end

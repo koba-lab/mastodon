@@ -1,20 +1,32 @@
 # frozen_string_literal: true
+
 # == Schema Information
 #
 # Table name: mentions
 #
-#  id         :integer          not null, primary key
-#  account_id :integer
-#  status_id  :integer
+#  id         :bigint(8)        not null, primary key
+#  silent     :boolean          default(FALSE), not null
 #  created_at :datetime         not null
 #  updated_at :datetime         not null
+#  account_id :bigint(8)        not null
+#  status_id  :bigint(8)        not null
 #
 
 class Mention < ApplicationRecord
-  belongs_to :account, inverse_of: :mentions, required: true
-  belongs_to :status, required: true
+  belongs_to :account, inverse_of: :mentions
+  belongs_to :status
 
   has_one :notification, as: :activity, dependent: :destroy
 
-  validates :account, uniqueness: { scope: :status }
+  validates :account_id, uniqueness: { scope: :status_id }
+
+  scope :active, -> { where(silent: false) }
+  scope :silent, -> { where(silent: true) }
+
+  delegate(
+    :username,
+    :acct,
+    to: :account,
+    prefix: true
+  )
 end

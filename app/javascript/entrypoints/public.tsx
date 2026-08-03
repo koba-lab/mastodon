@@ -1,0 +1,614 @@
+import { createRoot } from 'react-dom/client';
+
+import { IntlMessageFormat } from 'intl-messageformat';
+import type {
+  FormatDateOptions,
+  IntlShape,
+  MessageDescriptor,
+  PrimitiveType,
+} from 'react-intl';
+import { defineMessages } from 'react-intl';
+
+import axios from 'axios';
+import { on } from 'delegated-events';
+import { throttle } from 'lodash';
+
+import { determineEmojiMode } from '@/mastodon/features/emoji/mode';
+import { updateHtmlWithEmoji } from '@/mastodon/features/emoji/render';
+import loadKeyboardExtensions from '@/mastodon/load_keyboard_extensions';
+import { loadLocale, getLocale } from '@/mastodon/locales';
+import { loadPolyfills } from '@/mastodon/polyfills';
+import ready from '@/mastodon/ready';
+import { assetHost } from '@/mastodon/utils/config';
+import { getNestedProperty } from '@/mastodon/utils/objects';
+import { isDarkMode } from '@/mastodon/utils/theme';
+import { formatTime } from '@/mastodon/utils/time';
+
+import 'cocoon-js-vanilla';
+
+const messages = defineMessages({
+  usernameTaken: {
+    id: 'username.taken',
+    defaultMessage: 'That username is taken. Try another',
+  },
+  passwordExceedsLength: {
+    id: 'password_confirmation.exceeds_maxlength',
+    defaultMessage: 'Password confirmation exceeds the maximum password length',
+  },
+  passwordDoesNotMatch: {
+    id: 'password_confirmation.mismatching',
+    defaultMessage: 'Password confirmation does not match',
+  },
+});
+
+async function loaded() {
+  const { messages: localeData } = getLocale();
+
+  const locale = document.documentElement.lang;
+
+  const dateTimeFormat = new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+  });
+
+  const dateFormat = new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  const timeFormat = new Intl.DateTimeFormat(locale, {
+    timeStyle: 'short',
+  });
+
+  const formatMessage = (
+    { id, defaultMessage }: MessageDescriptor,
+    values?: Record<string, PrimitiveType>,
+  ): string => {
+    let message: string | undefined = undefined;
+
+    if (id) message = localeData[id];
+
+    message ??= defaultMessage as string;
+
+    const messageFormat = new IntlMessageFormat(message, locale);
+    return messageFormat.format(values) as string;
+  };
+
+  let emojiStyle = 'auto';
+  const initialStateText =
+    document.getElementById('initial-state')?.textContent;
+  if (initialStateText) {
+    const stateEmojiStyle = getNestedProperty(
+      JSON.parse(initialStateText) as unknown,
+      'meta',
+      'emoji_style',
+    );
+    if (typeof stateEmojiStyle === 'string') {
+      emojiStyle = stateEmojiStyle;
+    }
+  }
+  const emojiMode = determineEmojiMode(emojiStyle);
+  const darkTheme = isDarkMode();
+  for (const element of document.querySelectorAll('.emojify')) {
+    await updateHtmlWithEmoji({
+      assetHost,
+      element,
+      locale,
+      mode: emojiMode,
+      darkTheme,
+    });
+  }
+
+  document
+    .querySelectorAll<HTMLTimeElement>('time.formatted')
+    .forEach((content) => {
+      const datetime = new Date(content.dateTime);
+      const formattedDate = dateTimeFormat.format(datetime);
+
+      content.title = formattedDate;
+      content.textContent = formattedDate;
+    });
+
+  const isToday = (date: Date) => {
+    const today = new Date();
+
+    return (
+      date.getDate() === today.getDate() &&
+      date.getMonth() === today.getMonth() &&
+      date.getFullYear() === today.getFullYear()
+    );
+  };
+  const todayFormat = new IntlMessageFormat(
+    localeData['relative_format.today'] ?? 'Today at {time}',
+    locale,
+  );
+
+  document
+    .querySelectorAll<HTMLTimeElement>('time.relative-formatted')
+    .forEach((content) => {
+      const datetime = new Date(content.dateTime);
+
+      let formattedContent: string;
+
+      if (isToday(datetime)) {
+        const formattedTime = timeFormat.format(datetime);
+
+        formattedContent = todayFormat.format({
+          time: formattedTime,
+        }) as string;
+      } else {
+        formattedContent = dateFormat.format(datetime);
+      }
+
+      const timeGiven = content.dateTime.includes('T');
+      content.title = timeGiven
+        ? dateTimeFormat.format(datetime)
+        : dateFormat.format(datetime);
+
+      content.textContent = formattedContent;
+    });
+
+  document
+    .querySelectorAll<HTMLTimeElement>('time.time-ago')
+    .forEach((content) => {
+      const datetime = new Date(content.dateTime);
+
+      const timeGiven = content.dateTime.includes('T');
+      content.title = timeGiven
+        ? dateTimeFormat.format(datetime)
+        : dateFormat.format(datetime);
+      const now = Date.now();
+      content.textContent = formatTime({
+        // We don't want to show future dates.
+        timestamp: Math.min(datetime.getTime(), now),
+        now,
+        intl: {
+          formatMessage: formatMessage as IntlShape['formatMessage'],
+          formatDate: (date: Date, options: FormatDateOptions) =>
+            new Intl.DateTimeFormat(locale, options).format(date),
+        },
+        noTime: !timeGiven,
+      });
+    });
+
+  updateDefaultQuotePrivacyFromPrivacy(
+    document.querySelector('#user_settings_attributes_default_privacy'),
+  );
+
+  truncateRuleHints();
+
+  applyRailsA11yPatches();
+
+  const reactComponents = document.querySelectorAll('[data-component]');
+
+  if (reactComponents.length > 0) {
+    import('../mastodon/containers/media_container')
+      .then(({ default: MediaContainer }) => {
+        reactComponents.forEach((component) => {
+          Array.from(component.children).forEach((child) => {
+            component.removeChild(child);
+          });
+        });
+
+        const content = document.createElement('div');
+
+        const root = createRoot(content);
+        root.render(
+          <MediaContainer locale={locale} components={reactComponents} />,
+        );
+        document.body.appendChild(content);
+
+        return true;
+      })
+      .catch((error: unknown) => {
+        console.error(error);
+      });
+  }
+
+  on(
+    'input',
+    'input#user_account_attributes_username',
+    throttle(
+      ({ target }) => {
+        if (!(target instanceof HTMLInputElement)) return;
+
+        const checkedUsername = target.value;
+        if (checkedUsername && checkedUsername.length > 0) {
+          axios
+            .get('/api/v1/accounts/lookup', {
+              params: { acct: checkedUsername },
+            })
+            .then(() => {
+              // Only update the validity if the result is for the currently-typed username
+              if (checkedUsername === target.value) {
+                target.setCustomValidity(formatMessage(messages.usernameTaken));
+              }
+
+              return true;
+            })
+            .catch(() => {
+              // Only update the validity if the result is for the currently-typed username
+              if (checkedUsername === target.value) {
+                target.setCustomValidity('');
+              }
+            });
+        } else {
+          target.setCustomValidity('');
+        }
+      },
+      500,
+      { leading: false, trailing: true },
+    ),
+  );
+
+  on('input', '#user_password,#user_password_confirmation', () => {
+    const password = document.querySelector<HTMLInputElement>(
+      'input#user_password',
+    );
+    const confirmation = document.querySelector<HTMLInputElement>(
+      'input#user_password_confirmation',
+    );
+    if (!confirmation || !password) return;
+
+    if (confirmation.value && confirmation.value.length > password.maxLength) {
+      confirmation.setCustomValidity(
+        formatMessage(messages.passwordExceedsLength),
+      );
+    } else if (password.value && password.value !== confirmation.value) {
+      confirmation.setCustomValidity(
+        formatMessage(messages.passwordDoesNotMatch),
+      );
+    } else {
+      confirmation.setCustomValidity('');
+    }
+  });
+}
+
+on('change', '#edit_profile input[type=file]', ({ target }) => {
+  if (!(target instanceof HTMLInputElement)) return;
+
+  const avatar = document.querySelector<HTMLImageElement>(
+    `img#${target.id}-preview`,
+  );
+
+  if (!avatar) return;
+
+  let file: File | undefined;
+  if (target.files) file = target.files[0];
+
+  const url = file ? URL.createObjectURL(file) : avatar.dataset.originalSrc;
+
+  if (url) avatar.src = url;
+});
+
+on('click', '.input-copy input', ({ target }) => {
+  if (!(target instanceof HTMLInputElement)) return;
+
+  target.focus();
+  target.select();
+  target.setSelectionRange(0, target.value.length);
+});
+
+on('click', '.input-copy button', ({ target }) => {
+  if (!(target instanceof HTMLButtonElement)) return;
+
+  const input = target.parentNode?.querySelector<HTMLInputElement>(
+    '.input-copy__wrapper input',
+  );
+
+  if (!input) return;
+
+  navigator.clipboard
+    .writeText(input.value)
+    .then(() => {
+      const parent = target.parentElement;
+
+      if (parent) {
+        parent.classList.add('copied');
+
+        setTimeout(() => {
+          parent.classList.remove('copied');
+        }, 700);
+      }
+
+      return true;
+    })
+    .catch((error: unknown) => {
+      console.error(error);
+    });
+});
+
+const toggleSidebar = () => {
+  const sidebar = document.querySelector<HTMLUListElement>('.sidebar ul');
+  const toggleButton = document.querySelector<HTMLAnchorElement>(
+    'a.sidebar__toggle__icon',
+  );
+
+  if (!sidebar || !toggleButton) return;
+
+  if (sidebar.classList.contains('visible')) {
+    document.body.style.overflow = '';
+    toggleButton.setAttribute('aria-expanded', 'false');
+  } else {
+    document.body.style.overflow = 'hidden';
+    toggleButton.setAttribute('aria-expanded', 'true');
+  }
+
+  toggleButton.classList.toggle('active');
+  sidebar.classList.toggle('visible');
+};
+
+on('click', '.sidebar__toggle__icon', () => {
+  toggleSidebar();
+});
+
+on('keydown', '.sidebar__toggle__icon', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault();
+    toggleSidebar();
+  }
+});
+
+on('mouseover', 'img.custom-emoji', ({ target }) => {
+  if (target instanceof HTMLImageElement && target.dataset.original)
+    target.src = target.dataset.original;
+});
+on('mouseout', 'img.custom-emoji', ({ target }) => {
+  if (target instanceof HTMLImageElement && target.dataset.static)
+    target.src = target.dataset.static;
+});
+
+const setInputDisabled = (
+  input: HTMLInputElement | HTMLSelectElement,
+  disabled: boolean,
+) => {
+  input.disabled = disabled;
+
+  const wrapper = input.closest('.with_label');
+  if (wrapper) {
+    wrapper.classList.toggle('disabled', input.disabled);
+
+    const hidden =
+      input.type === 'checkbox' &&
+      wrapper.querySelector<HTMLInputElement>('input[type=hidden][value="0"]');
+    if (hidden) {
+      hidden.disabled = input.disabled;
+    }
+  }
+};
+
+const setInputHint = (
+  input: HTMLInputElement | HTMLSelectElement,
+  hintPrefix: string,
+) => {
+  const fieldWrapper = input.closest<HTMLElement>('.fields-group > .input');
+  if (!fieldWrapper) return;
+
+  const hint = fieldWrapper.dataset[`${hintPrefix}Hint`];
+  const hintElement =
+    fieldWrapper.querySelector<HTMLSpanElement>(':scope > .hint');
+
+  if (hint) {
+    if (hintElement) {
+      hintElement.textContent = hint;
+    } else {
+      const newHintElement = document.createElement('span');
+      newHintElement.className = 'hint';
+      newHintElement.textContent = hint;
+      fieldWrapper.appendChild(newHintElement);
+    }
+  } else {
+    hintElement?.remove();
+  }
+};
+
+on('change', '#account_statuses_cleanup_policy_enabled', ({ target }) => {
+  if (!(target instanceof HTMLInputElement) || !target.form) return;
+
+  target.form
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+      'input:not([type=hidden], #account_statuses_cleanup_policy_enabled), select',
+    )
+    .forEach((input) => {
+      setInputDisabled(input, !target.checked);
+    });
+});
+
+const updateDefaultQuotePrivacyFromPrivacy = (
+  privacySelect: EventTarget | null,
+) => {
+  if (!(privacySelect instanceof HTMLSelectElement) || !privacySelect.form)
+    return;
+
+  const select = privacySelect.form.querySelector<HTMLSelectElement>(
+    'select#user_settings_attributes_default_quote_policy',
+  );
+  if (!select) return;
+
+  setInputHint(select, privacySelect.value);
+
+  if (privacySelect.value === 'private') {
+    select.value = 'nobody';
+    setInputDisabled(select, true);
+  } else {
+    setInputDisabled(select, false);
+  }
+};
+
+on('change', '#user_settings_attributes_default_privacy', ({ target }) => {
+  updateDefaultQuotePrivacyFromPrivacy(target);
+});
+
+// Empty the honeypot fields in JS in case something like an extension
+// automatically filled them.
+on('submit', '#registration_new_user,#new_user', () => {
+  [
+    'user_website',
+    'user_confirm_password',
+    'registration_user_website',
+    'registration_user_confirm_password',
+  ].forEach((id) => {
+    const field = document.querySelector<HTMLInputElement>(`input#${id}`);
+    if (field) {
+      field.value = '';
+    }
+  });
+});
+
+// Truncate long rule hints
+
+const MAX_RULE_HINT_LENGTH = 100;
+
+function truncateRuleHints() {
+  const ruleListItems =
+    document.querySelectorAll<HTMLLIElement>('.rules-list li');
+  if (!ruleListItems.length) return;
+
+  ruleListItems.forEach((item) => {
+    toggleRuleHint(item, true);
+  });
+}
+
+function toggleRuleHint(listItem: HTMLLIElement, isInitialSetup?: boolean) {
+  const hint = listItem.querySelector<HTMLSpanElement>(
+    '.rules-list__hint-text',
+  );
+  if (!hint) return;
+
+  const hintText = hint.innerHTML;
+  const hintToggleButton = listItem.querySelector('button');
+
+  if (hintText.length > MAX_RULE_HINT_LENGTH) {
+    // Store full hint in a data attribute, then truncate it with an '…'
+    hint.dataset.fullHint = hintText;
+    hint.innerHTML = `${hintText.slice(0, MAX_RULE_HINT_LENGTH - 1).trim()}…`;
+
+    if (hintToggleButton) {
+      // Reveal toggle button if needed
+      hintToggleButton.removeAttribute('hidden');
+      hintToggleButton.setAttribute('aria-expanded', 'false');
+    }
+  } else if (!isInitialSetup) {
+    const { fullHint } = hint.dataset;
+    if (fullHint) {
+      // Restore full hint from data attribute, then delete attribute
+      hint.innerHTML = fullHint;
+      delete hint.dataset.fullHint;
+
+      hintToggleButton?.setAttribute('aria-expanded', 'true');
+      hint.parentElement?.focus();
+    }
+  }
+}
+
+on('click', '.rules-list button', ({ target }) => {
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const listItem = target.closest('li');
+
+  if (listItem) {
+    toggleRuleHint(listItem);
+  }
+});
+
+/**
+ * Patch accessibility issues caused by Ruby Gems that
+ * don't produce accessible markup (simple-forms & simple-navigation)
+ */
+function applyRailsA11yPatches() {
+  /**
+   * Mark current navigation item with aria-current
+   */
+  const activeNavLink = document.querySelector(
+    '.simple-navigation-active-leaf a.selected',
+  );
+  activeNavLink?.setAttribute('aria-current', 'page');
+
+  /**
+   * Hides the asterisk added to labels of required form fields
+   * from assistive tech. (Those fields already have the `required` attribute)
+   */
+  document
+    .querySelectorAll<HTMLElement>('.simple_form label.required abbr')
+    .forEach((element) => {
+      element.setAttribute('aria-hidden', 'true');
+    });
+
+  /**
+   * Associate form field hints with their inputs via aria-describedby
+   */
+  document
+    .querySelectorAll<HTMLDivElement>('.simple_form .field_with_hint')
+    .forEach((field) => {
+      const inputs = field.querySelectorAll<
+        HTMLInputElement | HTMLTextAreaElement
+      >("input[type='text'], input[type='checkbox'], textarea");
+
+      const hint = field.querySelector<HTMLDivElement>('.hint');
+
+      // Bail out if there are more than one input as
+      // the association can't be safely made.
+      if (inputs.length !== 1 || !inputs[0] || !hint) {
+        return;
+      }
+
+      const input = inputs[0];
+      const inputId = input.getAttribute('id');
+      const hintId = `${inputId}_hint`;
+
+      input.setAttribute('aria-describedby', hintId);
+      hint.setAttribute('id', hintId);
+    });
+
+  /**
+   * Add fieldset-like group labels ("legends") to the date-of-birth selector
+   * and groups of radio buttons
+   */
+  const groups = document.querySelectorAll<HTMLDivElement>(
+    '.simple_form .date_of_birth, .simple_form .input.with_label.radio_buttons',
+  );
+  groups.forEach((groupWrapper) => {
+    // This is the element serving as the label of the group.
+    const groupLabel = groupWrapper.querySelector<HTMLLabelElement>('label');
+    const labelWithId =
+      groupWrapper.querySelector<HTMLLabelElement>('label[for]');
+    const groupHint = groupWrapper.querySelector<HTMLDivElement>('.hint');
+
+    // We need a unique ID to generate the aria associations. If `groupLabel`
+    // doesn't have one, we just take the first label with a `for` attribute
+    // that we can find, which is fine because we'll modify it before use.
+    const inputId =
+      groupLabel?.getAttribute('for') ?? labelWithId?.getAttribute('for');
+    const labelId = `${inputId}_label`;
+    const hintId = `${inputId}_hint`;
+
+    groupLabel?.setAttribute('id', labelId);
+    groupHint?.setAttribute('id', hintId);
+
+    groupWrapper.setAttribute('role', 'group');
+    groupWrapper.setAttribute('aria-labelledby', labelId);
+    if (groupHint) {
+      groupWrapper.setAttribute('aria-describedby', hintId);
+    }
+  });
+}
+
+function main() {
+  ready(loaded).catch((error: unknown) => {
+    console.error(error);
+  });
+}
+
+loadPolyfills()
+  .then(loadLocale)
+  .then(main)
+  .then(loadKeyboardExtensions)
+  .catch((error: unknown) => {
+    console.error(error);
+  });

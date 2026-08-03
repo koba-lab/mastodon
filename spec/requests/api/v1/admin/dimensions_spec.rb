@@ -1,0 +1,39 @@
+# frozen_string_literal: true
+
+require 'rails_helper'
+
+RSpec.describe 'Admin Dimensions' do
+  include_context 'with API authentication', user_fabricator: :admin_user
+
+  let(:account) { Fabricate(:account) }
+
+  describe 'GET /api/v1/admin/dimensions' do
+    context 'when not authorized' do
+      it 'returns http forbidden' do
+        post '/api/v1/admin/dimensions', params: { account_id: account.id, limit: 2 }
+
+        expect(response)
+          .to have_http_status(403)
+        expect(response.content_type)
+          .to start_with('application/json')
+      end
+    end
+
+    context 'with correct scope' do
+      let(:scopes) { 'admin:read' }
+
+      it 'returns http success and status json' do
+        post '/api/v1/admin/dimensions', params: { account_id: account.id, limit: 2 }, headers: headers
+
+        expect(response)
+          .to have_http_status(200)
+
+        expect(response.content_type)
+          .to start_with('application/json')
+
+        expect(response.parsed_body)
+          .to be_an(Array)
+      end
+    end
+  end
+end

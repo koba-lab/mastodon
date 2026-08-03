@@ -1,12 +1,9 @@
 - content_for :page_title do
   = t('auth.login')
 
-= simple_form_for(resource, as: resource_name, url: session_path(resource_name), method: :post) do |f|
-  = f.input :otp_attempt, type: :number, placeholder: t('simple_form.labels.defaults.otp_attempt'),
-      input_html: { 'aria-label' => t('simple_form.labels.defaults.otp_attempt') }, required: true, autofocus: true, autocomplete: 'off',
-      hint: t('simple_form.hints.sessions.otp')
+= vite_typescript_tag 'two_factor_authentication.ts', crossorigin: 'anonymous'
 
-  .actions
-    = f.button :button, t('auth.login'), type: :submit
+- if webauthn_enabled?
+  = render partial: 'auth/sessions/two_factor/webauthn_form', locals: { hidden: @scheme_type != 'webauthn' }
 
-.form-footer= render 'auth/shared/links'
+= render partial: 'auth/sessions/two_factor/otp_authentication_form', locals: { hidden: @scheme_type != 'totp' }

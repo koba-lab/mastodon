@@ -1,8 +1,8 @@
 {
   "name": "Mastodon",
   "description": "A GNU Social-compatible microblogging server",
-  "repository": "https://github.com/tootsuite/mastodon",
-  "logo": "https://github.com/tootsuite/mastodon/raw/master/app/assets/images/logo.png",
+  "repository": "https://github.com/mastodon/mastodon",
+  "logo": "https://github.com/mastodon.png",
   "env": {
     "HEROKU": {
       "description": "Leave this as true",
@@ -13,21 +13,8 @@
       "description": "The domain that your Mastodon instance will run on (this can be appname.herokuapp.com or a custom domain)",
       "required": true
     },
-    "LOCAL_HTTPS": {
-      "description": "Will your domain support HTTPS? (Automatic for herokuapp, requires manual configuration for custom domains)",
-      "value": "false",
-      "required": true
-    },
-    "PAPERCLIP_SECRET": {
-      "description": "The secret key for storing media files",
-      "generator": "secret"
-    },
     "SECRET_KEY_BASE": {
       "description": "The secret key base",
-      "generator": "secret"
-    },
-    "OTP_SECRET": {
-      "description": "One-time password secret",
       "generator": "secret"
     },
     "SINGLE_USER_MODE": {
@@ -88,12 +75,23 @@
       "description": "SMTP server certificate verification mode. Defaults is 'peer'.",
       "required": false
     },
+    "SMTP_ENABLE_STARTTLS": {
+      "description": "Enable STARTTLS? Default is 'auto'.",
+      "value": "auto",
+      "required": false
+    },
     "SMTP_ENABLE_STARTTLS_AUTO": {
-      "description": "Enable STARTTLS if SMTP server supports it? Default is true.",
+      "description": "Enable STARTTLS if SMTP server supports it? Deprecated by SMTP_ENABLE_STARTTLS.",
       "required": false
     }
   },
   "buildpacks": [
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-activestorage-preview"
+    },
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-apt"
+    },
     {
       "url": "heroku/nodejs"
     },
@@ -104,8 +102,6 @@
   "scripts": {
     "postdeploy": "bundle exec rails db:migrate && bundle exec rails db:seed"
   },
-  "addons": [
-    "heroku-postgresql",
-    "heroku-redis"
-  ]
+  "addons": ["heroku-postgresql", "heroku-redis"],
+  "stack": "heroku-24"
 }

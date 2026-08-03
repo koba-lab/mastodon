@@ -1,187 +1,117 @@
-import api, { getLinks } from '../api'
-import Immutable from 'immutable';
-import IntlMessageFormat from 'intl-messageformat';
-import { fetchRelationships } from './accounts';
+import { IntlMessageFormat } from 'intl-messageformat';
+import { defineMessages } from 'react-intl';
 
-export const NOTIFICATIONS_UPDATE = 'NOTIFICATIONS_UPDATE';
+import { unescapeHTML } from '../utils/html';
+import { requestNotificationPermission } from '../utils/notifications';
 
-export const NOTIFICATIONS_REFRESH_REQUEST = 'NOTIFICATIONS_REFRESH_REQUEST';
-export const NOTIFICATIONS_REFRESH_SUCCESS = 'NOTIFICATIONS_REFRESH_SUCCESS';
-export const NOTIFICATIONS_REFRESH_FAIL    = 'NOTIFICATIONS_REFRESH_FAIL';
+import { fetchFollowRequests } from './accounts';
+import {
+  importFetchedAccount,
+} from './importer';
+import { submitMarkers } from './markers';
+import { notificationsUpdate } from "./notifications_typed";
+import { register as registerPushNotifications } from './push_notifications';
 
-export const NOTIFICATIONS_EXPAND_REQUEST = 'NOTIFICATIONS_EXPAND_REQUEST';
-export const NOTIFICATIONS_EXPAND_SUCCESS = 'NOTIFICATIONS_EXPAND_SUCCESS';
-export const NOTIFICATIONS_EXPAND_FAIL    = 'NOTIFICATIONS_EXPAND_FAIL';
+export * from "./notifications_typed";
 
-export const NOTIFICATIONS_CLEAR      = 'NOTIFICATIONS_CLEAR';
-export const NOTIFICATIONS_SCROLL_TOP = 'NOTIFICATIONS_SCROLL_TOP';
+export const NOTIFICATIONS_FILTER_SET = 'NOTIFICATIONS_FILTER_SET';
 
-const fetchRelatedRelationships = (dispatch, notifications) => {
-  const accountIds = notifications.filter(item => item.type === 'follow').map(item => item.account.id);
+export const NOTIFICATIONS_SET_BROWSER_SUPPORT    = 'NOTIFICATIONS_SET_BROWSER_SUPPORT';
+export const NOTIFICATIONS_SET_BROWSER_PERMISSION = 'NOTIFICATIONS_SET_BROWSER_PERMISSION';
 
-  if (accountIds > 0) {
-    dispatch(fetchRelationships(accountIds));
-  }
-};
-
-const unescapeHTML = (html) => {
-  const wrapper = document.createElement('div');
-  wrapper.innerHTML = html;
-  return wrapper.textContent;
-}
+defineMessages({
+  mention: { id: 'notification.mention', defaultMessage: '{name} mentioned you' },
+  group: { id: 'notifications.group', defaultMessage: '{count} notifications' },
+});
 
 export function updateNotifications(notification, intlMessages, intlLocale) {
   return (dispatch, getState) => {
-    const showAlert = getState().getIn(['settings', 'notifications', 'alerts', notification.type], true);
-    const playSound = getState().getIn(['settings', 'notifications', 'sounds', notification.type], true);
+    const filterType = notification.type === 'quoted_update' ? 'update' : notification.type;
 
-    dispatch({
-      type: NOTIFICATIONS_UPDATE,
-      notification,
-      account: notification.account,
-      status: notification.status,
-      meta: playSound ? { sound: 'boop' } : undefined
-    });
+    const showAlert    = getState().getIn(['settings', 'notifications', 'alerts', filterType], true);
+    const playSound    = getState().getIn(['settings', 'notifications', 'sounds', filterType], true);
 
-    fetchRelatedRelationships(dispatch, [notification]);
+    let filtered = false;
+
+    if (['mention', 'quote', 'status'].includes(notification.type) && notification.status.filtered) {
+      const filters = notification.status.filtered.filter(result => result.filter.context.includes('notifications'));
+
+      if (filters.some(result => result.filter.filter_action === 'hide')) {
+        return;
+      }
+
+      filtered = filters.length > 0;
+    }
+
+    if (['follow_request'].includes(notification.type)) {
+      dispatch(fetchFollowRequests());
+    }
+
+    dispatch(submitMarkers());
+
+    // `notificationsUpdate` is still used in `user_lists` and `relationships` reducers
+    dispatch(importFetchedAccount(notification.account));
+    dispatch(notificationsUpdate({ notification, playSound: playSound && !filtered}));
 
     // Desktop notifications
-    if (typeof window.Notification !== 'undefined' && showAlert) {
+    if (typeof window.Notification !== 'undefined' && showAlert && !filtered) {
       const title = new IntlMessageFormat(intlMessages[`notification.${notification.type}`], intlLocale).format({ name: notification.account.display_name.length > 0 ? notification.account.display_name : notification.account.username });
-      const body  = (notification.status && notification.status.spoiler_text.length > 0) ? unescapeHTML(notification.status.spoiler_text) : unescapeHTML(notification.status ? notification.status.content : '');
+      const body  = (notification.status && notification.status.spoiler_text.length > 0) ? notification.status.spoiler_text : unescapeHTML(notification.status ? notification.status.content : '');
 
       const notify = new Notification(title, { body, icon: notification.account.avatar, tag: notification.id });
+
       notify.addEventListener('click', () => {
         window.focus();
         notify.close();
       });
     }
   };
-};
+}
 
-const excludeTypesFromSettings = state => state.getIn(['settings', 'notifications', 'shows']).filter(enabled => !enabled).keySeq().toJS();
+const noOp = () => {};
 
-export function refreshNotifications() {
-  return (dispatch, getState) => {
-    const params = {};
-    const ids    = getState().getIn(['notifications', 'items']);
-
-    let skipLoading = false;
-
-    if (ids.size > 0) {
-      params.since_id = ids.first().get('id');
+// Browser support
+export function setupBrowserNotifications() {
+  return dispatch => {
+    dispatch(setBrowserSupport('Notification' in window));
+    if ('Notification' in window) {
+      dispatch(setBrowserPermission(Notification.permission));
     }
 
-    if (getState().getIn(['notifications', 'loaded'])) {
-      skipLoading = true;
+    if ('Notification' in window && 'permissions' in navigator) {
+      navigator.permissions.query({ name: 'notifications' }).then((status) => {
+        status.onchange = () => dispatch(setBrowserPermission(Notification.permission));
+      }).catch(console.warn);
     }
+  };
+}
 
-    params.exclude_types = excludeTypesFromSettings(getState());
+/**
+ * @param {(NotificationPermission) => void} callback
+ */
+export function requestBrowserPermission(callback = noOp) {
+  return dispatch => {
+    requestNotificationPermission((permission) => {
+      dispatch(setBrowserPermission(permission));
+      callback(permission);
 
-    dispatch(refreshNotificationsRequest(skipLoading));
-
-    api(getState).get('/api/v1/notifications', { params }).then(response => {
-      const next = getLinks(response).refs.find(link => link.rel === 'next');
-
-      dispatch(refreshNotificationsSuccess(response.data, skipLoading, next ? next.uri : null));
-      fetchRelatedRelationships(dispatch, response.data);
-    }).catch(error => {
-      dispatch(refreshNotificationsFail(error, skipLoading));
+      if (permission === 'granted') {
+        dispatch(registerPushNotifications());
+      }
     });
   };
-};
+}
 
-export function refreshNotificationsRequest(skipLoading) {
+export function setBrowserSupport (value) {
   return {
-    type: NOTIFICATIONS_REFRESH_REQUEST,
-    skipLoading
+    type: NOTIFICATIONS_SET_BROWSER_SUPPORT,
+    value,
   };
-};
+}
 
-export function refreshNotificationsSuccess(notifications, skipLoading, next) {
+export function setBrowserPermission (value) {
   return {
-    type: NOTIFICATIONS_REFRESH_SUCCESS,
-    notifications,
-    accounts: notifications.map(item => item.account),
-    statuses: notifications.map(item => item.status).filter(status => !!status),
-    skipLoading,
-    next
+    type: NOTIFICATIONS_SET_BROWSER_PERMISSION,
+    value,
   };
-};
-
-export function refreshNotificationsFail(error, skipLoading) {
-  return {
-    type: NOTIFICATIONS_REFRESH_FAIL,
-    error,
-    skipLoading
-  };
-};
-
-export function expandNotifications() {
-  return (dispatch, getState) => {
-    const url    = getState().getIn(['notifications', 'next'], null);
-    const lastId = getState().getIn(['notifications', 'items']).last();
-
-    if (url === null || getState().getIn(['notifications', 'isLoading'])) {
-      return;
-    }
-
-    dispatch(expandNotificationsRequest());
-
-    const params = {
-      max_id: lastId,
-      limit: 20
-    };
-
-    params.exclude_types = excludeTypesFromSettings(getState());
-
-    api(getState).get(url, params).then(response => {
-      const next = getLinks(response).refs.find(link => link.rel === 'next');
-
-      dispatch(expandNotificationsSuccess(response.data, next ? next.uri : null));
-      fetchRelatedRelationships(dispatch, response.data);
-    }).catch(error => {
-      dispatch(expandNotificationsFail(error));
-    });
-  };
-};
-
-export function expandNotificationsRequest() {
-  return {
-    type: NOTIFICATIONS_EXPAND_REQUEST
-  };
-};
-
-export function expandNotificationsSuccess(notifications, next) {
-  return {
-    type: NOTIFICATIONS_EXPAND_SUCCESS,
-    notifications,
-    accounts: notifications.map(item => item.account),
-    statuses: notifications.map(item => item.status).filter(status => !!status),
-    next
-  };
-};
-
-export function expandNotificationsFail(error) {
-  return {
-    type: NOTIFICATIONS_EXPAND_FAIL,
-    error
-  };
-};
-
-export function clearNotifications() {
-  return (dispatch, getState) => {
-    dispatch({
-      type: NOTIFICATIONS_CLEAR
-    });
-
-    api(getState).post('/api/v1/notifications/clear');
-  };
-};
-
-export function scrollTopNotifications(top) {
-  return {
-    type: NOTIFICATIONS_SCROLL_TOP,
-    top
-  };
-};
+}

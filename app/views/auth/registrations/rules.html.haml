@@ -1,0 +1,25 @@
+- content_for :page_title do
+  = t('auth.register')
+
+- content_for :header_tags do
+  = render partial: 'shared/og', locals: { description: description_for_sign_up(@invite) }
+
+= form_with class: :simple_form, url: auth_acceptance_path do |form|
+  = render 'auth/shared/progress', stage: 'rules'
+
+  - if @invite.present? && @invite.autofollow?
+    %h1.title= t('auth.rules.title_invited')
+    %p.lead.invited-by= t('auth.rules.invited_by', domain: site_hostname)
+    = render 'application/card', account: @invite.user.account, compact: true
+    %p.lead= t('auth.rules.preamble_invited', domain: site_hostname)
+  - else
+    %h1.title= t('auth.rules.title')
+    %p.lead= t('auth.rules.preamble', domain: site_hostname)
+
+  %ol.rules-list{ role: 'list' }
+    = render collection: @rule_translations, partial: 'auth/rule_translations/rule_translation'
+
+  .stacked-actions
+    = form.hidden_field :invite_code, value: @invite_code if @invite_code.present?
+    = form.button t('auth.rules.accept'), name: :accept, type: :submit, class: :button, value: @accept_token
+    = link_to t('auth.rules.back'), root_path, class: 'button button-secondary'

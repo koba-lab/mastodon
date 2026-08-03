@@ -1,35 +1,105 @@
 # frozen_string_literal: true
+
 # == Schema Information
 #
 # Table name: domain_blocks
 #
-#  id           :integer          not null, primary key
-#  domain       :string           default(""), not null
-#  created_at   :datetime         not null
-#  updated_at   :datetime         not null
-#  severity     :integer          default("silence")
-#  reject_media :boolean
+#  id              :bigint(8)        not null, primary key
+#  domain          :string           default(""), not null
+#  obfuscate       :boolean          default(FALSE), not null
+#  private_comment :text
+#  public_comment  :text
+#  reject_media    :boolean          default(FALSE), not null
+#  reject_reports  :boolean          default(FALSE), not null
+#  severity        :integer          default("silence")
+#  created_at      :datetime         not null
+#  updated_at      :datetime         not null
 #
 
 class DomainBlock < ApplicationRecord
-  enum severity: [:silence, :suspend]
+  include Paginable
+  include DomainNormalizable
+  include DomainMaterializable
 
-  attr_accessor :retroactive
+  enum :severity, { silence: 0, suspend: 1, noop: 2 }, validate: true
 
-  validates :domain, presence: true, uniqueness: true
+  validates :domain, presence: true, uniqueness: true, domain: true
 
-  has_many :accounts, foreign_key: :domain, primary_key: :domain
+  has_many :accounts, foreign_key: :domain, primary_key: :domain, inverse_of: false, dependent: nil
   delegate :count, to: :accounts, prefix: true
 
-  def self.blocked?(domain)
-    where(domain: domain, severity: :suspend).exists?
+  scope :with_user_facing_limitations, -> { where(severity: [:silence, :suspend]) }
+  scope :with_limitations, -> { where(severity: [:silence, :suspend]).or(where(reject_media: true)) }
+  scope :by_severity, -> { in_order_of(:severity, %w(noop silence suspend)).order(:domain) }
+
+  def to_log_human_identifier
+    domain
   end
 
-  before_validation :normalize_domain
+  def policies
+    if suspend?
+      [:suspend]
+    else
+      [severity.to_sym, reject_media? ? :reject_media : nil, reject_reports? ? :reject_reports : nil]
+        .reject { |policy| policy == :noop }
+        .compact
+    end
+  end
 
-  private
+  class << self
+    def suspend?(domain)
+      !!rule_for(domain)&.suspend?
+    end
 
-  def normalize_domain
-    self.domain = TagManager.instance.normalize_domain(domain)
+    def silence?(domain)
+      !!rule_for(domain)&.silence?
+    end
+
+    def reject_media?(domain)
+      !!rule_for(domain)&.reject_media?
+    end
+
+    def reject_reports?(domain)
+      !!rule_for(domain)&.reject_reports?
+    end
+
+    alias blocked? suspend?
+
+    def rule_for(domain)
+      return if domain.blank?
+
+      uri      = Addressable::URI.new.tap { |u| u.host = domain.strip.delete('/') }
+      variants = domain_variants(uri.normalized_host)
+      where(domain: variants).by_domain_length.first
+    rescue Addressable::URI::InvalidURIError, IDN::Idna::IdnaError
+      nil
+    end
+  end
+
+  def stricter_than?(other_block)
+    return true  if suspend?
+    return false if other_block.suspend? && (silence? || noop?)
+    return false if other_block.silence? && noop?
+
+    (reject_media || !other_block.reject_media) && (reject_reports || !other_block.reject_reports)
+  end
+
+  def public_domain
+    return domain unless obfuscate?
+
+    length        = domain.size
+    visible_ratio = length / 4
+
+    domain.chars.map.with_index do |chr, i|
+      if i > visible_ratio && i < length - visible_ratio && chr != '.'
+        '*'
+      else
+        chr
+      end
+    end.join
+  end
+
+  def domain_digest
+    Digest::SHA256.hexdigest(domain)
   end
 end

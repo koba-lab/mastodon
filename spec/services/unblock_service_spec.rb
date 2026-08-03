@@ -1,41 +1,40 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
 RSpec.describe UnblockService do
+  subject { described_class.new }
+
   let(:sender) { Fabricate(:account, username: 'alice') }
 
-  subject { UnblockService.new }
-
   describe 'local' do
-    let(:bob) { Fabricate(:user, email: 'bob@example.com', account: Fabricate(:account, username: 'bob')).account }
+    let(:bob) { Fabricate(:account) }
 
-    before do
-      sender.block!(bob)
-      subject.call(sender, bob)
-    end
+    before { sender.block!(bob) }
 
     it 'destroys the blocking relation' do
-      expect(sender.blocking?(bob)).to be false
+      subject.call(sender, bob)
+
+      expect(sender)
+        .to_not be_blocking(bob)
     end
   end
 
-  describe 'remote' do
-    let(:bob) { Fabricate(:user, email: 'bob@example.com', account: Fabricate(:account, username: 'bob', domain: 'example.com', salmon_url: 'http://salmon.example.com')).account }
+  describe 'remote ActivityPub' do
+    let(:bob) { Fabricate(:account, username: 'bob', protocol: :activitypub, domain: 'example.com', inbox_url: 'http://example.com/inbox') }
 
     before do
       sender.block!(bob)
-      stub_request(:post, "http://salmon.example.com/").to_return(:status => 200, :body => "", :headers => {})
+      stub_request(:post, 'http://example.com/inbox').to_return(status: 200)
+    end
+
+    it 'destroys the blocking relation and sends unblock activity', :inline_jobs do
       subject.call(sender, bob)
-    end
 
-    it 'destroys the blocking relation' do
-      expect(sender.following?(bob)).to be false
-    end
-
-    it 'sends an unblock salmon slap' do
-      expect(a_request(:post, "http://salmon.example.com/").with { |req|
-        xml = OStatus2::Salmon.new.unpack(req.body)
-        xml.match(TagManager::VERBS[:unblock])
-      }).to have_been_made.once
+      expect(sender)
+        .to_not be_blocking(bob)
+      expect(a_request(:post, 'http://example.com/inbox'))
+        .to have_been_made.once
     end
   end
 end

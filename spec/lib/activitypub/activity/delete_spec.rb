@@ -1,0 +1,146 @@
+# frozen_string_literal: true
+
+require 'rails_helper'
+
+RSpec.describe ActivityPub::Activity::Delete do
+  let(:sender) { Fabricate(:account, domain: 'example.com') }
+  let(:status) { Fabricate(:status, account: sender, uri: 'foobar') }
+
+  let(:json) do
+    {
+      '@context': 'https://www.w3.org/ns/activitystreams',
+      id: 'foo',
+      type: 'Delete',
+      actor: ActivityPub::TagManager.instance.uri_for(sender),
+      object: object_json,
+      signature: 'foo',
+    }.deep_stringify_keys
+  end
+
+  let(:object_json) { ActivityPub::TagManager.instance.uri_for(status) }
+
+  describe '#perform' do
+    subject { described_class.new(json, sender) }
+
+    it 'deletes sender\'s status' do
+      subject.perform
+      expect(Status.find_by(id: status.id)).to be_nil
+    end
+
+    context 'when the status has been reblogged' do
+      let!(:reblogger) { Fabricate(:account) }
+      let!(:follower)  { Fabricate(:account, username: 'follower', protocol: :activitypub, domain: 'example.com', inbox_url: 'http://example.com/inbox') }
+      let!(:reblog)    { Fabricate(:status, account: reblogger, reblog: status) }
+
+      before do
+        stub_request(:post, 'http://example.com/inbox').to_return(status: 200)
+        follower.follow!(reblogger)
+        subject.perform
+      end
+
+      it 'deletes sender\'s status' do
+        expect(Status.find_by(id: status.id)).to be_nil
+      end
+
+      it 'sends delete activity to followers of rebloggers', :inline_jobs do
+        expect(a_request(:post, 'http://example.com/inbox')).to have_been_made.once
+      end
+
+      it 'deletes the reblog' do
+        expect { reblog.reload }.to raise_error(ActiveRecord::RecordNotFound)
+      end
+    end
+
+    context 'when the status has been reported' do
+      let!(:reporter) { Fabricate(:account) }
+
+      before do
+        reporter.reports.create!(target_account: status.account, status_ids: [status.id], forwarded: false)
+        subject.perform
+      end
+
+      it 'marks the status as deleted' do
+        expect(Status.find_by(id: status.id)).to be_nil
+      end
+
+      it 'actually keeps a copy for inspection' do
+        expect(Status.with_discarded.find_by(id: status.id)).to_not be_nil
+      end
+    end
+
+    context 'when the deleted object is an account' do
+      let(:object_json) { ActivityPub::TagManager.instance.uri_for(sender) }
+      let(:service) { instance_double(DeleteAccountService, call: true) }
+
+      before do
+        allow(DeleteAccountService).to receive(:new).and_return(service)
+      end
+
+      it 'calls the account deletion service' do
+        subject.perform
+
+        expect(service)
+          .to have_received(:call).with(sender, { reserve_username: false, skip_activitypub: true })
+      end
+    end
+
+    context 'when the deleted object is a quote authorization' do
+      let(:quoter) { Fabricate(:account, domain: 'b.example.com') }
+      let(:status) { Fabricate(:status, account: quoter) }
+      let(:quoted_status) { Fabricate(:status, account: sender, uri: 'https://example.com/statuses/1234') }
+      let!(:quote) { Fabricate(:quote, approval_uri: 'https://example.com/approvals/1234', state: :accepted, status: status, quoted_status: quoted_status) }
+
+      let(:object_json) { quote.approval_uri }
+
+      it 'revokes the authorization' do
+        expect { subject.perform }
+          .to change { quote.reload.state }.to('revoked')
+      end
+    end
+
+    context 'when the deleted object is an inlined quote authorization' do
+      let(:quoter) { Fabricate(:account, domain: 'b.example.com') }
+      let(:status) { Fabricate(:status, account: quoter) }
+      let(:quoted_status) { Fabricate(:status, account: sender, uri: 'https://example.com/statuses/1234') }
+      let!(:quote) { Fabricate(:quote, approval_uri: 'https://example.com/approvals/1234', state: :accepted, status: status, quoted_status: quoted_status) }
+
+      let(:object_json) do
+        {
+          type: 'QuoteAuthorization',
+          id: quote.approval_uri,
+          attributedTo: ActivityPub::TagManager.instance.uri_for(quoted_status.account),
+          interactionTarget: ActivityPub::TagManager.instance.uri_for(quoted_status),
+          interactingObject: ActivityPub::TagManager.instance.uri_for(status),
+        }.deep_stringify_keys
+      end
+
+      it 'revokes the authorization' do
+        expect { subject.perform }
+          .to change { quote.reload.state }.to('revoked')
+      end
+    end
+
+    context 'with a FeatureAuthorization' do
+      let(:recipient) { Fabricate(:account) }
+      let(:approval_uri) { 'https://example.com/authorizations/1' }
+      let(:collection) { Fabricate(:collection, account: recipient) }
+      let!(:collection_item) { Fabricate(:collection_item, collection:, account: sender, state: :accepted, approval_uri:) }
+      let(:json) do
+        {
+          'id' => 'https://example.com/accepts/1',
+          'type' => 'Delete',
+          'actor' => sender.uri,
+          'to' => ActivityPub::TagManager.instance.uri_for(recipient),
+          'object' => approval_uri,
+        }
+      end
+
+      it 'revokes the collection item and federates a `Delete` activity' do
+        subject.perform
+
+        expect(collection_item.reload).to be_revoked
+        expect(ActivityPub::CollectionRawDistributionWorker).to have_enqueued_sidekiq_job
+      end
+    end
+  end
+end

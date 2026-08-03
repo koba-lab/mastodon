@@ -1,0 +1,21 @@
+- content_for :page_title do
+  = t('admin.software_updates.title')
+
+.simple_form
+  %p.lead
+    = t('admin.software_updates.description')
+    = link_to t('admin.software_updates.documentation_link'), 'https://docs.joinmastodon.org/admin/upgrading/#automated_checks', target: '_new'
+
+%hr.spacer
+
+- unless @software_updates.empty?
+  .table-wrapper
+    %table.table
+      %thead
+        %tr
+          %th= t('admin.software_updates.version')
+          %th= t('admin.software_updates.type')
+          %th
+          %th
+      %tbody
+        = render collection: @software_updates, partial: 'admin/software_updates/software_update'

@@ -1,0 +1,41 @@
+# frozen_string_literal: true
+
+# == Schema Information
+#
+# Table name: preview_card_providers
+#
+#  id                  :bigint(8)        not null, primary key
+#  domain              :string           default(""), not null
+#  icon_content_type   :string
+#  icon_file_name      :string
+#  icon_file_size      :bigint(8)
+#  icon_updated_at     :datetime
+#  requested_review_at :datetime
+#  reviewed_at         :datetime
+#  trendable           :boolean
+#  created_at          :datetime         not null
+#  updated_at          :datetime         not null
+#
+
+class PreviewCardProvider < ApplicationRecord
+  include Paginable
+  include DomainNormalizable
+  include Attachmentable
+  include Reviewable
+
+  ICON_MIME_TYPES = %w(image/x-icon image/vnd.microsoft.icon image/png).freeze
+  LIMIT = 1.megabyte
+
+  validates :domain, presence: true, uniqueness: true, domain: true
+
+  has_attached_file :icon, styles: { static: { format: 'png', convert_options: '-coalesce +profile "!icc,*" +set date:modify +set date:create +set date:timestamp' } }, validate_media_type: false
+  validates_attachment :icon, content_type: { content_type: ICON_MIME_TYPES }, size: { less_than: LIMIT }
+  remotable_attachment :icon, LIMIT
+
+  scope :trendable, -> { where(trendable: true) }
+  scope :not_trendable, -> { where(trendable: false) }
+
+  def self.matching_domain(domain)
+    where(domain: domain_variants(domain)).by_domain_length.first
+  end
+end

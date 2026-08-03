@@ -1,27 +1,47 @@
 # frozen_string_literal: true
 
 class FavouriteService < BaseService
+  include Authorization
+  include Payloadable
+
   # Favourite a status and notify remote user
   # @param [Account] account
   # @param [Status] status
   # @return [Favourite]
   def call(account, status)
-    raise Mastodon::NotPermittedError unless status.permitted?(account)
+    authorize_with account, status, :favourite?
+
+    favourite = Favourite.find_by(account: account, status: status)
+
+    return favourite unless favourite.nil?
 
     favourite = Favourite.create!(account: account, status: status)
 
-    if status.local?
-      NotifyService.new.call(favourite.status.account, favourite)
-    else
-      NotificationWorker.perform_async(build_xml(favourite), account.id, status.account_id)
-    end
+    Trends.statuses.register(status)
+
+    create_notification(favourite)
+    increment_statistics
 
     favourite
   end
 
   private
 
-  def build_xml(favourite)
-    AtomSerializer.render(AtomSerializer.new.favourite_salmon(favourite))
+  def create_notification(favourite)
+    status = favourite.status
+
+    if status.account.local?
+      LocalNotificationWorker.perform_async(status.account_id, favourite.id, 'Favourite', 'favourite')
+    elsif status.account.activitypub?
+      ActivityPub::DeliveryWorker.perform_async(build_json(favourite), favourite.account_id, status.account.inbox_url)
+    end
+  end
+
+  def increment_statistics
+    ActivityTracker.increment('activity:interactions')
+  end
+
+  def build_json(favourite)
+    serialize_payload(favourite, ActivityPub::LikeSerializer).to_json
   end
 end

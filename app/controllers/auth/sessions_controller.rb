@@ -1,84 +1,193 @@
 # frozen_string_literal: true
 
 class Auth::SessionsController < Devise::SessionsController
-  include Devise::Controllers::Rememberable
+  include Redisable
+
+  MAX_2FA_ATTEMPTS_PER_HOUR = 10
 
   layout 'auth'
 
+  skip_before_action :check_self_destruct!
   skip_before_action :require_no_authentication, only: [:create]
-  skip_before_action :check_suspension, only: [:destroy]
-  prepend_before_action :authenticate_with_two_factor, if: :two_factor_enabled?, only: [:create]
+  skip_before_action :require_functional!
+  skip_before_action :update_user_sign_in
+
+  around_action :preserve_stored_location, only: :destroy, if: :continue_after?
+
+  prepend_before_action :check_suspicious!, only: [:create]
+
+  include Auth::TwoFactorAuthenticationConcern
+
+  content_security_policy only: :new do |p|
+    p.form_action(false)
+  end
 
   def create
     super do |resource|
-      remember_me(resource)
-      flash[:notice] = nil
+      # We only need to call this if this hasn't already been
+      # called from one of the two-factor or sign-in token
+      # authentication methods
+
+      on_authentication_success(resource, :password) unless @on_authentication_success_called
     end
   end
 
   def destroy
     super
-    flash[:notice] = nil
+    session.delete(:challenge_passed_at)
+    flash.delete(:notice)
   end
 
   protected
 
   def find_user
-    if session[:otp_user_id]
-      User.find(session[:otp_user_id])
-    elsif user_params[:email]
-      User.find_by(email: user_params[:email])
+    if user_params[:email].present?
+      find_user_from_params
+    elsif session[:attempt_user_id]
+      User.find_by(id: session[:attempt_user_id])
     end
   end
 
-  def user_params
-    params.require(:user).permit(:email, :password, :otp_attempt)
+  def find_user_from_params
+    user   = User.authenticate_with_ldap(user_params) if Devise.ldap_authentication
+    user ||= User.authenticate_with_pam(user_params) if Devise.pam_authentication
+    user ||= User.find_for_authentication(email: user_params[:email])
+    user
   end
 
-  def after_sign_in_path_for(_resource)
+  def user_params
+    params.expect(user: [:email, :password, :otp_attempt, credential: {}])
+  end
+
+  def after_sign_in_path_for(resource)
     last_url = stored_location_for(:user)
 
-    if [about_path].include?(last_url)
+    if home_paths(resource).include?(last_url)
       root_path
     else
       last_url || root_path
     end
   end
 
-  def two_factor_enabled?
-    find_user.try(:otp_required_for_login?)
+  def require_no_authentication
+    super
+
+    # Delete flash message that isn't entirely useful and may be confusing in
+    # most cases because /web doesn't display/clear flash messages.
+    flash.delete(:alert) if flash[:alert] == I18n.t('devise.failure.already_authenticated')
   end
 
-  def valid_otp_attempt?(user)
-    user.validate_and_consume_otp!(user_params[:otp_attempt]) ||
-      user.invalidate_otp_backup_code!(user_params[:otp_attempt])
-  rescue OpenSSL::Cipher::CipherError => _error
-    false
+  private
+
+  def preserve_stored_location
+    original_stored_location = stored_location_for(:user)
+    yield
+    store_location_for(:user, original_stored_location)
   end
 
-  def authenticate_with_two_factor
-    user = self.resource = find_user
+  def check_suspicious!
+    user = find_user
+    @login_is_suspicious = suspicious_sign_in?(user) unless user.nil?
+  end
 
-    if user_params[:otp_attempt].present? && session[:otp_user_id]
-      authenticate_with_two_factor_via_otp(user)
-    elsif user && user.valid_password?(user_params[:password])
-      prompt_for_two_factor(user)
+  def home_paths(resource)
+    paths = [about_path, '/explore']
+
+    paths << short_account_path(username: resource.account) if single_user_mode? && resource.is_a?(User)
+
+    paths
+  end
+
+  def continue_after?
+    truthy_param?(:continue)
+  end
+
+  def restart_session
+    clear_attempt_from_session
+    redirect_to new_user_session_path, alert: I18n.t('devise.failure.timeout')
+  end
+
+  def register_attempt_in_session(user)
+    session[:attempt_user_id]         = user.id
+    session[:attempt_user_updated_at] = user.updated_at.to_s
+  end
+
+  def clear_attempt_from_session
+    session.delete(:attempt_user_id)
+    session.delete(:attempt_user_updated_at)
+  end
+
+  def clear_2fa_attempt_from_user(user)
+    redis.del(second_factor_attempts_key(user))
+  end
+
+  def check_second_factor_rate_limits(user)
+    attempts, = redis.multi do |multi|
+      multi.incr(second_factor_attempts_key(user))
+      multi.expire(second_factor_attempts_key(user), 1.hour)
     end
+
+    attempts >= MAX_2FA_ATTEMPTS_PER_HOUR
   end
 
-  def authenticate_with_two_factor_via_otp(user)
-    if valid_otp_attempt?(user)
-      session.delete(:otp_user_id)
-      remember_me(user)
-      sign_in(user)
-    else
-      flash.now[:alert] = I18n.t('users.invalid_otp_token')
-      prompt_for_two_factor(user)
+  def on_authentication_success(user, security_measure)
+    @on_authentication_success_called = true
+
+    clear_2fa_attempt_from_user(user)
+    clear_attempt_from_session
+
+    user.update_sign_in!(new_sign_in: true)
+    sign_in(user)
+    flash.delete(:notice)
+
+    user.login_activities.create(
+      request_details.merge(
+        authentication_method: security_measure,
+        success: true
+      )
+    )
+
+    UserMailer.suspicious_sign_in(user, request.remote_ip, request.user_agent, Time.now.utc).deliver_later! if @login_is_suspicious
+  end
+
+  def suspicious_sign_in?(user)
+    SuspiciousSignInDetector.new(user).suspicious?(request)
+  end
+
+  def on_authentication_failure(user, security_measure, failure_reason)
+    user.login_activities.create(
+      request_details.merge(
+        authentication_method: security_measure,
+        failure_reason: failure_reason,
+        success: false
+      )
+    )
+
+    # Only send a notification email every hour at most
+    return if redis.set("2fa_failure_notification:#{user.id}", '1', ex: 1.hour, get: true).present?
+
+    UserMailer.failed_2fa(user, request.remote_ip, request.user_agent, Time.now.utc).deliver_later!
+  end
+
+  def request_details
+    {
+      ip: request.remote_ip,
+      user_agent: request.user_agent,
+    }
+  end
+
+  def second_factor_attempts_key(user)
+    "2fa_auth_attempts:#{user.id}:#{Time.now.utc.hour}"
+  end
+
+  def respond_to_on_destroy(**)
+    respond_to do |format|
+      format.json do
+        render json: {
+          redirect_to: after_sign_out_path_for(resource_name),
+        }, status: 200
+      end
+      format.all { super(**) }
     end
-  end
-
-  def prompt_for_two_factor(user)
-    session[:otp_user_id] = user.id
-    render :two_factor
   end
 end

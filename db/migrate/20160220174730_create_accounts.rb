@@ -1,4 +1,6 @@
-class CreateAccounts < ActiveRecord::Migration
+# frozen_string_literal: true
+
+class CreateAccounts < ActiveRecord::Migration[4.2]
   def change
     create_table :accounts do |t|
       t.string :username, null: false, default: ''

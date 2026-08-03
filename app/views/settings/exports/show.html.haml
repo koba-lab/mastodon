@@ -1,21 +1,74 @@
 - content_for :page_title do
   = t('settings.export')
 
-%table.table
-  %tbody
-    %tr
-      %th= t('exports.storage')
-      %td= number_to_human_size @export.total_storage
-      %td
-    %tr
-      %th= t('exports.follows')
-      %td= @export.total_follows
-      %td= table_link_to 'download', t('exports.csv'), settings_exports_follows_path(format: :csv)
-    %tr
-      %th= t('exports.blocks')
-      %td= @export.total_blocks
-      %td= table_link_to 'download', t('exports.csv'), settings_exports_blocks_path(format: :csv)
-    %tr
-      %th= t('exports.mutes')
-      %td= @export.total_mutes
-      %td= table_link_to 'download', t('exports.csv'), settings_exports_mutes_path(format: :csv)
+.table-wrapper
+  %table.table
+    %tbody
+      %tr
+        %th= t('exports.storage')
+        %td= number_to_human_size @export_summary.total_storage
+        %td
+      %tr
+        %th= t('accounts.posts_tab_heading')
+        %td= number_with_delimiter @export_summary.total_statuses
+        %td
+      %tr
+        %th= t('admin.accounts.follows')
+        %td= number_with_delimiter @export_summary.total_follows
+        %td= table_link_to 'download', t('exports.csv'), settings_exports_follows_path(format: :csv)
+      %tr
+        %th= t('exports.lists')
+        %td= number_with_delimiter @export_summary.total_lists
+        %td= table_link_to 'download', t('exports.csv'), settings_exports_lists_path(format: :csv)
+      %tr
+        %th= t('admin.accounts.followers')
+        %td= number_with_delimiter @export_summary.total_followers
+        %td
+      %tr
+        %th= t('exports.mutes')
+        %td= number_with_delimiter @export_summary.total_mutes
+        %td= table_link_to 'download', t('exports.csv'), settings_exports_mutes_path(format: :csv)
+      %tr
+        %th= t('exports.blocks')
+        %td= number_with_delimiter @export_summary.total_blocks
+        %td= table_link_to 'download', t('exports.csv'), settings_exports_blocks_path(format: :csv)
+      %tr
+        %th= t('exports.domain_blocks')
+        %td= number_with_delimiter @export_summary.total_domain_blocks
+        %td= table_link_to 'download', t('exports.csv'), settings_exports_domain_blocks_path(format: :csv)
+      %tr
+        %th= t('exports.bookmarks')
+        %td= number_with_delimiter @export_summary.total_bookmarks
+        %td= table_link_to 'download', t('exports.csv'), settings_exports_bookmarks_path(format: :csv)
+      %tr
+        %th= t('exports.custom_filters')
+        %td= number_with_delimiter @export_summary.total_custom_filters
+        %td= table_link_to 'download', t('exports.json'), settings_exports_custom_filters_path(format: :json)
+
+%hr.spacer/
+
+%p.muted-hint= t('exports.archive_takeout.hint_html')
+
+- if policy(:backup).create?
+  %p= link_to t('exports.archive_takeout.request'), settings_export_path, class: 'button', method: :post
+
+- unless @backups.empty?
+  %hr.spacer/
+
+  .table-wrapper
+    %table.table
+      %thead
+        %tr
+          %th= t('exports.archive_takeout.date')
+          %th= t('exports.archive_takeout.size')
+          %th
+      %tbody
+        - @backups.each do |backup|
+          %tr
+            %td
+              %time.formatted{ datetime: backup.created_at.iso8601, title: l(backup.created_at) }= l backup.created_at
+            - if backup.processed?
+              %td= number_to_human_size backup.dump_file_size
+              %td= table_link_to 'download', t('exports.archive_takeout.download'), download_backup_url(backup)
+            - else
+              %td{ colspan: 2 }= t('exports.archive_takeout.in_progress')

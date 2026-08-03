@@ -1,0 +1,29 @@
+# frozen_string_literal: true
+
+class REST::CredentialAccountSerializer < REST::AccountSerializer
+  attributes :source
+
+  has_one :role, serializer: REST::RoleSerializer
+
+  def source
+    user = object.user
+
+    {
+      privacy: user.setting_default_privacy,
+      sensitive: user.setting_default_sensitive,
+      language: user.setting_default_language,
+      note: object.note,
+      fields: object.fields.map(&:to_h),
+      follow_requests_count: Account.without_suspended.joins(:follow_requests).where(follow_requests: { target_account: object }).limit(40).count,
+      hide_collections: object.hide_collections,
+      discoverable: object.discoverable,
+      indexable: object.indexable,
+      attribution_domains: object.attribution_domains,
+      quote_policy: user.setting_default_quote_policy,
+    }
+  end
+
+  def role
+    object.user_role
+  end
+end
