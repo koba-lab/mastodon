@@ -1,0 +1,85 @@
+name: Run an ikatodon deployment script on a remote host
+description: Copies the scripts in ikatodon/deploy to a server over SSH and runs one of them.
+
+inputs:
+  host:
+    description: Hostname or IP address of the target server
+    required: true
+  user:
+    description: SSH user used for the deployment
+    required: true
+  port:
+    description: SSH port of the target server
+    default: '22'
+  mastodon_dir:
+    description: Directory containing docker-compose.yml on the target server
+    required: true
+  ssh_private_key:
+    description: Private SSH key authorized on the target server
+    required: true
+  ssh_known_hosts:
+    description: Contents of the known_hosts entry of the target server
+    required: true
+  script:
+    description: Script to run (deploy.sh or migrate.sh)
+    required: true
+  args:
+    description: Arguments passed to the script
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Run ${{ inputs.script }} on ${{ inputs.host }}
+      shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+        USERNAME: ${{ inputs.user }}
+        PORT: ${{ inputs.port }}
+        MASTODON_DIR: ${{ inputs.mastodon_dir }}
+        SSH_PRIVATE_KEY: ${{ inputs.ssh_private_key }}
+        SSH_KNOWN_HOSTS: ${{ inputs.ssh_known_hosts }}
+        SCRIPT: ${{ inputs.script }}
+        ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail
+
+        for required in HOST USERNAME MASTODON_DIR SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+          if [ -z "${!required}" ]; then
+            echo "::error::${required} is empty, check the repository variables and secrets"
+            exit 1
+          fi
+        done
+
+        case "$SCRIPT" in
+          deploy.sh | migrate.sh) ;;
+          *) echo "::error::unsupported script: ${SCRIPT}"; exit 1 ;;
+        esac
+
+        case "$ARGS" in
+          '' | *[!A-Za-z0-9._\ -]*) echo "::error::invalid arguments: ${ARGS}"; exit 1 ;;
+        esac
+
+        ssh_dir="$(mktemp -d)"
+        trap 'rm -rf "$ssh_dir"' EXIT
+        printf '%s\n' "$SSH_PRIVATE_KEY" >"${ssh_dir}/id"
+        printf '%s\n' "$SSH_KNOWN_HOSTS" >"${ssh_dir}/known_hosts"
+        chmod 600 "${ssh_dir}/id"
+
+        ssh_opts=(-i "${ssh_dir}/id" -o "UserKnownHostsFile=${ssh_dir}/known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -p "$PORT")
+        remote_dir="ikatodon-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+        ssh "${ssh_opts[@]}" "${USERNAME}@${HOST}" "rm -rf ~/${remote_dir} && mkdir -p ~/${remote_dir}"
+        scp "${ssh_opts[@]}" "${GITHUB_WORKSPACE}/ikatodon/deploy/"*.sh "${USERNAME}@${HOST}:~/${remote_dir}/"
+
+        status=0
+        # shellcheck disable=SC2029 # the command is intentionally expanded locally
+        ssh "${ssh_opts[@]}" "${USERNAME}@${HOST}" \
+          "MASTODON_DIR=$(printf '%q' "$MASTODON_DIR") bash ~/${remote_dir}/${SCRIPT} ${ARGS}" || status=$?
+
+        ssh "${ssh_opts[@]}" "${USERNAME}@${HOST}" "rm -rf ~/${remote_dir}" || true
+
+        if [ "$status" -ne 0 ]; then
+          echo "::error::${SCRIPT} failed on ${HOST} (exit code ${status})"
+        fi
+        exit "$status"
