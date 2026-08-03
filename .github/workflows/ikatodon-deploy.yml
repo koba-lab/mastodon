@@ -1,0 +1,115 @@
+name: Deploy ikatodon
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image tag to deploy (e.g. v4.6.4)'
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      version:
+        description: 'Image tag to deploy (e.g. v4.6.4)'
+        type: string
+        required: true
+
+# Never let two deployments touch the servers at the same time.
+concurrency:
+  group: ikatodon-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  # Migrations that are safe to run while the old code is still serving traffic.
+  # If this fails nothing is deployed and the failure output is kept in the job log.
+  pre-deploy-migration:
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Run pre deployment migrations
+        uses: ./.github/actions/ikatodon-remote-script
+        with:
+          host: ${{ fromJSON(vars.IKATODON_WEB_HOSTS)[0] }}
+          user: ${{ vars.IKATODON_DEPLOY_USER }}
+          mastodon_dir: ${{ vars.IKATODON_MASTODON_DIR }}
+          ssh_private_key: ${{ secrets.IKATODON_SSH_PRIVATE_KEY }}
+          ssh_known_hosts: ${{ secrets.IKATODON_SSH_KNOWN_HOSTS }}
+          script: migrate.sh
+          args: ${{ inputs.version }} pre
+
+  # Update the web servers one after another so that the other server keeps
+  # serving the traffic sent to it by the DNS round robin.
+  deploy:
+    needs: pre-deploy-migration
+    runs-on: ubuntu-24.04
+    environment: production
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        host: ${{ fromJSON(vars.IKATODON_WEB_HOSTS) }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Deploy to ${{ matrix.host }}
+        uses: ./.github/actions/ikatodon-remote-script
+        with:
+          host: ${{ matrix.host }}
+          user: ${{ vars.IKATODON_DEPLOY_USER }}
+          mastodon_dir: ${{ vars.IKATODON_MASTODON_DIR }}
+          ssh_private_key: ${{ secrets.IKATODON_SSH_PRIVATE_KEY }}
+          ssh_known_hosts: ${{ secrets.IKATODON_SSH_KNOWN_HOSTS }}
+          script: deploy.sh
+          args: ${{ inputs.version }}
+
+  # Migrations that may only run once every server is on the new code.
+  post-deploy-migration:
+    needs: deploy
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Run post deployment migrations
+        uses: ./.github/actions/ikatodon-remote-script
+        with:
+          host: ${{ fromJSON(vars.IKATODON_WEB_HOSTS)[0] }}
+          user: ${{ vars.IKATODON_DEPLOY_USER }}
+          mastodon_dir: ${{ vars.IKATODON_MASTODON_DIR }}
+          ssh_private_key: ${{ secrets.IKATODON_SSH_PRIVATE_KEY }}
+          ssh_known_hosts: ${{ secrets.IKATODON_SSH_KNOWN_HOSTS }}
+          script: migrate.sh
+          args: ${{ inputs.version }} post
+
+  report:
+    needs: [pre-deploy-migration, deploy, post-deploy-migration]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Write deployment summary
+        env:
+          PRE: ${{ needs.pre-deploy-migration.result }}
+          DEPLOY: ${{ needs.deploy.result }}
+          POST: ${{ needs.post-deploy-migration.result }}
+        run: |
+          {
+            echo "## ikatodon deployment: ${VERSION}"
+            echo
+            echo '| step | result |'
+            echo '| --- | --- |'
+            echo "| pre deployment migration | ${PRE} |"
+            echo "| rolling deploy | ${DEPLOY} |"
+            echo "| post deployment migration | ${POST} |"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          if [ "${PRE}" != 'success' ] || [ "${DEPLOY}" != 'success' ] || [ "${POST}" != 'success' ]; then
+            echo 'Deployment did not fully succeed, see the failed job log for the error details.' >>"$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
