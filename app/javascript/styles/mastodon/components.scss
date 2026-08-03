@@ -9915,6 +9915,11 @@ noscript {
     transition: 0.5s cubic-bezier(0.89, 0.01, 0.5, 1.1);
     will-change: translate;
   }
+
+  .no-reduce-motion & {
+    transition: 0.5s cubic-bezier(0.89, 0.01, 0.5, 1.1);
+    transform: translateZ(0);
+  }
 }
 
 .notification-bar__content {

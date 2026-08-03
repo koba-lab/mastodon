@@ -6,6 +6,7 @@ services:
       dockerfile: .devcontainer/Dockerfile
     volumes:
       - ..:/workspaces/mastodon:cached
+      - root-data:/root
     environment:
       RAILS_ENV: development
       NODE_ENV: development
@@ -24,6 +25,7 @@ services:
       LIBRE_TRANSLATE_ENDPOINT: http://libretranslate:5000
       LOCAL_DOMAIN: ${LOCAL_DOMAIN:-localhost:3000}
       VITE_DEV_SERVER_PUBLIC: ${VITE_DEV_SERVER_PUBLIC:-localhost:3036}
+      SECRET_KEY_BASE_DUMMY: '1'
     # Overrides default command so things don't shut down after the process ends.
     command: sleep infinity
     ports:
@@ -86,6 +88,7 @@ volumes:
   redis-data:
   es-data:
   lt-data:
+  root-data:
 
 networks:
   external_network:

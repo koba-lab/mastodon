@@ -17,7 +17,7 @@ RSpec.describe 'Instances' do
 
         expect(response.parsed_body)
           .to be_present
-          .and include(title: 'Mastodon')
+          .and include(title: Setting.site_title)
       end
     end
 
@@ -32,7 +32,7 @@ RSpec.describe 'Instances' do
 
         expect(response.parsed_body)
           .to be_present
-          .and include(title: 'Mastodon')
+          .and include(title: Setting.site_title)
       end
     end
   end

@@ -208,7 +208,7 @@ fi:
       announcement:
         all_day: Koko päivän tapahtuma
         ends_at: Tapahtuman loppu
-        scheduled_at: Ajasta julkaisu
+        scheduled_at: Ajoita julkaisu
         starts_at: Tapahtuman alku
         text: Tiedote
       appeal:

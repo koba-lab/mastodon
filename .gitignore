@@ -48,6 +48,7 @@ node_modules/
 # Ignore vim files
 *~
 *.swp
+.foreman
 
 # Ignore npm debug log
 npm-debug.log

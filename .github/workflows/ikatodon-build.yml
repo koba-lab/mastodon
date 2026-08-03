@@ -1,0 +1,36 @@
+name: Build ikatodon container images
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-image:
+    uses: ./.github/workflows/build-container-image.yml
+    with:
+      file_to_build: Dockerfile
+      push_to_images: |
+        ghcr.io/koba-lab/ikatodon
+      tags: |
+        type=pep440,pattern={{raw}}
+        type=pep440,pattern=v{{major}}.{{minor}}
+      flavor: |
+        latest=auto
+    secrets: inherit
+
+  build-streaming-image:
+    uses: ./.github/workflows/build-container-image.yml
+    with:
+      file_to_build: streaming/Dockerfile
+      push_to_images: |
+        ghcr.io/koba-lab/ikatodon-streaming
+      tags: |
+        type=pep440,pattern={{raw}}
+        type=pep440,pattern=v{{major}}.{{minor}}
+      flavor: |
+        latest=auto
+    secrets: inherit
