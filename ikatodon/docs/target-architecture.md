@@ -1,0 +1,367 @@
+# イカトドン 理想のインフラ＆運用
+
+現状の記録は [`current-architecture.md`](./current-architecture.md) を参照してください。
+
+このドキュメントは **どこへ向かうか** と **なぜそう決めたか** を記録します。
+採用しなかった案とその理由も残しています。同じ検討を繰り返さないためです。
+
+---
+
+## 0. 前提として確定していること
+
+| 項目 | 決定 | 理由 |
+| --- | --- | --- |
+| 基本構成 | ConoHa VPS / Docker Compose / 自前 PostgreSQL・Redis を**維持** | 今の困りごとは構成ではなく「記録が無く手順が属人化していること」に起因している |
+| メディア | **対象外**。Backblaze B2 へ移管済み | オブジェクトストレージという抽象で選定済みで、コスト次第でいつでも移設できる体制がある |
+| DB / Redis のマネージド化 | **不採用** | 料金。加えてプライベート網の利点（転送量無料・低レイテンシ）を失う |
+| Cloudflare の有料 Load Balancing | **不採用** | 有料であるため。検討のうえ却下済み |
+
+---
+
+## 1. 3つのトラック
+
+作業を3つに分けます。**A と C は独立**しています（有料 LB を採らない以上、
+トラフィック切替の担い手は入口の構成によらず nginx に残るため）。
+
+| トラック | 内容 | 状態 |
+| --- | --- | --- |
+| **A. デプロイ自動化** | issue #876 本体 | **最優先** |
+| **B. PITR** | WAL アーカイブによる任意時点復旧 | **A と並行** |
+| **C. Cloudflare 化 + LE 撤去** | 本体を Cloudflare 経由にするか | **実施するか未定** |
+
+---
+
+## 2. トラック A — デプロイ自動化
+
+### 2.1 実行基盤：GitHub Actions + ssh
+
+`workflow_dispatch` から、OSS の ssh アクション（`appleboy/ssh-action` 等）で
+各ホストを操作します。**新しく増える運用対象がゼロ**で、既存の nginx・compose・
+GitHub Actions の組み合わせで完結するのが決め手です。
+
+<details>
+<summary>採用しなかった案と理由</summary>
+
+| 案 | 不採用の理由 |
+| --- | --- |
+| **Kamal** | `config/deploy.yml` が `docker-compose.yml` と**二重管理**になる。本家が `command` や `healthcheck` を変えても自動では伝播せず、気づかないと静かに壊れる。ステージングが無く CI しか使えない環境では、その反映結果の検証がしにくい |
+| **Docker Swarm** | 2台間で `2377/tcp` `7946/tcp+udp` `4789/udp` を開ける必要があり、**VPS の制約で開けられない可能性**がある。compose にも `deploy:` の追加、`restart` の置換、`ports` の `mode: host` 化などの書き換えが要る |
+| **Ansible をデプロイに使う** | Ansible は**構成管理ツールであってデプロイツールではない**。ヘルスチェック連動の切替もロールバックも自作になる（※構成管理としては採用する。4節） |
+| **Kubernetes / k3s** | 2台構成に対して運用対象が過大 |
+
+Kamal は目的への適合度が高く、開発も活発です。**ステージング環境を用意できるなら
+再検討の価値があります。**
+</details>
+
+### 2.2 ワークフローの構造
+
+```
+on: workflow_dispatch
+  inputs:
+    version:            v4.6.5
+    pause_before_post:  false      # 本家指定の追加コマンドがある回だけ true
+```
+
+```
+verify        PR 時の CI で担保済みの内容を再確認（軽い）
+   ↓
+prepare       両ホストで git pull → docker login → docker compose pull
+   ↓          ホスト上で docker compose config -q（実 .env 込み）
+pre-migrate   host1 で SKIP_POST_DEPLOYMENT_MIGRATIONS=true rails db:migrate
+   ↓          （新イメージを使うので prepare が先）
+deploy        matrix: [host1, host2]、max-parallel: 1
+   ↓            1. nginx を drain（自分を外して reload）
+                2. docker compose up -d
+                3. /health が通るまで待つ
+                4. nginx を復帰（reload）
+   ↓
+gate          if: inputs.pause_before_post
+   ↓          GitHub Environments の承認待ち。ここで手動コマンドを流す
+post-migrate  host1 で rails db:migrate（post 含む）
+```
+
+**現状からの改善点**
+
+- **post migration が全台更新後に走る**（現状の問題 #3 の修正）
+- 「本家指定の追加コマンド」に**公式な居場所ができる**（問題 #4）
+- ダウンタイムが無くなる（2.4）
+
+**設計の理由**
+
+- `pause_before_post` を入力にしたのは、**毎回承認を挟むと自動化の意味が薄れる**ため。
+  通常はボタン1回で流し切り、必要な回だけ止める
+- `pre-migrate` を `prepare` の後に置いたのは、**新しいイメージでマイグレーションを打つ**必要があるため
+- **バックアップのジョブは持ちません。** トラック B で解決するため
+
+### 2.3 migration の有無を自動判定する
+
+本家の取り込みが常に migration を伴うわけではありません。次の判定で
+`pre-migrate` / `post-migrate` ごとスキップできます。
+
+```bash
+git diff --name-only <稼働中のタグ> <対象タグ> -- db/migrate db/post_migrate
+```
+
+### 2.4 ゼロダウンタイムの仕組み
+
+コンテナをプライベート IP にも公開し、nginx に**隣をバックアップとして登録**します。
+**既存の `acme-challenge` upstream と同じパターン**です。
+
+```nginx
+upstream mastodon_web {
+  server 127.0.0.1:3000 max_fails=2 fail_timeout=5s;
+  server 192.168.0.<隣>:3000 backup;
+}
+```
+
+転送先は隣の nginx ではなく**隣のアプリのポートを直接**指すため、ループは起きません。
+プライベート網があるので平文 HTTP で足ります。
+
+> ⚠️ **`proxy_next_upstream` は POST を再送しません。** これだけでは切替の瞬間に
+> 投稿が失敗し得ます。コンテナを止める前に **nginx から自分を外す（drain）** ことで
+> 取りこぼしをゼロにします。
+>
+> Ansible が「通常版」「drain 版」の include ファイルを両方配り、
+> **deploy がシンボリックリンクを張り替えて reload** します。
+> 設定の中身は構成管理が持ち、どちらを使うかはデプロイが決める、という分担です。
+
+**WebSocket（streaming）は再接続が発生します。** タイムラインのリアルタイム更新が
+一瞬止まってクライアントが繋ぎ直す挙動になります。ここはゼロにできません。
+
+### 2.5 イメージタグの持ち方
+
+**`ikatodon/compose.override.yml` に移します。**
+
+`ikatodon/` は upstream Mastodon に存在せず `.gitignore` にも掛からないため、
+`docker-compose.yml` を**本家のまま**に戻せます。**毎リリースの衝突が消えます**（問題 #8）。
+
+```yaml
+services:
+  web:
+    image: ghcr.io/koba-lab/ikatodon:v4.6.5
+    ports: ['${PRIVATE_IP}:3000:3000']
+  streaming:
+    image: ghcr.io/koba-lab/ikatodon-streaming:v4.6.5
+    ports: ['${PRIVATE_IP}:4000:4000']
+  sidekiq:
+    image: ghcr.io/koba-lab/ikatodon:v4.6.5
+```
+
+ポートの追加（2.4 で必要）も同じファイルに入るので、増えるファイルは1つだけです。
+タグ変更は今までどおり git のコミットとして残ります。
+
+ホストの `.env` に以下を置き、素の `docker compose` でも正しく効くようにします。
+
+```
+PRIVATE_IP=192.168.0.<自分>
+COMPOSE_FILE=docker-compose.yml:ikatodon/compose.override.yml
+```
+
+`ikatodon-db` が `.env` に `PRIVATE_IP` を書いているのと同じ流儀です。
+
+> 公開先は `192.168.0.0/24` の中だけで、DB と Redis が既にいる信頼範囲と同じです。
+
+### 2.6 検証をどこでやるか
+
+| どこ | 何を | 100%か |
+| --- | --- | --- |
+| **PR 時の CI** | override とマージした結果の `docker compose config`。**イメージが定義どおり起動し `/health` を返すか** | ホスト固有値（`PRIVATE_IP` / `COMPOSE_FILE`）が無いので**100%ではない** |
+| **prepare ジョブ** | ホスト上で `docker compose config -q` | ここで初めて 100% |
+
+イメージの起動確認を PR 時に置くのは、**本家が `command` を変えた場合をここで捕まえる**ためです。
+
+### 2.7 ロールバック
+
+前のタグを指定して再実行します。**DB は戻りません。** マイグレーションが適用済みなら
+旧イメージが新スキーマを見ることになります。Mastodon の pre-deployment migration は
+後方互換前提なので通常は動きますが、保証ではありません。
+
+**この保険がトラック B です。**
+
+---
+
+## 3. トラック B — PITR（任意時点復旧）
+
+### 3.1 要件
+
+用途は「migration の保険」です。サービスの性質上、
+
+- **保持は24〜48時間で十分**。1日前のデータですら使うか悩むレベル
+- 優先するのは**復旧点の細かさ**
+- **コストは抑える**
+
+### 3.2 方針：WAL アーカイブ
+
+フルダンプを頻繁に取る案は**保管費用が用途に見合いません**
+（2時間おき・7日保持で月 $1.3 規模。参照しないファイルの固定費として高い）。
+
+WAL アーカイブなら保存するのは**差分のみ**で、**任意の秒に戻せます**。
+
+```
+ベースバックアップ  1つ（日次で取り直し）
+      +
+WAL セグメント      16MB 単位。書き込みが発生した分だけ
+```
+
+保存先は **Backblaze B2**。既にメディアで使っており契約先が増えません。
+B2 は S3 互換 API を持つのでそのまま送れます。
+
+### 3.3 実装
+
+**自作しません。** `archive_command` を手書きするのは事故のもとです。
+
+- **wal-g** — S3 互換対応。圧縮込み
+- **pgBackRest** — より高機能。設定項目は多め
+
+> ⚠️ **`postgres:16` の公式イメージに wal-g は入っていません。**
+> wal-g を同梱した独自イメージを作るか、WAL を一旦マウント先へ吐いて別コンテナが
+> 送るか、どちらかになります。`ikatodon-db` の構成に手が入ります。
+
+### 3.4 注意点
+
+**アーカイブが失敗し続けると `pg_wal` が溜まってディスクを埋め、PostgreSQL が停止します。**
+PITR の古典的な事故です。ディスク逼迫を防ぐ仕組みが、設定を誤ると逆にディスクを埋めます。
+
+**監視が必須です。** Mackerel が既に入っているので、`pg_stat_archiver` の失敗回数を
+見るのが素直です。
+
+### 3.5 先に測ること
+
+WAL の生成量は書き込み量に比例するため、**実測しないと試算が確定しません。**
+
+```bash
+du -sh /var/lib/postgresql/16/data/pg_wal
+docker exec mastodon_postgres16 psql -U mastodon -d mastodon_production \
+  -c "SELECT * FROM pg_stat_archiver;"
+```
+
+### 3.6 あわせて直すもの
+
+- `restore.sh` の**非対話モード**追加（現状 y/N 確認があり自動実行できない・問題 #5）
+- `deploy-postgres.yml` の参照ファイル名の修正（問題 #1）
+- `PRIVATE_IP` のデフォルト `0.0.0.0` の廃止（問題 #2）
+
+---
+
+## 4. 構成管理 — Ansible
+
+**nginx 設定こそ IaC の対象です。** 現状はサーバー上にしか存在せず、手で編集されていて、
+変更の履歴も理由も残っていません。デプロイ手順が属人化していたのと同じ構造です。
+
+### 4.1 方針
+
+`ikatodon/ansible/` に置きます。`ikatodon-db` と同じ流儀です。
+
+**Ansible はエージェントレス**で、サーバー側に必要なのは SSH と Python3 だけ
+（どちらも既存）。常駐プロセスは増えません。
+
+管理対象：
+
+- nginx 設定（テンプレート化。通常版 / drain 版の include を含む）
+- `compose.override.yml`
+- `.env`（`PRIVATE_IP` / `COMPOSE_FILE`）
+- ufw
+
+**サーバー上のファイル数は増えますが、人が編集する対象はテンプレートだけになります。**
+
+### 4.2 既存サーバーへの導入手順
+
+**`--check --diff` で dry run できます。** 実際には何も変更せず「適用したらこの差分になる」
+だけを見られるので、**差分がゼロになるまでテンプレートを直してから**適用します。
+
+導入の難所はツールではなく、**現状の設定を正確にテンプレートへ起こすこと**です。
+暗黙に効いている設定を落とすと壊れます。`sudo nginx -T` で完全な現状を吸い出してから
+作業してください。
+
+### 4.3 ついでに片付くもの
+
+- `acme-challenge` の死んだ IP 2つ（問題 #7）
+- `error_page` の二重連結（問題 #9）
+- `nginx.conf` の `TLSv1 TLSv1.1`（問題 #11）
+- メンテナンス画面と `geo $allow_ip` の管理者 IP リストが記録として残る
+
+### 4.4 nginx の Docker 化は後
+
+`ikatodon-redis` は nginx を Docker で動かし、conf をリポジトリから bind mount しています。
+**最終形としてはこちらのほうが筋が良い**（設定とリポジトリが1対1で対応する）のですが、
+
+| 項目 | Docker 化で必要になること |
+| --- | --- |
+| **TLS 証明書** | certbot がホストで動いている。`/etc/letsencrypt` のマウントと renew 後の reload 伝達 |
+| 静的ファイル | `root /home/mastodon/live/public` のマウント |
+| メンテ画面 | `/var/www/html/maintenance.html` のマウント |
+| 実行ユーザー | 今 `user mastodon` で動いている理由の再現 |
+| ログ | 出力先が変わる。fail2ban が nginx ログを見ているなら影響 |
+| 切替の瞬間 | ホスト nginx を止めてコンテナが 443 を取るまで一度だけ停止 |
+
+**最上段の証明書は、トラック C が済めば消えます**（Origin CA は15年で更新不要）。
+そのため **Docker 化はトラック C の判断が出た後**にします。
+
+Ansible でテンプレート化した設定は、そのまま Docker 化時の `conf.d` の中身として
+持っていけるので、**やり直しにはなりません。**
+
+---
+
+## 5. トラック C — Cloudflare 化（実施未定）
+
+### 5.1 判断材料
+
+**本家 Mastodon は Cloudflare を非推奨にしていません。** むしろ Cloudflare のような
+「公開 IP 経由で到達するリバースプロキシ」のために
+[`trusted_proxy_ip`](https://docs.joinmastodon.org/admin/config/) という設定項目を
+用意しており、ここを正しく設定しないとレート制限とセキュリティ機能が壊れる、と
+明記されています。
+
+**通す場合の利点**
+
+- スパム・bot 対策、DDoS 緩和、オリジン IP の秘匿
+- 静的アセットのエッジキャッシュ
+- **Origin CA 証明書（15年）で Let's Encrypt を撤去できる。**
+  `upstream acme-challenge`、`location ^~ /.well-known/acme-challenge/`、
+  80番の server ブロックがまとめて消える
+
+**通す場合の欠点**
+
+- **連合が壊れるリスク。** 他インスタンスからの ActivityPub の inbox POST も
+  Cloudflare を通る。**Bot Fight Mode を有効にすると配送が失敗する**
+- **`real_ip` / `TRUSTED_PROXY_IP` の設定が必須**になる
+- **キャッシュ設定の誤りが情報漏洩に直結する**（認証済みページをキャッシュすると他人の
+  タイムラインが出る）
+- IPv4 だけプロキシして IPv6 を素通しにする、といった**設定の食い違いが連合の不具合を生む**
+- Cloudflare 自体が単一障害点になる
+
+**ゼロダウンタイムは得られません。** 無料プランにオリジンの確実なフェイルオーバーは無く、
+有料 Load Balancing は却下済みです。**トラック A の設計はこの判断に依存しません。**
+
+### 5.2 判断に必要な情報
+
+**なぜ現在 Cloudflare を通していないのか**、記録がどこにもありません。
+過去に理由があったのなら、それが最大の判断材料になります。
+
+---
+
+## 6. ロードマップ
+
+| 段階 | 内容 | 依存 |
+| --- | --- | --- |
+| 0 | `current-architecture.md` の未確認事項を埋める | — |
+| 1 | 危険な既知問題の修正（#1 #2） | 0 |
+| 2 | Ansible で nginx / `.env` / compose override を構成管理下に置く | 0 |
+| 3 | **トラック A**：デプロイ自動化 | 2 |
+| 4 | **トラック B**：PITR（3 と並行可） | 0 |
+| 5 | **トラック C**：Cloudflare 化の判断 | 独立 |
+| 6 | nginx の Docker 化 | 5 |
+
+---
+
+## 7. 未解決の論点
+
+| 論点 | 状態 |
+| --- | --- |
+| **GHA から ssh する経路** | `sudo ufw status` 待ち。SSH に IP 制限があれば GHA の IP レンジは広すぎるので別経路（Tailscale 等）が要る。制限が無ければデプロイ鍵を1つ足すだけ |
+| **`.env.production` の管理** | 現在ホスト手置き。Ansible Vault が受け皿になり得るが未決 |
+| **sidekiq の scheduler 重複** | 問題 #10 の確認結果次第 |
+
+> **セルフホストランナーは採用しません。** このフォークはパブリックリポジトリで、
+> パブリックリポジトリにセルフホストランナーを繋ぐのは既知のセキュリティ問題があります
+> （フォークからの PR で任意コードがサーバー上で実行され得る）。
