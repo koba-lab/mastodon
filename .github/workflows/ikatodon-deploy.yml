@@ -1,12 +1,8 @@
 name: Deploy ikatodon
+# Deployments are triggered by hand only. Pushing a tag builds the images
+# (see ikatodon-build.yml) but never touches the servers.
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Image tag to deploy (e.g. v4.6.4)'
-        type: string
-        required: true
-  workflow_call:
     inputs:
       version:
         description: 'Image tag to deploy (e.g. v4.6.4)'
@@ -42,7 +38,8 @@ jobs:
           ssh_private_key: ${{ secrets.IKATODON_SSH_PRIVATE_KEY }}
           ssh_known_hosts: ${{ secrets.IKATODON_SSH_KNOWN_HOSTS }}
           script: migrate.sh
-          args: ${{ inputs.version }} pre
+          version: ${{ inputs.version }}
+          phase: pre
 
   # Update the web servers one after another so that the other server keeps
   # serving the traffic sent to it by the DNS round robin.
@@ -67,7 +64,7 @@ jobs:
           ssh_private_key: ${{ secrets.IKATODON_SSH_PRIVATE_KEY }}
           ssh_known_hosts: ${{ secrets.IKATODON_SSH_KNOWN_HOSTS }}
           script: deploy.sh
-          args: ${{ inputs.version }}
+          version: ${{ inputs.version }}
 
   # Migrations that may only run once every server is on the new code.
   post-deploy-migration:
@@ -86,7 +83,8 @@ jobs:
           ssh_private_key: ${{ secrets.IKATODON_SSH_PRIVATE_KEY }}
           ssh_known_hosts: ${{ secrets.IKATODON_SSH_KNOWN_HOSTS }}
           script: migrate.sh
-          args: ${{ inputs.version }} post
+          version: ${{ inputs.version }}
+          phase: post
 
   report:
     needs: [pre-deploy-migration, deploy, post-deploy-migration]

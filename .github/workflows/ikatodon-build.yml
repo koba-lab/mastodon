@@ -34,12 +34,3 @@ jobs:
       flavor: |
         latest=auto
     secrets: inherit
-
-  deploy:
-    needs:
-      - build-image
-      - build-streaming-image
-    uses: ./.github/workflows/ikatodon-deploy.yml
-    with:
-      version: ${{ github.ref_name }}
-    secrets: inherit

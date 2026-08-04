@@ -23,8 +23,11 @@ inputs:
   script:
     description: Script to run (deploy.sh or migrate.sh)
     required: true
-  args:
-    description: Arguments passed to the script
+  version:
+    description: Image tag passed to the script as its first argument
+    required: true
+  phase:
+    description: Migration phase (pre or post), only used by migrate.sh
     default: ''
 
 runs:
@@ -40,11 +43,12 @@ runs:
         SSH_PRIVATE_KEY: ${{ inputs.ssh_private_key }}
         SSH_KNOWN_HOSTS: ${{ inputs.ssh_known_hosts }}
         SCRIPT: ${{ inputs.script }}
-        ARGS: ${{ inputs.args }}
+        VERSION: ${{ inputs.version }}
+        PHASE: ${{ inputs.phase }}
       run: |
         set -euo pipefail
 
-        for required in HOST USERNAME MASTODON_DIR SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+        for required in HOST USERNAME MASTODON_DIR SSH_PRIVATE_KEY SSH_KNOWN_HOSTS VERSION; do
           if [ -z "${!required}" ]; then
             echo "::error::${required} is empty, check the repository variables and secrets"
             exit 1
@@ -56,8 +60,9 @@ runs:
           *) echo "::error::unsupported script: ${SCRIPT}"; exit 1 ;;
         esac
 
-        case "$ARGS" in
-          '' | *[!A-Za-z0-9._\ -]*) echo "::error::invalid arguments: ${ARGS}"; exit 1 ;;
+        case "$PHASE" in
+          '' | pre | post) ;;
+          *) echo "::error::unsupported phase: ${PHASE}"; exit 1 ;;
         esac
 
         ssh_dir="$(mktemp -d)"
@@ -72,10 +77,17 @@ runs:
         ssh "${ssh_opts[@]}" "${USERNAME}@${HOST}" "rm -rf ~/${remote_dir} && mkdir -p ~/${remote_dir}"
         scp "${ssh_opts[@]}" "${GITHUB_WORKSPACE}/ikatodon/deploy/"*.sh "${USERNAME}@${HOST}:~/${remote_dir}/"
 
+        # Every value interpolated into the remote command is quoted here, so the
+        # scripts receive them as single arguments no matter what they contain.
+        remote_command="MASTODON_DIR=$(printf '%q' "$MASTODON_DIR")"
+        remote_command+=" bash ~/${remote_dir}/${SCRIPT} $(printf '%q' "$VERSION")"
+        if [ -n "$PHASE" ]; then
+          remote_command+=" $(printf '%q' "$PHASE")"
+        fi
+
         status=0
         # shellcheck disable=SC2029 # the command is intentionally expanded locally
-        ssh "${ssh_opts[@]}" "${USERNAME}@${HOST}" \
-          "MASTODON_DIR=$(printf '%q' "$MASTODON_DIR") bash ~/${remote_dir}/${SCRIPT} ${ARGS}" || status=$?
+        ssh "${ssh_opts[@]}" "${USERNAME}@${HOST}" "$remote_command" || status=$?
 
         ssh "${ssh_opts[@]}" "${USERNAME}@${HOST}" "rm -rf ~/${remote_dir}" || true
 

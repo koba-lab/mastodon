@@ -107,6 +107,10 @@ services:
     restart: always
     env_file: .env.production
     command: bundle exec sidekiq
+    # Sidekiq quiets down on SIGTERM and then waits for its running jobs (25s by
+    # default). The 10s docker compose default would SIGKILL it first and the
+    # interrupted jobs would be lost, so give it more room during deployments.
+    stop_grace_period: 60s
     # depends_on:
     #   - db
     #   - redis
@@ -117,6 +121,7 @@ services:
       - ./public/system:/mastodon/public/system
     healthcheck:
       test: ['CMD-SHELL', "ps aux | grep '[s]idekiq\ 8' || false"]
+      start_period: 60s
 
   ## Uncomment to enable federation with tor instances along with adding the following ENV variables
   ## http_hidden_proxy=http://privoxy:8118

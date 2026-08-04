@@ -37,7 +37,10 @@ rollback() {
 
 write_version "$VERSION"
 
-if ! compose up -d --remove-orphans --wait --wait-timeout "$WAIT_TIMEOUT" web streaming sidekiq; then
+# No --remove-orphans: db, redis and es are commented out in docker-compose.yml,
+# so it would delete those containers if any of them still exist on the host.
+# Recreating only the three services below is all a deployment needs.
+if ! compose up -d --wait --wait-timeout "$WAIT_TIMEOUT" web streaming sidekiq; then
   log 'containers did not become healthy'
   dump_diagnostics
   rollback

@@ -1,6 +1,7 @@
 # ikatodon デプロイ自動化
 
-タグを push するとコンテナイメージのビルドから Web サーバーへの反映までが自動で行われます。
+タグを push するとコンテナイメージが自動でビルドされます。**本番サーバーへの反映は自動では
+行われません**。Actions から **Deploy ikatodon** を手動実行したときだけデプロイされます。
 
 ## インフラ構成
 
@@ -16,8 +17,9 @@
 ## デプロイの流れ
 
 1. `.github/workflows/ikatodon-build.yml` がタグ push で `ghcr.io/koba-lab/ikatodon` と
-   `ghcr.io/koba-lab/ikatodon-streaming` のイメージをビルドして push する
-2. ビルド成功後に `.github/workflows/ikatodon-deploy.yml` が呼び出される
+   `ghcr.io/koba-lab/ikatodon-streaming` のイメージをビルドして push する。ここまでが自動
+2. Actions の **Deploy ikatodon** をデプロイしたいタグ（例: `v4.6.4`）を入力して手動実行すると、
+   `.github/workflows/ikatodon-deploy.yml` が以下を順に行う
    1. **pre deployment migration**: 1 台目の Web サーバーで
       `SKIP_POST_DEPLOYMENT_MIGRATIONS=true rails db:migrate` を実行する。
       旧コードと新コードが同時に動いても壊れないマイグレーションだけが適用されるため、
@@ -29,13 +31,24 @@
    3. **post deployment migration**: 全台が新コードになってから残りのマイグレーションを実行する
 3. いずれかの手順で失敗した場合はそこで停止し、まとめが Job Summary に出力される
 
+コンテナの入れ替えには `docker compose up -d` を使い、`docker compose down` は行いません。
+`up -d` は image タグが変わったサービス（`web` / `streaming` / `sidekiq`）だけを作り直すのに対し、
+`down` はネットワークを含むプロジェクト全体を落とすため、停止時間が伸びるだけで利点がありません。
+
 失敗時（コンテナが healthy にならない・ヘルスチェックが通らない）は、そのサーバーだけ
 直前のバージョンへ自動でロールバックし、`docker compose ps` と直近 200 行のログを
 Actions のログへ出力します。マイグレーションが失敗した場合は `rails db:migrate` の
 出力がそのまま Actions のログに残るため、サーバーへ入らずに原因を確認できます。
 
-手動でデプロイしたいときは Actions から **Deploy ikatodon** を `workflow_dispatch` で
-実行し、デプロイしたいタグ（例: `v4.6.4`）を入力してください。
+### 失敗したときの DB の状態
+
+- **pre deployment migration で失敗**: サーバーは 1 台も更新されていません。マイグレーションが
+  途中まで適用されている可能性はありますが、pre deployment migration は旧コードと同時に
+  動くことを前提に書かれているため、そのまま旧バージョンで動き続けられます
+- **rolling deploy で失敗**: 失敗したホストだけ自動で直前のバージョンへ戻ります。pre deployment
+  migration は適用済みのまま残りますが、上と同じ理由で旧コードのまま動作します
+- **post deployment migration で失敗**: 全台が新コードで動いている状態です。原因を直したうえで
+  `migrate.sh <version> post` を再実行すれば復旧します（デプロイのやり直しは不要）
 
 ## 必要な設定
 
@@ -64,7 +77,11 @@ Actions のログへ出力します。マイグレーションが失敗した場
 - `${IKATODON_MASTODON_DIR}` にこのリポジトリの `docker-compose.yml` と `.env.production` があること
 - 同ディレクトリの `.env` に `IKATODON_VERSION` が書き込まれます（`docker-compose.yml` の
   イメージタグはこの値で解決されます）。手動で `docker compose up -d` してもデプロイ済みの
-  バージョンが起動します
+  バージョンが起動します。`.env` の他の行は保持されますが、ファイルはデプロイユーザー所有・
+  `0644` で書き直されるため、秘密情報は `.env.production` 側に置いてください
+- ホスト上の `docker-compose.yml` はデプロイでは更新されません。このリポジトリの内容を
+  変更したとき（イメージタグの外部化や `stop_grace_period` の追加など）は、各 Web サーバーで
+  手動で反映してから次のデプロイを行ってください
 
 ## スクリプト
 
