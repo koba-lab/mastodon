@@ -66,11 +66,11 @@ graph TB
 
 ## 2. サーバー一覧
 
-| 役割 | 台数 | ホスト | 管理方法 |
-| --- | --- | --- | --- |
-| Web | **2台** | `150.95.184.57` / `163.44.167.100` | 手動。リポジトリを git clone し `docker compose` |
-| DB | 1台 | プライベート `192.168.0.10` | [`ikatodon-db`](https://github.com/koba-lab/ikatodon-db) の Ansible |
-| Redis | 1台 | プライベート網内 | [`ikatodon-redis`](https://github.com/koba-lab/ikatodon-redis) の compose |
+| 役割  | 台数    | ホスト                             | 管理方法                                                                  |
+| ----- | ------- | ---------------------------------- | ------------------------------------------------------------------------- |
+| Web   | **2台** | `150.95.184.57` / `163.44.167.100` | 手動。リポジトリを git clone し `docker compose`                          |
+| DB    | 1台     | プライベート `192.168.0.10`        | [`ikatodon-db`](https://github.com/koba-lab/ikatodon-db) の Ansible       |
+| Redis | 1台     | プライベート網内                   | [`ikatodon-redis`](https://github.com/koba-lab/ikatodon-redis) の compose |
 
 いずれも ConoHa VPS（Ubuntu 24 系）。
 
@@ -91,11 +91,11 @@ graph TB
 
 ConoHa のプライベートネットワークは**転送量課金の対象外**です。
 
-| 経路 | 内容 |
-| --- | --- |
-| Web → DB | `192.168.0.10:5432` |
+| 経路        | 内容                                            |
+| ----------- | ----------------------------------------------- |
+| Web → DB    | `192.168.0.10:5432`                             |
 | Web → Redis | プライベート網内の `:6379`（nginx stream 経由） |
-| Web ↔ Web | **現在は使っていない** |
+| Web ↔ Web   | **現在は使っていない**                          |
 
 ---
 
@@ -106,11 +106,11 @@ ConoHa のプライベートネットワークは**転送量課金の対象外**
 `docker-compose.yml` のうち、実際に動くのは3サービスです。`db` / `redis` / `es` は
 すべてコメントアウトされています。
 
-| サービス | イメージ | コマンド | 公開ポート |
-| --- | --- | --- | --- |
-| `web` | `ghcr.io/koba-lab/ikatodon` | `bundle exec puma -C config/puma.rb` | `127.0.0.1:3000` |
-| `streaming` | `ghcr.io/koba-lab/ikatodon-streaming` | `node ./streaming/index.js` | `127.0.0.1:4000` |
-| `sidekiq` | `ghcr.io/koba-lab/ikatodon` | `bundle exec sidekiq` | — |
+| サービス    | イメージ                              | コマンド                             | 公開ポート       |
+| ----------- | ------------------------------------- | ------------------------------------ | ---------------- |
+| `web`       | `ghcr.io/koba-lab/ikatodon`           | `bundle exec puma -C config/puma.rb` | `127.0.0.1:3000` |
+| `streaming` | `ghcr.io/koba-lab/ikatodon-streaming` | `node ./streaming/index.js`          | `127.0.0.1:4000` |
+| `sidekiq`   | `ghcr.io/koba-lab/ikatodon`           | `bundle exec sidekiq`                | —                |
 
 **ポートは `127.0.0.1` にのみバインドされているため、隣のサーバーからは到達できません。**
 
@@ -153,16 +153,16 @@ image: ghcr.io/koba-lab/ikatodon:v4.6.4
 
 ### 5.1 持っている責務
 
-| 機能 | 内容 |
-| --- | --- |
-| TLS 終端 | Let's Encrypt。`ssl_protocols TLSv1.2` |
-| アプリへの転送 | `proxy_pass http://127.0.0.1:3000` / `:4000` |
-| LE 更新の転送 | `upstream acme-challenge` に全台を登録し `proxy_next_upstream http_404` |
-| **メンテナンス画面** | `/var/www/html/maintenance.html` が存在すると 503 → メンテ画面 |
-| **管理者バイパス** | `geo $allow_ip` に列挙された IP はメンテ中も通常表示 |
-| メディアのリダイレクト | `/ikatodon-media/` → `files-ika.queloud.net` へ 301 |
-| 静的アセット | `/emoji`, `/packs`, `system/...` に長期キャッシュヘッダ |
-| gzip | 有効 |
+| 機能                   | 内容                                                                    |
+| ---------------------- | ----------------------------------------------------------------------- |
+| TLS 終端               | Let's Encrypt。`ssl_protocols TLSv1.2`                                  |
+| アプリへの転送         | `proxy_pass http://127.0.0.1:3000` / `:4000`                            |
+| LE 更新の転送          | `upstream acme-challenge` に全台を登録し `proxy_next_upstream http_404` |
+| **メンテナンス画面**   | `/var/www/html/maintenance.html` が存在すると 503 → メンテ画面          |
+| **管理者バイパス**     | `geo $allow_ip` に列挙された IP はメンテ中も通常表示                    |
+| メディアのリダイレクト | `/ikatodon-media/` → `files-ika.queloud.net` へ 301                     |
+| 静的アセット           | `/emoji`, `/packs`, `system/...` に長期キャッシュヘッダ                 |
+| gzip                   | 有効                                                                    |
 
 ### 5.2 メンテナンス画面の仕組み
 
@@ -196,11 +196,11 @@ if ($maintenance = true)               { return 503; }
 
 `ikatodon-db` の `deploy-postgres.yml` が、以下をサーバー上に配置する**定義**を持っています。
 
-| パス | 内容 |
-| --- | --- |
-| `/opt/mastodon/backup.sh` | `pg_dump -Fc` → `/opt/mastodon/backups/`、7日分保持 |
-| `/opt/mastodon/restore.sh` | `pg_restore`。**対話式**（y/N 確認あり） |
-| `/opt/mastodon/monitor.sh` | 接続数などの診断 |
+| パス                       | 内容                                                |
+| -------------------------- | --------------------------------------------------- |
+| `/opt/mastodon/backup.sh`  | `pg_dump -Fc` → `/opt/mastodon/backups/`、7日分保持 |
+| `/opt/mastodon/restore.sh` | `pg_restore`。**対話式**（y/N 確認あり）            |
+| `/opt/mastodon/monitor.sh` | 接続数などの診断                                    |
 
 さらに毎日 02:00 に `backup.sh` を実行する cron の定義もあります。
 
@@ -223,25 +223,25 @@ dump のサイズは 2〜3GB、所要時間は10分前後（聞き取り）。
 
 ### 8.1 確認済み
 
-| # | 問題 | 影響 |
-| --- | --- | --- |
-| 1 | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している | **Ansible が現状のまま実行できない**。バックアップ機構が入っているかも不明になる |
-| 2 | `ikatodon-db/docker-compose.yml` の `PRIVATE_IP` デフォルトが `0.0.0.0` | 設定が抜けると **PostgreSQL が全世界に公開される** |
-| 3 | post deployment migration を「1台目だけ新しい」状態で実行している | 全台更新後に走る前提の設計。古いコードが参照中のカラムを落とし得る |
-| 4 | 「本家で必要とされる追加コマンド」がどこにも記録されていない | 属人化。自動化の障害にもなる |
-| 5 | `restore.sh` が対話式（y/N） | 緊急時に自動復旧できない |
-| 6 | Ansible の `docker_compose` モジュールは非推奨 | `community.docker.docker_compose_v2` への移行が必要 |
-| 7 | `acme-challenge` upstream に現役でない IP が2つ残っている | LE 更新時に到達しない IP へ転送を試みる |
-| 8 | イメージタグを本家の `docker-compose.yml` に直接書いている | **毎リリース同じ行で衝突する** |
+| #   | 問題                                                                                          | 影響                                                                             |
+| --- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している | **Ansible が現状のまま実行できない**。バックアップ機構が入っているかも不明になる |
+| 2   | `ikatodon-db/docker-compose.yml` の `PRIVATE_IP` デフォルトが `0.0.0.0`                       | 設定が抜けると **PostgreSQL が全世界に公開される**                               |
+| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                             | 全台更新後に走る前提の設計。古いコードが参照中のカラムを落とし得る               |
+| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                  | 属人化。自動化の障害にもなる                                                     |
+| 5   | `restore.sh` が対話式（y/N）                                                                  | 緊急時に自動復旧できない                                                         |
+| 6   | Ansible の `docker_compose` モジュールは非推奨                                                | `community.docker.docker_compose_v2` への移行が必要                              |
+| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている                                     | LE 更新時に到達しない IP へ転送を試みる                                          |
+| 8   | イメージタグを本家の `docker-compose.yml` に直接書いている                                    | **毎リリース同じ行で衝突する**                                                   |
 
 ### 8.2 確度が低い / 要確認
 
-| # | 疑い | 確認方法 |
-| --- | --- | --- |
-| 9 | `error_page 500 501 502 504 /home/mastodon/live/public/500.html;` は URI として解釈され `root` と二重連結される。意図した 500.html が出ていない可能性 | 次回デプロイ中に実際の画面を見る |
-| 10 | 全台で同じ `bundle exec sidekiq` が動いているなら、`scheduler` キューが多重実行され定期ジョブが2回走っている可能性 | 各ホストの override の有無と sidekiq の起動オプション |
-| 11 | `/etc/nginx/nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残る（当該 vhost は 1.2 で上書き済みだが他 vhost には影響） | `sudo nginx -T` |
-| 12 | Redis の nginx が `ports: 6379:6379` で公開されている。Docker の publish は ufw を迂回することがあり、防御は nginx の `allow/deny` のみに依存 | `sudo ufw status`、外部からの疎通確認 |
+| #   | 疑い                                                                                                                                                  | 確認方法                                              |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| 9   | `error_page 500 501 502 504 /home/mastodon/live/public/500.html;` は URI として解釈され `root` と二重連結される。意図した 500.html が出ていない可能性 | 次回デプロイ中に実際の画面を見る                      |
+| 10  | 全台で同じ `bundle exec sidekiq` が動いているなら、`scheduler` キューが多重実行され定期ジョブが2回走っている可能性                                    | 各ホストの override の有無と sidekiq の起動オプション |
+| 11  | `/etc/nginx/nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残る（当該 vhost は 1.2 で上書き済みだが他 vhost には影響）                                | `sudo nginx -T`                                       |
+| 12  | Redis の nginx が `ports: 6379:6379` で公開されている。Docker の publish は ufw を迂回することがあり、防御は nginx の `allow/deny` のみに依存         | `sudo ufw status`、外部からの疎通確認                 |
 
 ---
 
@@ -273,12 +273,12 @@ docker compose config | grep -A3 sidekiq
 
 聞き取りが必要なもの：
 
-| 項目 | なぜ必要か |
-| --- | --- |
-| `.env.production` の管理方法 | 現在ホスト手置き。構成管理に載せるか判断が要る |
-| Elasticsearch の有無 | compose ではコメントアウト。`ES_ENABLED` の実態 |
-| Web サーバー側の Mackerel 監視 | DB には入っている。Web にもあるか |
-| **Web サーバーを Cloudflare 経由にしていない理由** | 記録がどこにも無い。今後の判断材料になる |
+| 項目                                               | なぜ必要か                                      |
+| -------------------------------------------------- | ----------------------------------------------- |
+| `.env.production` の管理方法                       | 現在ホスト手置き。構成管理に載せるか判断が要る  |
+| Elasticsearch の有無                               | compose ではコメントアウト。`ES_ENABLED` の実態 |
+| Web サーバー側の Mackerel 監視                     | DB には入っている。Web にもあるか               |
+| **Web サーバーを Cloudflare 経由にしていない理由** | 記録がどこにも無い。今後の判断材料になる        |
 
 ---
 
@@ -289,10 +289,10 @@ docker compose config | grep -A3 sidekiq
 
 検討中、以下の推測が実測によって否定されています。同じ誤解を繰り返さないために残します。
 
-| 推測 | 実際 |
-| --- | --- |
+| 推測                                               | 実際                                                       |
+| -------------------------------------------------- | ---------------------------------------------------------- |
 | Cloudflare Origin CA で Let's Encrypt を撤去できる | Cloudflare は本体経路に居ないため**不可**。LE は現役で必要 |
-| `real_ip` 未設定で `geo $allow_ip` が壊れている | **杞憂**。`$remote_addr` は実クライアント IP |
-| Cloudflare が1台停止時に他へ回してくれる | 経路に居ない。有料 Load Balancing は費用面で却下済み |
-| サーバー間通信には HTTPS が必要 | **不要**。プライベート網があるので平文 HTTP で足りる |
-| Web サーバーは4台 | **2台**。残り2 IP は古い設定の残骸 |
+| `real_ip` 未設定で `geo $allow_ip` が壊れている    | **杞憂**。`$remote_addr` は実クライアント IP               |
+| Cloudflare が1台停止時に他へ回してくれる           | 経路に居ない。有料 Load Balancing は費用面で却下済み       |
+| サーバー間通信には HTTPS が必要                    | **不要**。プライベート網があるので平文 HTTP で足りる       |
+| Web サーバーは4台                                  | **2台**。残り2 IP は古い設定の残骸                         |
