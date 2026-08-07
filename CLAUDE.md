@@ -27,6 +27,10 @@ git diff --stat <上流タグ> HEAD -- <ファイル>   # 出力が空なら上�
 
 機能 PR は `master` にマージし、その後 `master` → `ikatodon` の PR で本番へ反映します。
 
+この昇格 PR は `.github/workflows/ikatodon-promote-pr.yml` が `master` への push を検知して自動作成します。既に開いている昇格 PR があれば GitHub が自動で追随するため、重複して作られることはありません。マージするかどうかは常に人間の判断です。
+
+> 既定の `GITHUB_TOKEN` で作成した PR では CI がトリガーされません（GitHub の仕様）。`ikatodon` に必須ステータスチェックを設定する場合は、PAT を `secrets.IKATODON_PROMOTE_TOKEN` に登録してください（`contents:read` / `pull-requests:write`）。未登録なら `GITHUB_TOKEN` にフォールバックします。
+
 ## 上流バージョン追随の手順
 
 1. 上流タグを fetch する
