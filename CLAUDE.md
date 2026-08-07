@@ -29,7 +29,23 @@ git diff --stat <上流タグ> HEAD -- <ファイル>   # 出力が空なら上�
 
 この昇格 PR は `.github/workflows/ikatodon-promote-pr.yml` が `master` への push を検知して自動作成します。既に開いている昇格 PR があれば GitHub が自動で追随するため、重複して作られることはありません。マージするかどうかは常に人間の判断です。
 
-> 既定の `GITHUB_TOKEN` で作成した PR では CI がトリガーされません（GitHub の仕様）。`ikatodon` に必須ステータスチェックを設定する場合は、PAT を `secrets.IKATODON_PROMOTE_TOKEN` に登録してください（`contents:read` / `pull-requests:write`）。未登録なら `GITHUB_TOKEN` にフォールバックします。
+### CI のゲートは `master` 側に置く
+
+必須ステータスチェック（ruleset の "Require status checks to pass"）は **`master` にだけ設定し、`ikatodon` には設定しません**。コードが入ってくる入口は `master` であり、`ikatodon` へは master で CI を通した内容しか流れてこないためです。
+
+この配置には実利もあります。既定の `GITHUB_TOKEN` で作成した PR では CI がトリガーされない（ワークフローの再帰実行を防ぐ GitHub の仕様）ため、`ikatodon` に必須チェックを設定すると、自動作成された昇格 PR はチェックが永久に報告されずマージ不能になります。ゲートを `master` 側に置けばこの問題が起きず、PAT も不要です。
+
+どうしても `ikatodon` 側にも必須チェックが必要になった場合は、PAT を `secrets.IKATODON_PROMOTE_TOKEN` に登録してください（`contents:read` / `pull-requests:write`）。未登録なら `GITHUB_TOKEN` にフォールバックします。
+
+必須にするチェックを選ぶときの注意:
+
+- **`paths` フィルタ付きのワークフローを必須にしない。** `lint-ruby` / `lint-js` / `lint-css` / `lint-haml` / `test-js` / `test-migrations` などは変更パスによっては丸ごと実行されません。必須にするとドキュメントだけの PR が "Expected — Waiting for status" で永久に止まります
+- **`lint` という名前を指定しない。** `format-check` と `lint-*` の 5 本がどれもジョブ名 `lint` で、名前の文字列照合では区別できません
+- 常に実行されるのは `test-ruby.yml` と `format-check.yml` の 2 本だけです（`check-i18n` と `codeql` は `branches: [main, stable-*]` 指定のため `master` / `ikatodon` では発火しません）。名前が一意でパスフィルタもない **`test (.ruby-version)`** が第一候補です
+
+### `ikatodon` への直接マージについて
+
+`master` 以外から `ikatodon` へマージすることは、規約として避けます。ただし GitHub には base/head の組み合わせを制限する機能がないため、機械的には強制していません（強制するにはガード用ワークフローを `ikatodon` の必須チェックにする必要があり、上記の PAT 問題が再発します）。
 
 ## 上流バージョン追随の手順
 
