@@ -47,12 +47,18 @@ jobs:
             exit 0
           fi
 
-          # Mastodon のバージョン (タイトルで各回の昇格 PR を識別できるようにする)
-          version="$(gh api -H 'Accept: application/vnd.github.raw' \
-            "repos/${GH_REPO}/contents/lib/mastodon/version.rb?ref=${HEAD}" \
-            | awk '/def (major|minor|patch)$/ {
-                     getline; gsub(/[^0-9]/, ""); printf "%s%s", sep, $0; sep="."
-                   }')"
+          # Mastodon のバージョン (タイトルで各回の昇格 PR を識別できるようにする)。
+          # version.rb が読めなくても昇格 PR の作成自体は続行したいので、
+          # set -e で止まらないよう if で受けること
+          version=""
+          if version_rb="$(gh api -H 'Accept: application/vnd.github.raw' \
+               "repos/${GH_REPO}/contents/lib/mastodon/version.rb?ref=${HEAD}")"; then
+            version="$(awk '/def (major|minor|patch)$/ {
+                             getline; gsub(/[^0-9]/, ""); printf "%s%s", sep, $0; sep="."
+                           }' <<<"$version_rb")"
+          else
+            echo "::warning::lib/mastodon/version.rb を取得できませんでした。タイトルからバージョンを省きます"
+          fi
 
           title="master → ikatodon"
           [ -n "$version" ] && title="${title} v${version}"
@@ -73,15 +79,33 @@ jobs:
             migration_note="**あり (${migrations} 本)**"
           fi
 
-          # commits も 250 件で打ち切られる
-          commits_md="$(jq -r '
-            [.commits[] | "- " + .sha[0:7] + " " + (.commit.message | split("\n")[0])]
-            | reverse | join("\n")
-          ' <<<"$compare")"
-          shown="$(jq -r '.commits | length' <<<"$compare")"
+          # compare API の commits はページ指定なしだと「古い方から」250 件で打ち切られる。
+          # 打ち切られている場合は最終ページを取り直して新しい方を表示する
+          # (files と ahead_by は最初のレスポンスのものを使い続ける)
+          commits_json="$(jq -c '.commits' <<<"$compare")"
+          shown="$(jq -r 'length' <<<"$commits_json")"
+          commits_note=""
+
           if [ "$shown" -lt "$ahead" ]; then
-            commits_md="${commits_md}"$'\n'"- ... (全 ${ahead} 件のうち新しい ${shown} 件を表示)"
+            per_page=100
+            last_page=$(( (ahead + per_page - 1) / per_page ))
+            if paged="$(gh api \
+                 "repos/${GH_REPO}/compare/${BASE}...${HEAD}?per_page=${per_page}&page=${last_page}" \
+                 --jq '.commits')" && [ "$(jq -r 'length' <<<"$paged")" -gt 0 ]; then
+              commits_json="$paged"
+              shown="$(jq -r 'length' <<<"$commits_json")"
+              commits_note="- ... (全 ${ahead} 件のうち新しい ${shown} 件を表示)"
+            else
+              # 取り直せなかった場合、手元にあるのは「古い方」なのでそう明記する
+              commits_note="- ... (全 ${ahead} 件のうち古い ${shown} 件を表示)"
+            fi
           fi
+
+          commits_md="$(jq -r '
+            [.[] | "- " + .sha[0:7] + " " + (.commit.message | split("\n")[0])]
+            | reverse | join("\n")
+          ' <<<"$commits_json")"
+          [ -n "$commits_note" ] && commits_md="${commits_md}"$'\n'"${commits_note}"
 
           # ヒアドキュメントの中身はそのまま PR 本文になる
           # (run: | ブロックのインデントは YAML 側で剥がされるため、ここでの整形は不要)
