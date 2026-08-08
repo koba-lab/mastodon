@@ -27,13 +27,15 @@ git diff --stat <上流タグ> HEAD -- <ファイル>   # 出力が空なら上�
 
 機能 PR は `master` にマージし、その後 `master` → `ikatodon` の PR で本番へ反映します。
 
-この昇格 PR は `.github/workflows/ikatodon-promote-pr.yml` が `master` への push を検知して自動作成します。既に開いている昇格 PR があれば GitHub が自動で追随するため、重複して作られることはありません。マージするかどうかは常に人間の判断です。
+この `master` → `ikatodon` の PR は、`.github/workflows/ikatodon-promote-pr.yml` が `master` への push を検知して自動作成します。これまで手で作っていたものを自動化しただけで、マージするかどうかは常に人間の判断です。既に開いている PR があればタイトルと本文が更新されるだけで、重複して作られることはありません。
+
+タイトルは `master → ikatodon (PR #883)` の形になります。番号は運ぶ変更の PR で、辿れば中身が分かります。
 
 ### CI のゲートは `master` 側に置く
 
 必須ステータスチェック（ruleset の "Require status checks to pass"）は **`master` にだけ設定し、`ikatodon` には設定しません**。コードが入ってくる入口は `master` であり、`ikatodon` へは master で CI を通した内容しか流れてこないためです。
 
-この配置には実利もあります。既定の `GITHUB_TOKEN` で作成した PR では CI がトリガーされない（ワークフローの再帰実行を防ぐ GitHub の仕様）ため、`ikatodon` に必須チェックを設定すると、自動作成された昇格 PR はチェックが永久に報告されずマージ不能になります。ゲートを `master` 側に置けばこの問題が起きず、PAT も不要です。
+この配置には実利もあります。既定の `GITHUB_TOKEN` で作成した PR では CI がトリガーされない（ワークフローの再帰実行を防ぐ GitHub の仕様）ため、`ikatodon` に必須チェックを設定すると、自動作成された PR はチェックが永久に報告されずマージ不能になります。ゲートを `master` 側に置けばこの問題が起きず、PAT も不要です。
 
 どうしても `ikatodon` 側にも必須チェックが必要になった場合は、PAT を `secrets.IKATODON_PROMOTE_TOKEN` に登録してください（`contents:read` / `pull-requests:write`）。未登録なら `GITHUB_TOKEN` にフォールバックします。
 
