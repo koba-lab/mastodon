@@ -1,0 +1,82 @@
+// ikadon のパレット。
+// app/javascript/styles/mastodon/theme/_base.scss の複製に、ikadon の配色を当てたもの。
+// 公式の手順 (https://docs.joinmastodon.org/dev/frontend/theming/) に従っている。
+
+// 上流との対応:
+//   grey   → 青みを抜いた無彩色のグレー。950/900 が ikadon の地の色
+//   indigo → オレンジ (#fd751d)。ikadon のアクセントカラー
+//   yellow → ライム (#c9f21b)。お気に入りの星の色
+//   green  → ミントグリーン (#21ea80)。ブーストの色
+//   red    → 上流のまま（ikadon では色指定が無かった）
+
+// 元の値は PR #19 の variables.scss を参照。
+
+@mixin palette {
+  --color-white: #fff;
+  --color-black: #000;
+
+  // Grey — 上流の青みがかったグレーを、ikadon の無彩色グレーに置き換えている
+  --color-grey-50: #f4f3f2;
+  --color-grey-100: #e8e6e4;
+  --color-grey-200: #d5d3d1;
+  --color-grey-300: #c9c7c5; // ギザギザ地の明るい側
+  --color-grey-400: #a8a6a4;
+  --color-grey-500: #86847f;
+  --color-grey-600: #5f5d5a;
+  --color-grey-700: #444;
+  --color-grey-800: #333;
+  --color-grey-900: #272727; // ikadon の基準となるダーク
+  --color-grey-950: #1f1f1f; // 一番暗い地
+
+  // Indigo → オレンジ。トークン名は上流のまま（差し替えを局所化するため）
+  --color-indigo-50: #fff4ec;
+  --color-indigo-100: #ffe3d1;
+  --color-indigo-200: #ffc49f;
+  --color-indigo-300: #ffa26b;
+  --color-indigo-400: #ff8a45;
+  --color-indigo-500: #fd751d;
+  --color-indigo-600: #fe6703;
+  --color-indigo-700: #d15303;
+  --color-indigo-800: #a34003;
+  --color-indigo-900: #762e02;
+  --color-indigo-950: #401801;
+
+  // Red — 上流のまま
+  --color-red-50: #fef2f2;
+  --color-red-100: #ffe2e2;
+  --color-red-200: #ffc9c9;
+  --color-red-300: #ffa2a2;
+  --color-red-400: #ff6467;
+  --color-red-500: #fb2c36;
+  --color-red-600: #e7000b;
+  --color-red-700: #c10007;
+  --color-red-800: #9f0712;
+  --color-red-900: #82181a;
+  --color-red-950: #460809;
+
+  // Yellow → ライム。400 がお気に入りの星の色になる
+  --color-yellow-50: #fbfee8;
+  --color-yellow-100: #f5fdc7;
+  --color-yellow-200: #ebfb96;
+  --color-yellow-300: #ddf75f;
+  --color-yellow-400: #c9f21b;
+  --color-yellow-500: #b2d80f;
+  --color-yellow-600: #8fae0a;
+  --color-yellow-700: #6d840c;
+  --color-yellow-800: #556710;
+  --color-yellow-900: #475512;
+  --color-yellow-950: #242e05;
+
+  // Green → ミントグリーン。400 がブーストの色になる
+  --color-green-50: #eafff3;
+  --color-green-100: #cbffe3;
+  --color-green-200: #9bffcb;
+  --color-green-300: #58fbac;
+  --color-green-400: #21ea80;
+  --color-green-500: #06cf65;
+  --color-green-600: #00a950;
+  --color-green-700: #018442;
+  --color-green-800: #056838;
+  --color-green-900: #055530;
+  --color-green-950: #002f18;
+}

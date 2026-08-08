@@ -1,23 +1,47 @@
-@import 'mastodon/mixins';
-@import 'mastodon/variables';
-@import 'fonts/roboto';
-@import 'fonts/roboto-mono';
-@import 'fonts/montserrat';
+// ikadon テーマのエントリポイント。
 
-@import 'mastodon/reset';
-@import 'mastodon/basics';
-@import 'mastodon/containers';
-@import 'mastodon/lists';
-@import 'mastodon/footer';
-@import 'mastodon/compact_header';
-@import 'mastodon/forms';
-@import 'mastodon/accounts';
-@import 'mastodon/stream_entries';
-@import 'mastodon/components';
-@import 'mastodon/emoji_picker';
-@import 'mastodon/about';
-@import 'mastodon/tables';
-@import 'mastodon/admin';
-@import 'mastodon/rtl';
+// 公式の手順 (https://docs.joinmastodon.org/dev/frontend/theming/) に従い、
+// application.scss を複製して `@use 'mastodon/theme'` を差し替えたもの。
+// 末尾の `@use 'ikadon/layer'` だけが公式の手順に無い追加で、
+// 色トークンでは表現できない構造的な差分（ギザギザ・角丸）を担う。
 
-@import 'ikadon/ika-style';
+// 公式ドキュメントは `@use 'my_theme'` と書けとしているが、そのとおりに `@use 'ikadon'`
+// と書くと Sass がこのファイル自身を解決してしまい "Module loop" で失敗する
+// （テーマ名とフォルダ名が同じである以上、ドキュメントの例でも同じことが起きる）。
+// そのため `ikadon/index` を明示している。
+
+// 【アップグレード時の必須工程】
+// 下の @use 行は application.scss の複製である。上流がパーシャルを追加・削除すると
+// このファイルは自動では追随しない。Mastodon を上げたら必ず差分を確認すること。
+
+//   diff <(grep '^@use' app/javascript/styles/application.scss) \
+//        <(grep '^@use' app/javascript/styles/ikadon.scss)
+
+// 詳細は docs/ikadon-theme.md を参照。
+
+@use 'mastodon/variables';
+@use 'mastodon/mixins';
+@use 'fonts/roboto';
+@use 'fonts/roboto-mono';
+
+@use 'mastodon/reset';
+@use 'ikadon/index'; // ← application.scss では 'mastodon/theme'
+@use 'mastodon/basics';
+@use 'mastodon/branding';
+@use 'mastodon/containers';
+@use 'mastodon/lists';
+@use 'mastodon/widgets';
+@use 'mastodon/forms';
+@use 'mastodon/accounts';
+@use 'mastodon/components';
+@use 'mastodon/polls';
+@use 'mastodon/modal';
+@use 'mastodon/emoji_picker';
+@use 'mastodon/about';
+@use 'mastodon/tables';
+@use 'mastodon/admin';
+@use 'mastodon/dashboard';
+@use 'mastodon/rtl';
+@use 'mastodon/rich_text';
+
+@use 'ikadon/layer';
