@@ -1,0 +1,76 @@
+name: Create ikatodon promotion PR
+
+# master に変更がマージされたら、本番相当の ikatodon へ反映するための PR を自動作成する。
+# 既に同じ PR が開いていれば GitHub が自動で追随するため、何もせず既存 PR を報告する。
+#
+# 注意: 既定の GITHUB_TOKEN で作成した PR では CI がトリガーされない (GitHub の仕様)。
+# ikatodon に必須ステータスチェックを設定している場合は、PAT を
+# secrets.IKATODON_PROMOTE_TOKEN (contents:read / pull-requests:write) に登録すること。
+# 未登録なら GITHUB_TOKEN にフォールバックする。
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ikatodon-promote-pr
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or report the master to ikatodon pull request
+        env:
+          GH_TOKEN: ${{ secrets.IKATODON_PROMOTE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ikatodon
+          HEAD: master
+        run: |
+          set -euo pipefail
+
+          owner="${GH_REPO%%/*}"
+
+          # リポジトリを clone せずに差分を取る (mastodon は clone が重いため)
+          compare="$(gh api "repos/${GH_REPO}/compare/${BASE}...${HEAD}")"
+          ahead="$(jq -r '.ahead_by' <<<"$compare")"
+
+          if [ "$ahead" -eq 0 ]; then
+            echo "\`${BASE}\` は \`${HEAD}\` に追いついています。作成する PR はありません。" >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          existing="$(gh api \
+            "repos/${GH_REPO}/pulls?state=open&base=${BASE}&head=${owner}:${HEAD}" \
+            --jq '.[0].html_url // empty')"
+
+          if [ -n "$existing" ]; then
+            echo "既存の PR に ${ahead} コミットが反映されています: ${existing}" >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          body="$(jq -r '
+            "`master` にマージされた変更を本番相当の `ikatodon` へ反映する PR です。\n"
+            + "`.github/workflows/ikatodon-promote-pr.yml` により自動作成されました。\n\n"
+            + "## 反映されるコミット (" + (.ahead_by | tostring) + " 件)\n\n"
+            + ([.commits[] | "- " + .sha[0:7] + " " + (.commit.message | split("\n")[0])]
+               | reverse | join("\n"))
+            + "\n\nマージ前に、デプロイに必要な作業 (イメージのビルド、マイグレーション) が\n"
+            + "済んでいるかを確認してください。手順は `CLAUDE.md` の「デプロイ」節にあります。\n"
+          ' <<<"$compare")"
+
+          url="$(jq -n \
+            --arg title 'master → ikatodon (本番反映)' \
+            --arg body "$body" \
+            --arg head "$HEAD" \
+            --arg base "$BASE" \
+            '{title: $title, head: $head, base: $base, body: $body}' \
+            | gh api "repos/${GH_REPO}/pulls" --input - --jq '.html_url')"
+
+          echo "PR を作成しました (${ahead} コミット): ${url}" >>"$GITHUB_STEP_SUMMARY"
