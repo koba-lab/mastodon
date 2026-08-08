@@ -97,20 +97,6 @@ jobs:
           ## 含まれる変更
 
           ${changes}
-
-          ## デプロイ手順
-
-          デプロイ作業は**この PR をマージしたあと**に行います。マージ前に必要な準備はありません。
-
-          1. \`${BASE}\` にタグを打つ → \`ikatodon-build.yml\` が ghcr へイメージをビルドする
-          2. \`docker compose pull\`
-          3. マイグレーションがある場合は先に流す
-             \`docker compose run --rm web env SKIP_POST_DEPLOYMENT_MIGRATIONS=true bundle exec rails db:migrate\`
-          4. \`docker compose up -d\` で web を入れ替える
-          5. マイグレーションがある場合は post-deployment 分を流す
-             \`docker compose run --rm web bundle exec rails db:migrate\`
-
-          詳細は \`CLAUDE.md\` の「デプロイ」節を参照してください。
           EOF
           )"
 
