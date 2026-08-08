@@ -2,22 +2,217 @@
 
 // 色は _base.scss のパレット差し替えで大半が片付くため、ここに書くのは
 // トークンでは表現できないもの（ギザギザのストライプ、角丸、ギザギザ画像）だけに限る。
+// 個別セレクタでの色の直書きは、上流の UI 変更で浮くので避ける。
 
-// この PR では「テーマが有効になっていることが画面で分かる」最小限に留めてある。
-// 全体の作り込みは後続の PR で行う。仕様の一次ソースは PR #19 の
-// app/javascript/styles/ikadon/diff.scss。
+// 仕様の一次ソースは PR #19 の app/javascript/styles/ikadon/diff.scss。
+// ただし v4.6 では既定レイアウトが layout-single-column に変わり、
+// マルチカラムは「上級者 UI」のオプトインになっている。PR #19 が未完のまま
+// 止まったシングルカラムが、現在のメイン画面である。
 
 @use 'image';
 @use 'vars';
 
-// 全体の地。グレーのギザギザ
-.ui {
-  background: vars.$gray-stripe;
-}
+// ---------------------------------------------------------------------------
+// 共通
+// ---------------------------------------------------------------------------
 
-// カラムヘッダー。ギザギザ画像＋上側だけ角丸
-.column-header {
-  border-radius: vars.$radius-outer vars.$radius-outer 0 0;
+// カラムヘッダーのギザギザ。文字は黒
+.column-header,
+.column-back-button {
   background: image.$gray-jagged;
   color: var(--color-black);
+
+  a:hover {
+    background: rgb(0 0 0 / 50%);
+    color: var(--color-white);
+  }
+}
+
+.column-header__button,
+.column-header__back-button {
+  background: none;
+  color: var(--color-black);
+  transition: vars.$transition;
+
+  &:hover,
+  &:focus {
+    background: rgb(0 0 0 / 50%);
+    color: var(--color-white);
+    outline: none;
+  }
+}
+
+// スクロール領域はダークのギザギザ
+.scrollable,
+.getting-started,
+.empty-column-indicator,
+.regeneration-indicator,
+.notification__filter-bar,
+.account__section-headline {
+  background: vars.$dark-stripe;
+}
+
+// 検索欄
+.search__input {
+  background: vars.$dark-stripe;
+
+  &:focus {
+    background: vars.$dark-stripe;
+  }
+}
+
+// アバターは角丸。ブースト時に class が変わるので両方指定する
+.account__avatar {
+  border-radius: vars.$radius-inner;
+}
+
+// トゥートの区切り線
+.status {
+  border-bottom-color: var(--color-grey-300);
+}
+
+.focusable:focus {
+  background: rgb(0 0 0 / 30%);
+}
+
+// 詳細表示は地を透かす
+.detailed-status,
+.detailed-status__action-bar {
+  background: none;
+}
+
+// アンケートのグラフ
+.poll__chart {
+  background: color-mix(in srgb, vars.$light-blue 70%, black);
+
+  &.leading {
+    background: vars.$light-blue;
+  }
+}
+
+// プロフィールのヘッダー画像が無い場合の地
+.account__header__image {
+  background: vars.$dark;
+}
+
+// 通知アイコンの色分け
+.notification__message {
+  .icon-star {
+    color: vars.$yellow;
+  }
+
+  .icon-person-add {
+    color: vars.$light-blue;
+  }
+
+  .icon-repeat {
+    color: vars.$green;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// layout-multiple-columns（上級者 UI）
+// ---------------------------------------------------------------------------
+
+.layout-multiple-columns {
+  // 全体の地はグレーのギザギザ
+  .ui {
+    background: vars.$gray-stripe;
+  }
+
+  // カラムは上だけ角丸、スクロール領域は下だけ角丸
+  .column-header,
+  .column-back-button {
+    border-radius: vars.$radius-outer vars.$radius-outer 0 0;
+  }
+
+  .column > .scrollable,
+  .getting-started,
+  .empty-column-indicator {
+    border-radius: 0 0 vars.$radius-outer vars.$radius-outer;
+  }
+
+  .regeneration-indicator {
+    border-radius: vars.$radius-outer;
+  }
+
+  .search__input {
+    border-radius: vars.$radius-outer;
+  }
+
+  // ドロワー
+  .drawer__header {
+    overflow: hidden;
+    border-radius: vars.$radius-outer;
+    background: image.$pink-jagged;
+
+    a:hover {
+      background: rgb(0 0 0 / 50%);
+      color: var(--color-white);
+    }
+  }
+
+  .drawer__tab {
+    color: var(--color-black);
+  }
+
+  .drawer__inner {
+    background: vars.$dark-stripe;
+  }
+
+  .drawer__inner__mastodon {
+    background: image.$ink bottom / contain no-repeat;
+
+    img {
+      display: none;
+    }
+  }
+
+  .drawer__pager {
+    border-radius: vars.$radius-outer;
+  }
+
+  .column-link:hover {
+    background: vars.$orange-stripe;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// layout-single-column（v4.6 の既定レイアウト）
+// ---------------------------------------------------------------------------
+
+// シンプル UI は構造上、地を単色にした方が収まりが良い。
+// PR #19 のデザインレビューでそう結論が出ている。
+.layout-single-column {
+  .ui {
+    background: vars.$dark;
+  }
+
+  // 左右のパネルと中央カラムをダークのギザギザで塗る
+  .columns-area__panels__pane__inner,
+  .navigation-panel,
+  .compose-panel {
+    background: vars.$dark-stripe;
+  }
+
+  // シングルカラムでは角を丸めない
+  .column-header,
+  .column-back-button,
+  .column > .scrollable,
+  .getting-started,
+  .search__input {
+    border-radius: 0;
+  }
+
+  .column-link--transparent {
+    border-radius: 0;
+
+    &.active {
+      color: vars.$orange;
+    }
+
+    &:hover {
+      color: var(--color-white);
+    }
+  }
 }
