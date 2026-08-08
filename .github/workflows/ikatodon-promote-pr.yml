@@ -1,12 +1,13 @@
 name: Create ikatodon promotion PR
 
 # master に変更がマージされたら、本番相当の ikatodon へ反映するための PR を自動作成する。
-# 既に同じ PR が開いていれば GitHub が自動で追随するため、何もせず既存 PR を報告する。
+# 既に昇格 PR が開いていればタイトルと本文を最新の内容に更新する
+# (開いている間に master が進んでバージョンやコミット一覧が変わるため)。
 #
 # 注意: 既定の GITHUB_TOKEN で作成した PR では CI がトリガーされない (GitHub の仕様)。
-# ikatodon に必須ステータスチェックを設定している場合は、PAT を
-# secrets.IKATODON_PROMOTE_TOKEN (contents:read / pull-requests:write) に登録すること。
-# 未登録なら GITHUB_TOKEN にフォールバックする。
+# CI のゲートは master 側に置く方針なので通常は問題ないが、ikatodon にも必須ステータス
+# チェックを設定する場合は PAT を secrets.IKATODON_PROMOTE_TOKEN に登録すること
+# (contents:read / pull-requests:write)。未登録なら GITHUB_TOKEN にフォールバックする。
 
 on:
   push:
@@ -26,7 +27,7 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     steps:
-      - name: Create or report the master to ikatodon pull request
+      - name: Create or update the master to ikatodon pull request
         env:
           GH_TOKEN: ${{ secrets.IKATODON_PROMOTE_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -46,31 +47,87 @@ jobs:
             exit 0
           fi
 
-          existing="$(gh api \
-            "repos/${GH_REPO}/pulls?state=open&base=${BASE}&head=${owner}:${HEAD}" \
-            --jq '.[0].html_url // empty')"
+          # Mastodon のバージョン (タイトルで各回の昇格 PR を識別できるようにする)
+          version="$(gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/${GH_REPO}/contents/lib/mastodon/version.rb?ref=${HEAD}" \
+            | awk '/def (major|minor|patch)$/ {
+                     getline; gsub(/[^0-9]/, ""); printf "%s%s", sep, $0; sep="."
+                   }')"
 
-          if [ -n "$existing" ]; then
-            echo "既存の PR に ${ahead} コミットが反映されています: ${existing}" >>"$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
+          title="master → ikatodon"
+          [ -n "$version" ] && title="${title} v${version}"
+          title="${title} ($(TZ=Asia/Tokyo date +%Y-%m-%d))"
 
-          body="$(jq -r '
-            "`master` にマージされた変更を本番相当の `ikatodon` へ反映する PR です。\n"
-            + "`.github/workflows/ikatodon-promote-pr.yml` により自動作成されました。\n\n"
-            + "## 反映されるコミット (" + (.ahead_by | tostring) + " 件)\n\n"
-            + ([.commits[] | "- " + .sha[0:7] + " " + (.commit.message | split("\n")[0])]
-               | reverse | join("\n"))
-            + "\n\nマージ前に、デプロイに必要な作業 (イメージのビルド、マイグレーション) が\n"
-            + "済んでいるかを確認してください。手順は `CLAUDE.md` の「デプロイ」節にあります。\n"
+          # 新規マイグレーションの有無。compare API の files は 300 件で打ち切られるため、
+          # 打ち切りが疑われる場合は「なし」と誤って言い切らずに手元での確認を促す
+          files_len="$(jq -r '.files | length' <<<"$compare")"
+          migrations="$(jq -r '
+            [.files[]? | select(.filename | test("^db/(migrate|post_migrate)/"))] | length
           ' <<<"$compare")"
 
-          url="$(jq -n \
-            --arg title 'master → ikatodon (本番反映)' \
-            --arg body "$body" \
-            --arg head "$HEAD" \
-            --arg base "$BASE" \
-            '{title: $title, head: $head, base: $base, body: $body}' \
-            | gh api "repos/${GH_REPO}/pulls" --input - --jq '.html_url')"
+          if [ "$files_len" -ge 300 ]; then
+            migration_note="変更ファイルが多く自動判定できません。\`git diff --stat ${BASE} ${HEAD} -- db/\` で確認してください"
+          elif [ "$migrations" -eq 0 ]; then
+            migration_note="なし (マイグレーション手順は不要)"
+          else
+            migration_note="**あり (${migrations} 本)**"
+          fi
 
-          echo "PR を作成しました (${ahead} コミット): ${url}" >>"$GITHUB_STEP_SUMMARY"
+          # commits も 250 件で打ち切られる
+          commits_md="$(jq -r '
+            [.commits[] | "- " + .sha[0:7] + " " + (.commit.message | split("\n")[0])]
+            | reverse | join("\n")
+          ' <<<"$compare")"
+          shown="$(jq -r '.commits | length' <<<"$compare")"
+          if [ "$shown" -lt "$ahead" ]; then
+            commits_md="${commits_md}"$'\n'"- ... (全 ${ahead} 件のうち新しい ${shown} 件を表示)"
+          fi
+
+          # ヒアドキュメントの中身はそのまま PR 本文になる
+          # (run: | ブロックのインデントは YAML 側で剥がされるため、ここでの整形は不要)
+          body="$(cat <<EOF
+          \`master\` にマージされた変更を本番相当の \`ikatodon\` へ反映する PR です。
+          \`.github/workflows/ikatodon-promote-pr.yml\` が自動作成し、\`master\` に push があるたびに更新します。
+
+          | | |
+          |---|---|
+          | Mastodon バージョン | v${version:-?} |
+          | 反映コミット数 | ${ahead} |
+          | 新規マイグレーション | ${migration_note} |
+
+          ## 反映されるコミット
+
+          ${commits_md}
+
+          ## デプロイ手順
+
+          デプロイ作業は**この PR をマージしたあと**に行います。マージ前に必要な準備はありません。
+
+          1. \`${BASE}\` にタグを打つ → \`ikatodon-build.yml\` が ghcr へイメージをビルドする
+          2. \`docker compose pull\`
+          3. マイグレーションがある場合は先に流す
+             \`docker compose run --rm web env SKIP_POST_DEPLOYMENT_MIGRATIONS=true bundle exec rails db:migrate\`
+          4. \`docker compose up -d\` で web を入れ替える
+          5. マイグレーションがある場合は post-deployment 分を流す
+             \`docker compose run --rm web bundle exec rails db:migrate\`
+
+          詳細は \`CLAUDE.md\` の「デプロイ」節を参照してください。
+          EOF
+          )"
+
+          number="$(gh api \
+            "repos/${GH_REPO}/pulls?state=open&base=${BASE}&head=${owner}:${HEAD}" \
+            --jq '.[0].number // empty')"
+
+          payload="$(jq -n --arg title "$title" --arg body "$body" \
+            --arg head "$HEAD" --arg base "$BASE" \
+            '{title: $title, head: $head, base: $base, body: $body}')"
+
+          if [ -n "$number" ]; then
+            url="$(jq 'del(.head, .base)' <<<"$payload" \
+              | gh api --method PATCH "repos/${GH_REPO}/pulls/${number}" --input - --jq '.html_url')"
+            echo "既存の昇格 PR を更新しました (${ahead} コミット): ${url}" >>"$GITHUB_STEP_SUMMARY"
+          else
+            url="$(gh api "repos/${GH_REPO}/pulls" --input - --jq '.html_url' <<<"$payload")"
+            echo "昇格 PR を作成しました (${ahead} コミット): ${url}" >>"$GITHUB_STEP_SUMMARY"
+          fi
