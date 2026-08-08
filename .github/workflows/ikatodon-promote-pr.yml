@@ -1,0 +1,118 @@
+name: Create ikatodon PR
+
+# master に PR がマージされたら、それを本番相当の ikatodon へ入れるための PR を
+# 自動で作る。これまで手で作っていたものを自動化しただけで、マージするかどうかは
+# 常に人間の判断。既に PR が開いていればタイトルと本文を最新の内容に更新する。
+#
+# 注意: 既定の GITHUB_TOKEN で作成した PR では CI がトリガーされない (GitHub の仕様)。
+# CI のゲートは master 側に置く方針なので通常は問題ないが、ikatodon にも必須ステータス
+# チェックを設定する場合は PAT を secrets.IKATODON_PROMOTE_TOKEN に登録すること
+# (contents:read / pull-requests:write)。未登録なら GITHUB_TOKEN にフォールバックする。
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ikatodon-promote-pr
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update the master to ikatodon pull request
+        env:
+          GH_TOKEN: ${{ secrets.IKATODON_PROMOTE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ikatodon
+          HEAD: master
+        run: |
+          set -euo pipefail
+
+          owner="${GH_REPO%%/*}"
+
+          # リポジトリを clone せずに差分を取る (mastodon は clone が重いため)
+          compare="$(gh api "repos/${GH_REPO}/compare/${BASE}...${HEAD}")"
+          ahead="$(jq -r '.ahead_by' <<<"$compare")"
+
+          if [ "$ahead" -eq 0 ]; then
+            echo "\`${BASE}\` は \`${HEAD}\` に追いついています。作成する PR はありません。" >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # compare の commits はページ指定なしだと「古い方から」250 件で打ち切られる。
+          # master への PR マージコミットは範囲の最も新しい側に集まるため、打ち切られた
+          # ままだと PR 番号を 1 つも拾えない (上流の大規模追随でこれが起きる)。
+          # その場合は最終ページを取り直す。
+          commits="$(jq -c '.commits' <<<"$compare")"
+          if [ "$(jq -r 'length' <<<"$commits")" -lt "$ahead" ]; then
+            per_page=100
+            last_page=$(( (ahead + per_page - 1) / per_page ))
+            if paged="$(gh api \
+                 "repos/${GH_REPO}/compare/${BASE}...${HEAD}?per_page=${per_page}&page=${last_page}" \
+                 --jq '.commits')" && [ "$(jq -r 'length' <<<"$paged")" -gt 0 ]; then
+              commits="$paged"
+            else
+              echo "::warning::コミットが 250 件で打ち切られており、最終ページも取得できませんでした。PR 番号を拾えない可能性があります"
+            fi
+          fi
+
+          # 「Merge pull request #N from ...」形式のマージコミットから、
+          # 番号とタイトル (メッセージ 3 行目) を取り出す。マージされた順に並ぶ。
+          pr_list="$(jq -r '
+            [ .[]
+              | select(.commit.message | test("^Merge pull request #[0-9]+"))
+              | {
+                  number: (.commit.message | capture("^Merge pull request #(?<n>[0-9]+)").n),
+                  title:  (.commit.message | split("\n") | if length > 2 then .[2] else "" end)
+                }
+            ]
+          ' <<<"$commits")"
+
+          numbers="$(jq -r '[.[].number | "#" + .] | join(", ")' <<<"$pr_list")"
+
+          if [ -n "$numbers" ]; then
+            title="master → ikatodon (PR ${numbers})"
+            changes="$(jq -r '[.[] | "- #" + .number + " " + .title] | join("\n")' <<<"$pr_list")"
+          else
+            # master へ直接 push された場合や、上のページング取得に失敗したとき
+            head_sha="$(jq -r '.commits[-1].sha[0:7] // "unknown"' <<<"$compare")"
+            title="master → ikatodon (${head_sha})"
+            changes="- (PR 番号を特定できませんでした。${ahead} コミット)"
+          fi
+
+          # ヒアドキュメントの中身はそのまま PR 本文になる
+          # (run: | ブロックのインデントは YAML 側で剥がされるため、ここでの整形は不要)
+          body="$(cat <<EOF
+          \`master\` の変更を本番相当の \`${BASE}\` へ入れる PR です。
+          \`.github/workflows/ikatodon-promote-pr.yml\` が自動作成し、\`master\` に push があるたびに更新します。
+
+          ## 含まれる変更
+
+          ${changes}
+          EOF
+          )"
+
+          number="$(gh api \
+            "repos/${GH_REPO}/pulls?state=open&base=${BASE}&head=${owner}:${HEAD}" \
+            --jq '.[0].number // empty')"
+
+          payload="$(jq -n --arg title "$title" --arg body "$body" \
+            --arg head "$HEAD" --arg base "$BASE" \
+            '{title: $title, head: $head, base: $base, body: $body}')"
+
+          if [ -n "$number" ]; then
+            url="$(jq 'del(.head, .base)' <<<"$payload" \
+              | gh api --method PATCH "repos/${GH_REPO}/pulls/${number}" --input - --jq '.html_url')"
+            echo "既存の PR を更新しました: ${url}" >>"$GITHUB_STEP_SUMMARY"
+          else
+            url="$(gh api "repos/${GH_REPO}/pulls" --input - --jq '.html_url' <<<"$payload")"
+            echo "PR を作成しました: ${url}" >>"$GITHUB_STEP_SUMMARY"
+          fi
