@@ -17,6 +17,9 @@
 // ---------------------------------------------------------------------------
 
 // カラムヘッダーのギザギザ。文字は黒
+// カラムの種類ごとに色を変える。ロケールに依存する aria-label ではなく、
+// アイコンの種類（column-header__icon に付く icon-* クラス）で判定する。
+// ホーム = ライム（既定色）、通知 = 水色、ローカルタイムライン = 緑。
 .column-header,
 .column-back-button {
   background: image.$gray-jagged;
@@ -26,6 +29,14 @@
     background: rgb(0 0 0 / 50%);
     color: var(--color-white);
   }
+}
+
+.column-header:has(.icon-bell) {
+  background: image.$blue-jagged;
+}
+
+.column-header:has(.icon-globe) {
+  background: image.$yellow-jagged;
 }
 
 .column-header__button,
