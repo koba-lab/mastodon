@@ -212,6 +212,16 @@
   .column-link:hover {
     background: vars.$orange-stripe;
   }
+
+  // 「使い方」カラム（/deck/getting-started）に載る navigation-panel。
+  // シングルカラムの右パネルと違って column-header を持たず、
+  // .column にそのまま収まるだけなのでギザギザ地に直接文字が乗って読めなくなる。
+  // 他のカラムと同じダークのギザギザを敷き、角丸も四隅とも付けて
+  // 独立したカラムに見えるようにする。
+  .navigation-panel {
+    border-radius: vars.$radius-outer;
+    background: vars.$dark-stripe;
+  }
 }
 
 // ---------------------------------------------------------------------------
