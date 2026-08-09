@@ -124,7 +124,7 @@ flowchart TB
   パスによっては実行されないため必須にしない。常に実行されるのは `test-ruby.yml` と
   `format-check.yml` の2本
 - 上流追随手順にある「`docker-compose.yml` のイメージタグを3箇所更新する」という手順は、
-  2.5節の変更（compose のテンプレート化）が実現すると不要になる。**`CLAUDE.md` 側の更新も
+  3.2節の変更（compose のテンプレート化）が実現すると不要になる。**`CLAUDE.md` 側の更新も
   別途必要**（本 PR の対象外、別 PR で対応する）
 
 ### 2.3 実測で否定された推測
@@ -202,6 +202,12 @@ services:
   上限を設定する
 - `sidekiq` はポートを公開しない。ポート公開先はいずれも `192.168.0.0/24` の中だけで、DB /
   Redis と同じ信頼範囲に収まる
+- ⚠️ **`envsubst` は置換対象の変数を明示的に絞って呼び出す必要がある**（セキュリティ上重要、
+  Copilot 指摘）。変数指定なしで `envsubst` を実行すると、テンプレート内の `${PRIVATE_IP}`
+  まで GHA 側の環境変数（通常は未設定＝空文字）で置換されてしまい、結果として
+  `:3000:3000` のように**全インターフェースに公開され得る**。`envsubst '$IKATODON_VERSION'`
+  のように置換する変数を限定し、`${PRIVATE_IP}` は GHA 側では一切触らずホスト上の
+  `docker compose`（ホストの `.env` を参照）に展開させる
 
 ホストの `.env`（Ansible が配布、秘密は含まない）:
 
@@ -288,6 +294,11 @@ GHA が envsubst で compose ファイルを生成（入力した version を埋
 **これでバージョン指定の問題が消える。** 入力値がそのままファイルに入る。`git pull` も
 `git checkout` もデプロイから消える。整形は `sed` ではなく **`envsubst`** を使う。
 
+⚠️ **`envsubst` はここでも置換対象の変数を `IKATODON_VERSION` だけに絞って呼び出す**
+（3.2節参照）。絞らずに実行すると、テンプレート内の `${PRIVATE_IP}` が GHA 側の空の環境
+変数で置換され `:3000:3000` のように全インターフェースへ公開されかねない。`PRIVATE_IP` は
+GHA 側では触らず、ホスト上の `docker compose` がホストの `.env` から展開する。
+
 #### 採用しなかった案と理由
 
 同じ検討を繰り返さないための記録。
@@ -308,14 +319,18 @@ on: workflow_dispatch
 concurrency: 本番デプロイで1本に限定    ← 必須。複数 dispatch の同時実行による競合を防ぐ
 
 verify        PR 時の CI で担保済みの内容を再確認
-prepare       compose ファイルを envsubst で生成して2台へ scp 配置 → docker compose pull
+prepare       各ホストで現在の compose.override.yml を compose.previous.yml として退避
+                → 新しい compose ファイルを envsubst で生成して2台へ scp 配置
+                → docker compose pull
 pre-migrate   docker compose run --rm web env SKIP_POST_DEPLOYMENT_MIGRATIONS=true \
                 bundle exec rails db:migrate        ← 新イメージから実行する。exec は使わない
 deploy        matrix [host1, host2]、max-parallel: 1
                 1. nginx を drain（自分を外して reload）
                 2. docker compose up -d             ← down は不要
                 3. /health が通るまで待つ
-                4. nginx を復帰（reload）
+                4. 失敗時: compose.previous.yml を compose.override.yml に戻して
+                   docker compose up -d（＝前のイメージで再起動）→ nginx を復帰
+                5. 成功時: nginx を復帰（reload）
 gate          if: inputs.pause_before_post → Environments の承認待ち（追加コマンドを流す）
 post-migrate  docker compose run --rm web bundle exec rails db:migrate
 ```
@@ -323,6 +338,12 @@ post-migrate  docker compose run --rm web bundle exec rails db:migrate
 - **`version` の入力値は override テンプレートの `${IKATODON_VERSION}` に補間される。**
   prepare ジョブは対象バージョンの compose ファイルを生成・配置するところまでを担い、
   ホスト側で `git pull` して版を合わせるような手順は取らない
+- **自動ロールバックには「上書き前の compose ファイル」の退避が必須。** prepare が
+  compose.override.yml を新バージョンで上書きしてしまうため、単に `docker compose up -d`
+  を再実行しても「前のイメージ」を指せない。prepare のタイミングで稼働中の
+  compose ファイル（またはバージョン文字列）を `compose.previous.yml` として退避しておき、
+  ヘルスチェック失敗時にそれを `compose.override.yml` として再配置してから
+  `docker compose up -d` する
 - **workflow-level の `concurrency` グループを必須とする。** `max-parallel: 1` は同一 run
   内の matrix を直列化するだけで、複数の `workflow_dispatch` が同時に始まった場合の drain・
   migration・デプロイの競合は防げない
@@ -334,12 +355,12 @@ post-migrate  docker compose run --rm web bundle exec rails db:migrate
 
 #### 決定事項 — ロールバックは層ごとに分ける
 
-| いつ                         | 動作                                                                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **ヘルスチェックが通らない** | **自動。** 前のイメージで起動し直し、nginx を戻す。1台目で失敗すれば2台目へは進まない。サイトは終始生きている |
-| **migration が失敗**         | 自動で中断。コンテナはまだ入れ替えていないので影響なし                                                        |
-| **post migration が失敗**    | **自動では戻さない。** 両台とも新版で DB が中途半端な状態。デプロイを止めて通知する                           |
-| **公開後に不具合が判明**     | 手動。前の `version` を入力して再実行する。**DB は戻らない**（トラック B の PITR が保険）                     |
+| いつ                         | 動作                                                                                                                                                                                               |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ヘルスチェックが通らない** | **自動。** 退避しておいた `compose.previous.yml` を `compose.override.yml` として再配置し、前のイメージで起動し直してから nginx を戻す。1台目で失敗すれば2台目へは進まない。サイトは終始生きている |
+| **migration が失敗**         | 自動で中断。コンテナはまだ入れ替えていないので影響なし                                                                                                                                             |
+| **post migration が失敗**    | **自動では戻さない。** 両台とも新版で DB が中途半端な状態。デプロイを止めて通知する                                                                                                                |
+| **公開後に不具合が判明**     | 手動。前の `version` を入力して再実行する。**DB は戻らない**（トラック B の PITR が保険）                                                                                                          |
 
 #### 検証の分担
 
@@ -348,11 +369,15 @@ post-migrate  docker compose run --rm web bundle exec rails db:migrate
 | PR 時の CI     | 生成した compose の構文検証。イメージが定義どおり起動し `/health` を返すか | ホスト固有値（`PRIVATE_IP` 等）が無いので**不完全**                                                                                                                                                           |
 | prepare ジョブ | 配置した compose ファイルの構文検証（`compose config -q`）                 | **「100%」とは書かない。** これは構成（構文・変数展開結果）の検証であって、ホスト IP に実際に bind できるか、ポートが空いているか、コンテナが起動して `/health` を返すかは別途 preflight で確認する必要がある |
 
-### 5.3 唯一の未解決論点だった ssh 経路 — 解消済み
+### 5.3 GHA からサーバーへの ssh 経路 — ⚠️ 未確認（要確認事項）
 
-以前は「GHA からサーバーへの ssh 経路」が唯一の未解決論点だったが、**`ufw` が無効**で SSH
-に IP 制限が無いことが確認できた（2.1節）ため解消した。デプロイ用の公開鍵を1つ足すだけで
-よい。
+以前「`ufw` が無効なので解消済み」と記載していたが、これは撤回する。**`ufw` が無効である
+ことは、GitHub-hosted runner から実際に SSH できることを保証しない。** ConoHa 側のファイア
+ウォール、nftables/iptables、`sshd` の `Match Address` など、`ufw` とは別の制限が存在する
+可能性がある。
+
+⚠️ **未確認**: `ufw` は無効だが、実際に GitHub Actions の runner から 22/tcp への到達性と
+鍵認証が通るかどうかは確認できていない。10節の確認事項として扱う。
 
 **セルフホストランナーは採用しない。** このフォークはパブリックリポジトリで、フォークからの
 PR で任意コードがサーバー上で実行され得る既知の問題があるため。
@@ -387,7 +412,7 @@ PR で任意コードがサーバー上で実行され得る既知の問題が�
 先に測るべき値（10節の確認コマンドも参照）:
 
 ```bash
-du -sh /var/lib/postgresql/16/data/pg_wal
+docker exec mastodon_postgres16 du -sh /var/lib/postgresql/data/pg_wal   # PGDATA は postgres UID 所有・0700 のためコンテナ内から確認する
 docker exec mastodon_postgres16 psql -U mastodon -d mastodon_production \
   -c "SELECT * FROM pg_stat_archiver;"
 time /opt/mastodon/backup.sh   # 10分前後の見込み
@@ -398,13 +423,13 @@ time /opt/mastodon/backup.sh   # 10分前後の見込み
 **`.env.production` 内の各鍵は、失ったときの影響が鍵ごとに異なる。** 一律に「DB バックアップ
 だけでは復旧できない」とまとめると復旧要件を誤るため、鍵ごとに分けて記載する。
 
-| 鍵                           | 失うと                                                                            | 再生成の可否                               |
-| ---------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------ |
-| `ACTIVE_RECORD_ENCRYPTION_*` | **DB の暗号化カラムが復号不能になる。DB のバックアップがあっても復旧できない**    | 不可                                       |
-| `SECRET_KEY_BASE`            | 全セッションが無効化される。署名済み Cookie が壊れる                              | 再生成すると影響が発生するが致命的ではない |
-| `OTP_SECRET`                 | 2FA 関連に影響する                                                                | 不可（既存ユーザーの OTP 設定に影響）      |
-| `VAPID_PRIVATE_KEY`          | **再生成可能。** 既存の push 購読が無効になるだけで、暗号化カラムの復号とは無関係 | 可                                         |
-| `AWS_SECRET_ACCESS_KEY`      | 再発行可能                                                                        | 可                                         |
+| 鍵                           | 失うと                                                                                                                                                                                                                    | 再生成の可否                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `ACTIVE_RECORD_ENCRYPTION_*` | **DB の暗号化カラムが復号不能になる。DB のバックアップがあっても復旧できない**                                                                                                                                            | 不可                                       |
+| `SECRET_KEY_BASE`            | 全セッションが無効化される。署名済み Cookie が壊れる                                                                                                                                                                      | 再生成すると影響が発生するが致命的ではない |
+| `OTP_SECRET`                 | **移行後の DB では影響なし。** 旧形式 2FA 秘密を移行する post-migration でのみ参照される（`db/post_migrate/20240307180905_migrate_devise_two_factor_secrets.rb:82-115`）。移行済みであれば失っても既存 2FA には影響しない | 移行時にのみ必要                           |
+| `VAPID_PRIVATE_KEY`          | **再生成可能。** 既存の push 購読が無効になるだけで、暗号化カラムの復号とは無関係                                                                                                                                         | 可                                         |
+| `AWS_SECRET_ACCESS_KEY`      | 再発行可能                                                                                                                                                                                                                | 可                                         |
 
 PITR を整えても、`ACTIVE_RECORD_ENCRYPTION_*` のような復号不能系の鍵が失われれば意味が
 半減する点に変わりはない。
@@ -499,12 +524,12 @@ Mackerel を **Web 2台にも入れる**（現在 DB のみ）。⚠️ 無料�
 
 ### 8.4 見つけている穴
 
-| 穴                                     | 内容                                                                                                                                                                      |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`ufw` が無効**                       | ホスト上のサービスが全て外から見える状態。なお、コンテナの公開ポートは元々 ufw を迂回する性質があるため、`ufw` を有効化しても Docker の `ports:` 公開自体は別途対処が要る |
-| **Redis に認証が無い**                 | 守っているのは nginx / ホスト側の `allow 192.168.0.0/24` のみ。防御が1枚しかない                                                                                          |
-| **Docker ソケットのマウント**          | mackerel-agent が `/var/run/docker.sock:ro` をマウントしている（7.3節）。`:ro` はほぼ無意味で、乗っ取られれば実質ホストの root。Web 2台に入れると同じ構成が増える         |
-| `.env.production` にバックアップが無い | 6.3節参照                                                                                                                                                                 |
+| 穴                                     | 内容                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`ufw` が無効**                       | **公開インターフェースに bind / publish されているサービスに限り**、ufw による防御がない状態（`127.0.0.1` にのみバインドしている web / streaming は対象外。3.1節参照）。なお、コンテナの公開ポートは元々 ufw を迂回する性質があるため、`ufw` を有効化しても Docker の `ports:` 公開自体は別途対処が要る |
+| **Redis に認証が無い**                 | 守っているのは nginx / ホスト側の `allow 192.168.0.0/24` のみ。防御が1枚しかない                                                                                                                                                                                                                        |
+| **Docker ソケットのマウント**          | mackerel-agent が `/var/run/docker.sock:ro` をマウントしている（7.3節）。`:ro` はほぼ無意味で、乗っ取られれば実質ホストの root。Web 2台に入れると同じ構成が増える                                                                                                                                       |
+| `.env.production` にバックアップが無い | 6.3節参照                                                                                                                                                                                                                                                                                               |
 
 ---
 
@@ -545,14 +570,15 @@ Mackerel を **Web 2台にも入れる**（現在 DB のみ）。⚠️ 無料�
 ```bash
 sudo nginx -T                                     # Ansible テンプレート化の元データ
 ip -4 addr                                        # 各 Web サーバーのプライベート IP
-crontab -l -u mastodon                            # バックアップ cron が本当にあるか
+sudo crontab -l -u mastodon                       # バックアップ cron が本当にあるか（-u は root 権限が必要）
 ls -la /opt/mastodon/backups/
-du -sh /var/lib/postgresql/16/data/pg_wal
+docker exec mastodon_postgres16 du -sh /var/lib/postgresql/data/pg_wal   # PGDATA はホストから直接走査できないためコンテナ内で確認
 docker exec mastodon_postgres16 psql -U mastodon -d mastodon_production \
   -c "SELECT * FROM pg_stat_archiver;"
 time /opt/mastodon/backup.sh                      # 10分前後の見込み
 docker inspect --format '{{.Config.Cmd}}' <sidekiq コンテナ名>   # scheduler 重複（#13）
-grep -E '^ES_ENABLED=' .env.production            # 値まで見る。Elasticsearch を使っているか
+# GHA runner からの ssh 到達性（5.3節）。GitHub-hosted runner の IP レンジから
+# 22/tcp への到達性と鍵認証が通るかは、実際に workflow から接続して確認する必要がある
 ```
 
 > ⚠️ **`docker compose config` はここでは使わない。** `env_file` の内容を解決して出力するため、
@@ -560,9 +586,8 @@ grep -E '^ES_ENABLED=' .env.production            # 値まで見る。Elasticsea
 > sidekiq の `scheduler` 重複確認には、稼働中コンテナの command だけを直接見る
 > `docker inspect` を使う。
 >
-> Elasticsearch の使用有無確認も `grep -c ES_ENABLED` のような**存在数だけを数えるコマンド**
-> は使わない。`ES_ENABLED=false` でも `1` が返り「使用中」と誤判定されるため、値まで判定
-> できる `grep -E '^ES_ENABLED='` を使う。
+> Elasticsearch の使用有無は 2.1節の実測で「使っていない」と確定済みのため、ここでの
+> 再確認コマンドは不要（以前の版にあった `grep ES_ENABLED` 系のコマンドは削除した）。
 
 ### 聞き取りが必要なもの
 
