@@ -293,9 +293,21 @@ migration を「1台目だけ新しい」状態で実行してしまっている
 なかったが、静的ファイルはイメージ内のアプリ自身が配信できる（3.1節・2.1節で確認済み）ため、
 clone を維持する理由が無い。
 
+**なぜ nginx 側の変更なしで安全か（実測）。** 本家のサンプル設定 `dist/nginx.conf` は
+`try_files $uri @rails` のような、静的ファイルをディスクから優先して探す構成を例示している
+が、**`dist/nginx.conf` は upstream と完全一致しており（`git diff <現行タグ> HEAD --
+dist/nginx.conf` の出力が空）、実際には一度も使われていない。** 実際に運用されている
+`/etc/nginx/sites-available/ika.queloud.net` は、`location / { try_files $uri @proxy; }`
+や `location ~ ^/(emoji|packs|system/accounts/avatars|system/media_attachments/files) {
+... try_files $uri @proxy; }` のように、**既に全パスで「ディスクに無ければ常にアプリへ
+フォールバックする」構成になっている。** そのため、clone を廃止してディスク上に静的ファイル
+が置かれなくなっても、nginx は常に `@proxy`（アプリ）へフォールバックするだけで、
+`RAILS_SERVE_STATIC_FILES=true`（2.1節）によりアプリ側が配信を引き継ぐ。**nginx 設定側の
+切り替え作業は不要。**
+
 ```
 GHA が envsubst で override（compose.override.yml）を生成
-  → 対象バージョンのタグ（またはコミット）から本家の docker-compose.yml も取得
+  → 対象バージョンの「タグ」から本家の docker-compose.yml も取得
   → 両方を scp で2台へ配置  （appleboy/scp-action 等）
   → docker compose pull    （appleboy/ssh-action 等）
   → docker compose up -d
@@ -308,8 +320,14 @@ git clone を廃止すると、override（イメージタグ）だけを配布�
 イメージと同期せず、**Kamal を不採用にした理由（`deploy.yml` が compose と二重管理になり
 本家の変更が伝播しない）と同じ不整合**が起きる。これを避けるため、`prepare` は
 override だけでなく **対象バージョンのタグ時点の `docker-compose.yml` も同じタイミングで
-取得・配布する**。ロールバック時もこの2ファイルを常に同じ版の組で戻す（5.2節のロール
-バック手順、3.2節参照）。
+取得・配布する**。
+
+⚠️ **`version` 入力は「タグ」に限定する。** `ikatodon-build.yml` はタグ push
+（`on: push: tags: '*'`）のときだけイメージをビルドするため、コミット単位のイメージは
+存在しない。`${IKATODON_VERSION}` にコミット SHA を指定すると `docker compose pull` が
+失敗するため、`version` 入力・`docker-compose.yml` の取得元ともに**タグのみを受け付ける**。
+
+ロールバック時もこの2ファイルを常に同じ版の組で戻す（5.2節のロールバック手順、3.2節参照）。
 
 **これでバージョン指定の問題が消える。** 入力値がそのままファイルに入る。`git pull` も
 `git checkout` もデプロイから消える。整形は `sed` ではなく **`envsubst`** を使う。
@@ -339,9 +357,10 @@ on: workflow_dispatch
 concurrency: 本番デプロイで1本に限定    ← 必須。複数 dispatch の同時実行による競合を防ぐ
 
 verify        PR 時の CI で担保済みの内容を再確認
-prepare       各ホストで現在の compose.override.yml を compose.previous.yml として退避
-                → 新しい compose ファイルを envsubst で生成して2台へ scp 配置
-                → docker compose pull
+prepare       各ホストで、現在稼働中の docker-compose.yml と compose.override.yml を
+                「退避したペア」として *.previous.yml に退避
+                → 新しい override と対象タグの docker-compose.yml を envsubst で生成して
+                   2台へ scp 配置 → docker compose pull
 pre-migrate   docker compose run --rm web env SKIP_POST_DEPLOYMENT_MIGRATIONS=true \
                 bundle exec rails db:migrate        ← 新イメージから実行する。exec は使わない
 deploy        matrix [host1, host2]、max-parallel: 1
@@ -349,8 +368,11 @@ deploy        matrix [host1, host2]、max-parallel: 1
                 2. docker compose up -d             ← down は不要
                 3. /health に加え、DB/Redis 接続を伴う readiness チェックが通るまで待つ
                    （/health 単体では DB/Redis 未接続の壊れた新版も「成功」と誤判定する。4.2節）
-                4. 失敗時: compose.previous.yml と対象タグ以前の docker-compose.yml を
-                   両方元に戻して docker compose up -d（＝前のイメージで再起動）→ nginx を復帰
+                4. 失敗時: 退避しておいた *.previous.yml のペアをそのまま
+                   docker-compose.yml / compose.override.yml として復元し
+                   docker compose up -d（＝前のイメージ・前の base compose の組で再起動）
+                   → nginx を復帰。**2台目の失敗なら、既に新版へ更新済みの1台目も
+                   逆順に drain → 同じ復元手順で旧版に戻す**（新旧混在のまま終わらせない）
                 5. 成功時: nginx を復帰（reload）
 gate          if: inputs.pause_before_post → Environments の承認待ち（追加コマンドを流す）
 post-migrate  docker compose run --rm web bundle exec rails db:migrate
@@ -359,12 +381,18 @@ post-migrate  docker compose run --rm web bundle exec rails db:migrate
 - **`version` の入力値は override テンプレートの `${IKATODON_VERSION}` に補間される。**
   prepare ジョブは対象バージョンの compose ファイルを生成・配置するところまでを担い、
   ホスト側で `git pull` して版を合わせるような手順は取らない
-- **自動ロールバックには「上書き前の compose ファイル」の退避が必須。** prepare が
-  compose.override.yml を新バージョンで上書きしてしまうため、単に `docker compose up -d`
-  を再実行しても「前のイメージ」を指せない。prepare のタイミングで稼働中の
-  compose ファイル（またはバージョン文字列）を `compose.previous.yml` として退避しておき、
-  ヘルスチェック失敗時にそれを `compose.override.yml` として再配置してから
-  `docker compose up -d` する
+- **自動ロールバックには「上書き前の compose ファイル一式」の退避が必須。** prepare が
+  `docker-compose.yml` と `compose.override.yml` を新バージョンで上書きしてしまうため、
+  単に `docker compose up -d` を再実行しても「前のイメージ」を指せない。**退避は override
+  だけでなく base compose（`docker-compose.yml`）も対象とし、両者を「その時点で実際に
+  稼働していたペア」としてまとめて退避・復元する。** 「対象タグ以前」のような曖昧な参照
+  ではなく、退避した実体をそのまま戻す操作にする（曖昧な版指定だと、旧イメージと別
+  バージョンの `command` / `healthcheck` が組み合わさる恐れがある）
+- **2台目が失敗すると新旧混在のまま止まる問題への対応。** `deploy` の matrix は
+  `max-parallel: 1` で直列に進むため、2台目の readiness チェックが失敗した時点では
+  1台目は既に新版のまま残っている。これを放置すると「自動ロールバックで元の状態に戻る」
+  という前提が崩れるため、**2台目の失敗時は、既に更新済みの1台目についても逆順に
+  drain して同じ退避済みペアへ戻す**。両台とも旧版に揃った状態でロールバックを完了する
 - **workflow-level の `concurrency` グループを必須とする。** `max-parallel: 1` は同一 run
   内の matrix を直列化するだけで、複数の `workflow_dispatch` が同時に始まった場合の drain・
   migration・デプロイの競合は防げない
@@ -376,13 +404,13 @@ post-migrate  docker compose run --rm web bundle exec rails db:migrate
 
 #### 決定事項 — ロールバックは層ごとに分ける
 
-| いつ                                                                     | 動作                                                                                                                                                                                                                                                                                         |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **readiness チェックが通らない**（`/health` + DB/Redis 接続確認。4.2節） | **自動。** 退避しておいた `compose.previous.yml` と対象タグ以前の `docker-compose.yml` を再配置し、前のイメージで起動し直してから nginx を戻す。1台目で失敗すれば2台目へは進まない。サイトは終始生きている                                                                                   |
-| **migration が失敗**                                                     | 自動で中断。コンテナは入れ替えていないためサービスは継続するが、**`db:migrate` は複数の migration を順に確定していき `disable_ddl_transaction!` を使うものもあるため、DB が部分的に更新されている可能性がある**。「影響なし」ではない。DB 状態を確認し手動復旧するまで次のステップに進まない |
-| **post migration が失敗**                                                | **自動では戻さない。** 両台とも新版で DB が中途半端な状態。デプロイを止めて通知する                                                                                                                                                                                                          |
-| **公開後に不具合が判明（post migration 実行前）**                        | 手動。前の `version` を入力して再実行する。**DB は戻らない**（トラック B の PITR が保険）                                                                                                                                                                                                    |
-| **公開後に不具合が判明（post migration 実行後）**                        | ⚠️ **単純なアプリロールバックは安全ではない。** `db/post_migrate` にはカラム・テーブルを削除する migration が含まれるため、旧コードに戻すと既に削除されたスキーマへアクセスして起動後に壊れる。**forward fix（前進での修正）** か、**DB の復元（トラック B の PITR）を伴う手順**が必要       |
+| いつ                                                                     | 動作                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **readiness チェックが通らない**（`/health` + DB/Redis 接続確認。4.2節） | **自動。** 退避しておいた `docker-compose.yml` / `compose.override.yml` のペアをそのまま復元し、前のイメージ・前の base compose の組で起動し直してから nginx を戻す。**2台目で失敗した場合は、既に新版へ更新済みの1台目も逆順に drain して同じペアへ戻す**（新旧混在のまま終わらせない）。サイトは終始生きている |
+| **migration が失敗**                                                     | 自動で中断。コンテナは入れ替えていないためサービスは継続するが、**`db:migrate` は複数の migration を順に確定していき `disable_ddl_transaction!` を使うものもあるため、DB が部分的に更新されている可能性がある**。「影響なし」ではない。DB 状態を確認し手動復旧するまで次のステップに進まない                     |
+| **post migration が失敗**                                                | **自動では戻さない。** 両台とも新版で DB が中途半端な状態。デプロイを止めて通知する                                                                                                                                                                                                                              |
+| **公開後に不具合が判明（post migration 実行前）**                        | 手動。前の `version` を入力して再実行する。**DB は戻らない**（トラック B の PITR が保険）                                                                                                                                                                                                                        |
+| **公開後に不具合が判明（post migration 実行後）**                        | ⚠️ **単純なアプリロールバックは安全ではない。** `db/post_migrate` にはカラム・テーブルを削除する migration が含まれるため、旧コードに戻すと既に削除されたスキーマへアクセスして起動後に壊れる。**forward fix（前進での修正）** か、**DB の復元（トラック B の PITR）を伴う手順**が必要                           |
 
 #### 検証の分担
 
@@ -587,7 +615,11 @@ Mackerel を **Web 2台にも入れる**（現在 DB のみ）。⚠️ 無料�
 ## 10. 未確認事項と確認コマンド
 
 以下のコマンドの結果を貼れば、後続の作業（Ansible テンプレート化、デプロイ自動化の実装
-など）に進めます。
+など）に進めます。**貼る前に、秘密値・ホスト名・不要な内部情報が含まれていないか確認して
+ください。** 特に `sudo nginx -T`（全 include をまとめて出力するため証明書パスや内部情報が
+混ざり得る）、`sudo crontab -l -u mastodon`（ジョブの引数や環境変数が混ざり得る）、
+`docker compose config`（後述のとおり `.env.production` の秘密値が混ざる）の3つは注意が
+必要です。
 
 ```bash
 sudo nginx -T                                     # Ansible テンプレート化の元データ
