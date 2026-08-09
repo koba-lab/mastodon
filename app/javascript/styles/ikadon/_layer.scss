@@ -213,12 +213,14 @@
     background: vars.$orange-stripe;
   }
 
-  // 「使い方」カラム（/deck/getting-started）に載る navigation-panel。
-  // シングルカラムの右パネルと違って column-header を持たず、
-  // .column にそのまま収まるだけなのでギザギザ地に直接文字が乗って読めなくなる。
-  // 他のカラムと同じダークのギザギザを敷き、角丸も四隅とも付けて
-  // 独立したカラムに見えるようにする。
-  .navigation-panel {
+  // 「使い方」カラム（/deck/getting-started）。
+  // navigation-panel と、その兄弟要素の LinkFooter（インスタンス名やバージョン表記）が
+  // 同じ .column の直下に並んでいる。navigation-panel だけに背景を当てると
+  // LinkFooter がグレーのギザギザ地に取り残されて読めなくなるため、
+  // 親の .column 側に背景と角丸を当てる。他のカラムは column-header /
+  // scrollable が既に自前の背景を持っているので、.column に背景を足しても
+  // 見た目上は上書きされて実害はない（:has() でこのカラムだけに絞る）。
+  .column:has(.navigation-panel) {
     border-radius: vars.$radius-outer;
     background: vars.$dark-stripe;
   }
