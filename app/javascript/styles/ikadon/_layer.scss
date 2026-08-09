@@ -92,6 +92,34 @@
   background: none;
 }
 
+// DM は白の薄いオーバーレイ。
+// 上流の実装は --color-bg-brand-softest（ikadon ではオレンジを地の色に割り当てているため
+// 焦げ茶色になる）をそのまま乗せてしまい「浮いて見える」ので上書きする
+// （PR #19 のデザインレビューで machi-48 が指摘し、白いオーバーレイに決着した）。
+// v4.6 では .status.status-direct ではなく以下のクラスが使われる。
+.status__wrapper-direct,
+.notification-ungrouped--direct,
+.notification-group--direct {
+  background: rgb(255 255 255 / 10%);
+
+  &:focus {
+    background: rgb(255 255 255 / 10%);
+  }
+}
+
+.detailed-status__wrapper-direct {
+  .detailed-status,
+  .detailed-status__action-bar {
+    background: rgb(255 255 255 / 10%);
+  }
+}
+
+// お気に入りの星は、タイムライン上でアクティブにするとオレンジにする
+// （通知一覧の中のアイコンはライムのままにする。下の「通知アイコンの色分け」を参照）
+.icon-button.star-icon.active {
+  color: vars.$orange;
+}
+
 // アンケートのグラフ
 .poll__chart {
   background: color-mix(in srgb, vars.$light-blue 70%, black);
@@ -106,19 +134,17 @@
   background: vars.$dark;
 }
 
-// 通知アイコンの色分け
-.notification__message {
-  .icon-star {
-    color: vars.$yellow;
-  }
-
-  .icon-person-add {
-    color: vars.$light-blue;
-  }
-
-  .icon-repeat {
-    color: vars.$green;
-  }
+// 通知アイコンの色分け。
+// お気に入り（.notification-group--favourite）とブースト（--reblog）は、
+// 上流の --color-text-favourite-highlight / --color-text-success トークンが
+// _base.scss のパレット差し替えによってそのままライム・ミントグリーンになるため
+// 上書き不要。フォロー（--follow）だけ --color-text-brand（ikadon ではオレンジ）に
+// なってしまうので、水色に差し替える。
+// v4.6 の通知一覧は notifications_v2 の .notification-group__icon が使われ、
+// 旧 .notification__message は存在しない。
+.notification-group--follow .notification-group__icon,
+.notification-group--follow-request .notification-group__icon {
+  color: vars.$light-blue;
 }
 
 // ---------------------------------------------------------------------------
