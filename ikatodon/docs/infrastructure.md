@@ -30,7 +30,7 @@ flowchart TB
     B2[(Backblaze B2<br/>メディアストレージ)]
 
     subgraph ConoHa["ConoHa VPS（本体は Cloudflare 非経由）"]
-        subgraph Host1["Webサーバー1<br/>150.95.184.57"]
+        subgraph Host1["Webサーバー1<br/>（グローバルIP）"]
             Nginx1["nginx (systemd)"]
             Web1["web :3000"]
             Stream1["streaming :4000"]
@@ -39,7 +39,7 @@ flowchart TB
             Nginx1 --> Stream1
         end
 
-        subgraph Host2["Webサーバー2<br/>163.44.167.100"]
+        subgraph Host2["Webサーバー2<br/>（グローバルIP）"]
             Nginx2["nginx (systemd)"]
             Web2["web :3000"]
             Stream2["streaming :4000"]
@@ -56,17 +56,17 @@ flowchart TB
             Redis[(Redis<br/>認証なし)]
         end
 
-        Priv["プライベート網 192.168.0.0/24"]
+        Priv["プライベート網（RFC1918）"]
     end
 
     User -->|"ika.queloud.net<br/>DNS実測: ConoHa IP直"| Nginx1
     User -->|"ika.queloud.net"| Nginx2
     User -->|"files-ika.queloud.net"| CFProxy --> B2
 
-    Host1 -. "192.168.0.0/24" .- Priv
-    Host2 -. "192.168.0.0/24" .- Priv
-    DBHost -. "192.168.0.0/24" .- Priv
-    RedisHost -. "192.168.0.0/24" .- Priv
+    Host1 -. "プライベート網" .- Priv
+    Host2 -. "プライベート網" .- Priv
+    DBHost -. "プライベート網" .- Priv
+    RedisHost -. "プライベート網" .- Priv
 
     Web1 --> PG
     Web1 --> Redis
@@ -83,8 +83,13 @@ flowchart TB
   聞き取り）。メディアは移管済みでこのドキュメントの対象外。
 - 構成は **Web 2台・DB 1台・Redis 1台の計4台**。Redis は DB とは別の独立したホストで動いて
   いる（issue #876 の記載 + 実測。以前の版で Redis を DB サーバー内に描いていたのは誤り）。
-- Web / DB / Redis はプライベート網 `192.168.0.0/24` で相互通信する（実測: nginx の
-  `allow 192.168.0.0/24`、DB の `pg_hba.conf`）。
+- Web / DB / Redis はプライベート網（RFC1918）で相互通信する（実測: nginx の `allow` 設定、
+  DB の `pg_hba.conf`）。
+
+⚠️ **本ドキュメントでは、実際のグローバル IP アドレス・具体的なプライベートネットワークの
+レンジは意図的に記載していません**（このリポジトリはパブリックであるため）。実際の値は
+運用者のみが把握しています。「Redis に認証が無い」「`ufw` が無効」といった運用上の既知の
+問題そのものはドキュメントの目的（宿題の記録）に必要な情報のため、そのまま残しています。
 
 ---
 
@@ -94,16 +99,16 @@ flowchart TB
 
 | 項目                                 | 事実                                                                                                                                                                                             | 根拠                               |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| Web サーバー                         | **2台**。`150.95.184.57` / `163.44.167.100`                                                                                                                                                      | DNS 実測                           |
+| Web サーバー                         | **2台**（グローバル IP は意図的に省略。パブリックリポジトリのため）                                                                                                                              | DNS 実測                           |
 | Cloudflare                           | 本体には噛んでいない（メディアのみ）                                                                                                                                                             | ConoHa の IP がそのまま DNS に返る |
-| プライベート網                       | Web / DB / Redis が `192.168.0.0/24` に載っている                                                                                                                                                | 設定ファイル実測                   |
+| プライベート網                       | Web / DB / Redis が同じプライベート網（RFC1918）に載っている（具体的なレンジは意図的に省略）                                                                                                     | 設定ファイル実測                   |
 | メディア                             | Backblaze B2（`S3_ENABLED=true`、`S3_ALIAS_HOST=files-ika.queloud.net`）                                                                                                                         | `.env.production` 実測             |
 | `public/system` のディスク上のデータ | オブジェクトストレージ移行前の**レガシー残骸**。参照されていない                                                                                                                                 | 聞き取り + `S3_ENABLED=true`       |
 | 静的ファイル配信                     | **アプリ（イメージ内）が配信できる**。Dockerfile が `RAILS_SERVE_STATIC_FILES="true"` を設定（`Dockerfile:38,54`、`config/application.rb:89`）。`.env.production` に無くてもイメージ側の値が効く | 実測                               |
 | **Elasticsearch**                    | **使っていない**（`.env.production` に設定なし）                                                                                                                                                 | 実測                               |
 | **New Relic**                        | **OTEL でアプリのトレース・メトリクスを送信中**（`OTEL_EXPORTER_OTLP_ENDPOINT`）                                                                                                                 | 実測                               |
 | **`ufw`**                            | **非アクティブ（無効）**                                                                                                                                                                         | 実測                               |
-| **Redis の認証**                     | **無し**（`REDIS_PASSWORD` は空）。守っているのは nginx / ホスト側の `allow 192.168.0.0/24` のみ                                                                                                 | 聞き取り                           |
+| **Redis の認証**                     | **無し**（`REDIS_PASSWORD` は空）。守っているのはプライベート網からのみアクセス許可する nginx / ホスト側の設定のみ                                                                               | 聞き取り                           |
 | `docker-compose.override.yml`        | 本家の `.gitignore` で除外（73行目）                                                                                                                                                             | 実測                               |
 | `.env.production`                    | 同じく除外（28行目）。各ホストに手置きで、**バックアップ無し**                                                                                                                                   | 実測                               |
 | バックアップ cron                    | **未確認**。playbook に定義があるだけで、その playbook は壊れている                                                                                                                              | —                                  |
@@ -185,11 +190,11 @@ Web サーバー本体を Cloudflare 経由にするかどうかは **実施未�
 services:
   web:
     image: ghcr.io/koba-lab/ikatodon:${IKATODON_VERSION}
-    ports: ['${PRIVATE_IP}:3000:3000']
+    ports: ['${PRIVATE_IP:?PRIVATE_IP is required}:3000:3000']
     logging: { driver: json-file, options: { max-size: 50m, max-file: '3' } }
   streaming:
     image: ghcr.io/koba-lab/ikatodon-streaming:${IKATODON_VERSION}
-    ports: ['${PRIVATE_IP}:4000:4000']
+    ports: ['${PRIVATE_IP:?PRIVATE_IP is required}:4000:4000']
     logging: { driver: json-file, options: { max-size: 50m, max-file: '3' } }
   sidekiq:
     image: ghcr.io/koba-lab/ikatodon:${IKATODON_VERSION}
@@ -200,8 +205,14 @@ services:
   無制限で、現在の compose には上限指定が無い。`web` だけでなく `sidekiq` も大量にログを
   吐くため、放置するとディスクを食い潰す（既知の問題 #9、9節参照）。3サービスとも同じ
   上限を設定する
-- `sidekiq` はポートを公開しない。ポート公開先はいずれも `192.168.0.0/24` の中だけで、DB /
+- `sidekiq` はポートを公開しない。ポート公開先はいずれもプライベート網の中だけで、DB /
   Redis と同じ信頼範囲に収まる
+- ⚠️ **決定事項 — `${PRIVATE_IP}` は fail-closed にする**（Copilot 指摘）。単純な
+  `${PRIVATE_IP}` という書き方だと、変数が未設定（Ansible の配布漏れ等）のとき Compose は
+  空文字で補間し、`ports: [':3000:3000']` のように**全インターフェースに公開されてしまう**。
+  `web` / `streaming` の両方で Compose の必須変数構文
+  `${PRIVATE_IP:?PRIVATE_IP is required}` を使い、未設定なら `docker compose` 自体が
+  エラーで止まるようにする（上記 yaml に反映済み）
 - ⚠️ **`envsubst` は置換対象の変数を明示的に絞って呼び出す必要がある**（セキュリティ上重要、
   Copilot 指摘）。変数指定なしで `envsubst` を実行すると、テンプレート内の `${PRIVATE_IP}`
   まで GHA 側の環境変数（通常は未設定＝空文字）で置換されてしまい、結果として
@@ -212,7 +223,7 @@ services:
 ホストの `.env`（Ansible が配布、秘密は含まない）:
 
 ```
-PRIVATE_IP=192.168.0.<自分>
+PRIVATE_IP=<プライベートIP>
 COMPOSE_FILE=docker-compose.yml:ikatodon/compose.override.yml
 ```
 
@@ -250,7 +261,7 @@ COMPOSE_FILE=docker-compose.yml:ikatodon/compose.override.yml
 ```nginx
 upstream mastodon_web {
   server 127.0.0.1:3000 max_fails=2 fail_timeout=5s;
-  server 192.168.0.<隣>:3000 backup;
+  server <隣のプライベートIP>:3000 backup;
 }
 ```
 
@@ -261,10 +272,12 @@ upstream mastodon_web {
 **WebSocket（streaming）は再接続が発生する。** ここは構造上ゼロにできない。
 
 **決定事項 — 切替の可否判定は公式の `/health` を使う。** `docker-compose.yml` の `web` /
-`streaming` には既にコンテナレベルの healthcheck（`curl localhost:3000/health`）があり、
-これが通らなければ `docker compose up -d` 自体がコンテナを healthy と認識しない。この
-前提のもと、`/health`（`app/controllers/health_controller.rb:3-6`）の応答をもって切替
-可否を判断する。⚠️ **残余リスク**: `/health` は DB / Redis への接続確認を行わないため、
+`streaming` には既にコンテナレベルの healthcheck（`curl localhost:3000/health`）が定義
+されているが、**`docker compose up -d` はコンテナを起動して即座に終了し、healthcheck の
+結果を待たない**（後から `unhealthy` になってもコマンド自体は失敗として扱われない）。
+実際に切替可否を判定しているのは **5.2節のデプロイ手順にある明示的な `/health` ポーリング**
+であり、その応答（`app/controllers/health_controller.rb:3-6`）をもって nginx を復帰する
+かどうかを決める。⚠️ **残余リスク**: `/health` は DB / Redis への接続確認を行わないため、
 新イメージにアプリ側のバグがあり DB/Redis 接続だけが壊れているケースは検知できないが、
 初期段階ではシンプルさを優先し、これは受け入れたリスクとする（オーナー判断）。
 
@@ -357,22 +370,26 @@ on: workflow_dispatch
 concurrency: 本番デプロイで1本に限定    ← 必須。複数 dispatch の同時実行による競合を防ぐ
 
 verify        PR 時の CI で担保済みの内容を再確認
-prepare       各ホストで、現在稼働中の docker-compose.yml と compose.override.yml を
-                「退避したペア」として *.previous.yml に退避
-                → 新しい override と対象タグの docker-compose.yml を envsubst で生成して
-                   2台へ scp 配置 → docker compose pull
+prepare       各ホストで、新しい override と対象タグの docker-compose.yml を
+                envsubst で生成し compose.next.yml / docker-compose.yml.next として
+                「別名でステージ」する（稼働中の docker-compose.yml / compose.override.yml
+                は一切上書きしない） → docker compose -f *.next.yml pull で新イメージのみ
+                事前取得
 pre-migrate   docker compose run --rm web env SKIP_POST_DEPLOYMENT_MIGRATIONS=true \
                 bundle exec rails db:migrate        ← 新イメージから実行する。exec は使わない
 deploy        matrix [host1, host2]、max-parallel: 1
                 1. nginx を drain（自分を外して reload）
-                2. docker compose up -d             ← down は不要
-                3. /health が通るまで待つ
-                4. 失敗時: 退避しておいた *.previous.yml のペアをそのまま
+                2. 稼働中の docker-compose.yml / compose.override.yml を
+                   *.previous.yml として退避 → ステージ済みの *.next.yml を
+                   docker-compose.yml / compose.override.yml として「初めて」有効化
+                3. docker compose up -d             ← down は不要
+                4. /health が通るまで待つ
+                5. 失敗時: 退避しておいた *.previous.yml のペアをそのまま
                    docker-compose.yml / compose.override.yml として復元し
                    docker compose up -d（＝前のイメージ・前の base compose の組で再起動）
                    → nginx を復帰。**2台目の失敗なら、既に新版へ更新済みの1台目も
                    逆順に drain → 同じ復元手順で旧版に戻す**（新旧混在のまま終わらせない）
-                5. 成功時: nginx を復帰（reload）
+                6. 成功時: nginx を復帰（reload）
 gate          if: inputs.pause_before_post → Environments の承認待ち（追加コマンドを流す）
 post-migrate  docker compose run --rm web bundle exec rails db:migrate
 ```
@@ -380,8 +397,19 @@ post-migrate  docker compose run --rm web bundle exec rails db:migrate
 - **`version` の入力値は override テンプレートの `${IKATODON_VERSION}` に補間される。**
   prepare ジョブは対象バージョンの compose ファイルを生成・配置するところまでを担い、
   ホスト側で `git pull` して版を合わせるような手順は取らない
-- **自動ロールバックには「上書き前の compose ファイル一式」の退避が必須。** prepare が
-  `docker-compose.yml` と `compose.override.yml` を新バージョンで上書きしてしまうため、
+- ⚠️ **決定事項 — `prepare` は稼働中の compose ファイルを書き換えない**（Copilot 指摘）。
+  以前の案では `prepare` の時点で `docker-compose.yml` / `compose.override.yml` を新版で
+  直接上書きしていたが、これだと2台目への配布・pull や pre-migrate が失敗した場合に
+  「旧コンテナが動いているのに、ホスト上の compose ファイルは新版」という不整合状態が残り、
+  さらにこの状態で再実行すると退避先の `compose.previous.yml` 自体を新版で上書きしてしまい、
+  正常だった退避ペアが失われる恐れがあった。これを避けるため、**新しい compose ファイルは
+  `*.next.yml` という別名でまずステージするだけにとどめ、実際に `docker-compose.yml` /
+  `compose.override.yml` として有効化するのは、各ホストを drain してコンテナを入れ替える
+  直前（`deploy` ステップの中）に限定する。** 稼働中ファイルの退避と入れ替えは同じ
+  タイミングでアトミックに行い、`prepare`〜`pre-migrate` のどの段階で失敗しても稼働中の
+  compose ファイルには一切手を付けていないため、そのまま安全に停止・再試行できる
+- **自動ロールバックには「上書き前の compose ファイル一式」の退避が必須。** 稼働中の
+  `docker-compose.yml` と `compose.override.yml` を `deploy` ステップの直前で退避しないと、
   単に `docker compose up -d` を再実行しても「前のイメージ」を指せない。**退避は override
   だけでなく base compose（`docker-compose.yml`）も対象とし、両者を「その時点で実際に
   稼働していたペア」としてまとめて退避・復元する。** 「対象タグ以前」のような曖昧な参照
@@ -593,7 +621,7 @@ Mackerel を **Web 2台にも入れる**（現在 DB のみ）。⚠️ 無料�
 | 穴                                     | 内容                                                                                                                                                                                                                                                                                                    |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`ufw` が無効**                       | **公開インターフェースに bind / publish されているサービスに限り**、ufw による防御がない状態（`127.0.0.1` にのみバインドしている web / streaming は対象外。3.1節参照）。なお、コンテナの公開ポートは元々 ufw を迂回する性質があるため、`ufw` を有効化しても Docker の `ports:` 公開自体は別途対処が要る |
-| **Redis に認証が無い**                 | 守っているのは nginx / ホスト側の `allow 192.168.0.0/24` のみ。防御が1枚しかない                                                                                                                                                                                                                        |
+| **Redis に認証が無い**                 | 守っているのはプライベート網からのみアクセスを許可する nginx / ホスト側の設定のみ。防御が1枚しかない                                                                                                                                                                                                    |
 | **Docker ソケットのマウント**          | mackerel-agent が `/var/run/docker.sock:ro` をマウントしている（7.3節）。`:ro` はほぼ無意味で、乗っ取られれば実質ホストの root。Web 2台に入れると同じ構成が増える                                                                                                                                       |
 | `.env.production` にバックアップが無い | 6.3節参照                                                                                                                                                                                                                                                                                               |
 
