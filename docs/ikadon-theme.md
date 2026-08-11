@@ -153,6 +153,88 @@ yarn lint:css
 （`app/views/settings/preferences/appearance/show.html.haml`）により、翻訳が無ければ
 テーマ名がそのまま出る。そのため i18n ファイルへの追加は不要。
 
+## VRT（Storybook / Chromatic）
+
+ikadon のレイアウト層（ギザギザ地・角丸・ジグザグヘッダー）を Storybook の VRT で
+継続的に撮るための構成。CLAUDE.md の「上流由来のコードには手を入れない」方針との
+折り合いとして、**上流と完全一致していたファイルへの変更は各1行だけ**に抑えている。
+
+### 変更した上流ファイルと理由
+
+1. `.storybook/preview.tsx`（27行目付近）
+
+   ```diff
+   - import '../app/javascript/styles/application.scss';
+   + import '../app/javascript/styles/ikadon.scss';
+   ```
+
+   `ikadon.scss` は `application.scss` の完全な複製＋イカ味なので、両方 import すると
+   後に読まれた方が勝ち、default の見た目しか撮れなくなる。フォークの Chromatic で
+   守りたいのは ikadon の見た目だけであり、default（本家テーマ）の VRT は上流が自前の
+   Chromatic プロジェクトで担保している。Storybook 全体が ikadon 固定になる（`modes.ts`
+   や `main.ts` は触っていない。テーマ切り替え自体を Storybook に持ち込む変更ではなく、
+   単一エントリポイントの差し替えのみ）。
+
+2. `.github/workflows/chromatic.yml`（41行目付近）
+
+   ```diff
+   - if: github.repository == 'mastodon/mastodon' && needs.pathcheck.outputs.changed == 'true'
+   + if: github.repository == 'koba-lab/mastodon' && needs.pathcheck.outputs.changed == 'true'
+   ```
+
+   このジョブは `github.repository == 'mastodon/mastodon'` でガードされているため、
+   何もしなければフォークでは永久に Skipped になり Chromatic が一度も走らない。
+   フォークのリポジトリ名に差し替えて実行させている。
+
+   `CHROMATIC_PROJECT_TOKEN` を `koba-lab/mastodon` の Secrets に登録する必要がある
+   （運用者側の作業。登録済みなら以降の追随作業は不要）。
+
+### 上流バージョンアップでコンフリクトした場合
+
+「上流バージョン追随の手順」と同じ判断基準（このファイルにイカトドン独自の変更が
+入っているか）で解決する。この2ファイルは変更が1行だけなので、実務上は次の手順で足りる。
+
+1. 上流の変更を丸ごと取り込む（コンフリクトした行以外はすべて上流版を採用）
+2. 該当の1行だけを上記の内容で再適用する
+3. `git diff <upstream-tag> HEAD -- .storybook/preview.tsx .github/workflows/chromatic.yml`
+   を取り、変更が相変わらず1行ずつであることを確認する
+
+`.storybook/preview.tsx` 側で上流がインポート文の周辺行を書き換えた場合は、
+`application.scss` を import している行を探して `ikadon.scss` に差し替えるだけでよい
+（前後の import 順が変わっても対応箇所は自明）。
+
+### 検証
+
+```bash
+yarn build-storybook
+```
+
+が通り、以下の3本の Story が ikadon 配色（ギザギザ地・角丸・ジグザグヘッダー）で
+含まれていることを確認する。上流の既存 Story はすべて葉コンポーネント（button・badge・
+account など）で、ikadon が塗るレイアウト容器を撮る Story が無かったため新規に追加した。
+配置は対象コンポーネントの隣、ファイル名に `.ikadon.` を挟む形。
+
+- `app/javascript/mastodon/components/column_header.ikadon.stories.tsx`
+  （`Ikadon/ColumnHeader`）— カラムの種類ごとの色分け（ホーム＝ライム／通知＝水色／
+  ローカルタイムライン＝黄色）とギザギザ地・角丸
+- `app/javascript/mastodon/features/ui/components/columns_area.ikadon.stories.tsx`
+  （`Ikadon/ColumnsArea`）— マルチカラム全体のグレーのギザギザ地。実データに依存しない
+  `ColumnLoading`（Column + ColumnHeader + scrollable の骨格）を子に並べている
+- `app/javascript/mastodon/features/ui/components/drawer.ikadon.stories.tsx`
+  （`Ikadon/Drawer`）— 「ドロワー」の本体は `features/compose/index.tsx` の `Compose`
+  だが、投稿フォーム内の `LanguageDropdown` / `UploadButton` が
+  `mastodon/initial_state` のモジュールレベル定数（import 時点で1度だけ
+  `window.initialState` を読む設計）に依存しており、Redux state ではないため Story 側
+  から上書きできず Storybook では描画できない。ハイドレーション前提の上流設計が原因で
+  ikadon 側には起因しないため、上流には手を入れず、実際に lazy-load 中に表示される
+  依存のない `DrawerLoading` と、`.drawer__header`/`.drawer__tab` の className 構造だけ
+  を軽量に再現したダミーナビゲーションを並べて代替した
+
+各 Story の `meta.parameters.chromatic.modes` はグローバル設定
+（`.storybook/preview.tsx` の `parameters.chromatic.modes`、light/dark の2モード）を
+上書きし、`ikadon` モード1つだけを追加している。ikadon は単一固定配色のため、
+light/dark 両方を撮っても差分が生まれず無駄なスナップショットになるため。
+
 ## 未実装
 
 PR #19 でも未完だった領域。
