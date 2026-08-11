@@ -157,51 +157,92 @@ yarn lint:css
 
 ikadon のレイアウト層（ギザギザ地・角丸・ジグザグヘッダー）を Storybook の VRT で
 継続的に撮るための構成。CLAUDE.md の「上流由来のコードには手を入れない」方針との
-折り合いとして、**上流と完全一致していたファイルへの変更は各1行だけ**に抑えている。
+折り合いとして、**上流ファイルへの変更は `.storybook/preview.tsx` の1行だけ**に
+抑えている。`.github/workflows/chromatic.yml` は上流のまま一切変更していない
+（`if: github.repository == 'mastodon/mastodon'` のガードにより、このフォークでは
+永久に Skipped になる＝一度も実行されない）。
 
-### 変更した上流ファイルと理由
+### 変更した上流ファイル
 
-1. `.storybook/preview.tsx`（27行目付近）
+`.storybook/preview.tsx`（27行目付近）のみ。
 
-   ```diff
-   - import '../app/javascript/styles/application.scss';
-   + import '../app/javascript/styles/ikadon.scss';
-   ```
+```diff
+- import '../app/javascript/styles/application.scss';
++ import '../app/javascript/styles/ikadon.scss';
+```
 
-   `ikadon.scss` は `application.scss` の完全な複製＋イカ味なので、両方 import すると
-   後に読まれた方が勝ち、default の見た目しか撮れなくなる。フォークの Chromatic で
-   守りたいのは ikadon の見た目だけであり、default（本家テーマ）の VRT は上流が自前の
-   Chromatic プロジェクトで担保している。Storybook 全体が ikadon 固定になる（`modes.ts`
-   や `main.ts` は触っていない。テーマ切り替え自体を Storybook に持ち込む変更ではなく、
-   単一エントリポイントの差し替えのみ）。
+`ikadon.scss` は `application.scss` の完全な複製＋イカ味なので、両方 import すると
+後に読まれた方が勝ち、default の見た目しか撮れなくなる。フォークの Chromatic で
+守りたいのは ikadon の見た目だけであり、default（本家テーマ）の VRT は上流が自前の
+Chromatic プロジェクトで担保している。Storybook 全体が ikadon 固定になる（`modes.ts`
+や `main.ts` は触っていない。テーマ切り替え自体を Storybook に持ち込む変更ではなく、
+単一エントリポイントの差し替えのみ）。
 
-2. `.github/workflows/chromatic.yml`（41行目付近）
+### 独自ワークフロー `ikatodon-chromatic.yml`
 
-   ```diff
-   - if: github.repository == 'mastodon/mastodon' && needs.pathcheck.outputs.changed == 'true'
-   + if: github.repository == 'koba-lab/mastodon' && needs.pathcheck.outputs.changed == 'true'
-   ```
+上流の `chromatic.yml` を書き換えて動かす代わりに、上流に存在しない
+`.github/workflows/ikatodon-chromatic.yml` を新設してそちらで Chromatic を実行している
+（上流に存在しないファイルなので CLAUDE.md の方針に抵触しない）。この構成にした理由は2つ。
 
-   このジョブは `github.repository == 'mastodon/mastodon'` でガードされているため、
-   何もしなければフォークでは永久に Skipped になり Chromatic が一度も走らない。
-   フォークのリポジトリ名に差し替えて実行させている。
+1. **上流ファイルを1行も汚さずに済む。** `chromatic.yml` は `mastodon/mastodon` 専用の
+   ガードが入っており、フォークでは何もしなければ動かない。ガードの条件式を書き換える
+   独自パッチを当てる代わりに、別ファイルとして持つことで上流追随時のコンフリクトを
+   完全にゼロにできる
+2. **`gh` から結果を機械的に読めるようにするため。** `chromaui/action` が返す
+   `errorCount`（Story のレンダリング失敗数＝本当のエラー）と `changeCount`（見た目の
+   差分数＝承認待ち）は、デフォルトでは commit status の `UI Tests: failure "Failed tests"`
+   という文言に潰されてしまい、GitHub 上から原因を判別できない。このワークフローは
+   `chromaui/action` に `id:` を振って outputs を取り出し、`$GITHUB_STEP_SUMMARY` と
+   PR コメントの両方に `key=value` 形式で書き出す
 
-   `CHROMATIC_PROJECT_TOKEN` を `koba-lab/mastodon` の Secrets に登録する必要がある
-   （運用者側の作業。登録済みなら以降の追随作業は不要）。
+トリガーは `pull_request`（`paths` フィルタなし）。CLAUDE.md が「`paths` フィルタ付きの
+ワークフローを必須ステータスチェックにするな」としているのに加え、テーマ由来の変更
+（SCSS だけでなく Story ファイルの追加なども含む）を取りこぼさないため、あえて絞り込んで
+いない。`exitZeroOnChanges: true` を指定して「差分がある」だけではジョブを失敗させず、
+最後のステップで `errorCount > 0` の場合のみ明示的に `exit 1` する。
+
+このワークフローが読める outputs は次の8つ： `errorCount` / `changeCount` /
+`testCount` / `actualCaptureCount` / `componentCount` / `specCount` / `buildUrl` /
+`storybookUrl`。
+
+- `errorCount > 0` → Story のレンダリングが実際に失敗している（本当のエラー）
+- `errorCount == 0 && changeCount > 0` → 見た目が変わっただけ（Chromatic 上での承認待ち）
+
+### AI／開発者が結果を確認する手順
+
+```bash
+# 直近の実行を確認
+gh run list --workflow=ikatodon-chromatic.yml --limit 1
+
+# ログから outputs を grep（ワークフロー内で key=value 形式でも出力している）
+gh run view <run-id> --log | grep -E 'errorCount=|changeCount=|testCount=|componentCount=|buildUrl=|storybookUrl='
+
+# PR コメントとして書き出された結果を見る（人間向けの表形式）
+gh pr view <PR番号> --comments
+
+# ジョブが失敗した場合は run 自体の結論も見る
+gh run view <run-id> --json conclusion,jobs
+```
 
 ### 上流バージョンアップでコンフリクトした場合
 
 「上流バージョン追随の手順」と同じ判断基準（このファイルにイカトドン独自の変更が
-入っているか）で解決する。この2ファイルは変更が1行だけなので、実務上は次の手順で足りる。
+入っているか）で解決する。
 
-1. 上流の変更を丸ごと取り込む（コンフリクトした行以外はすべて上流版を採用）
-2. 該当の1行だけを上記の内容で再適用する
-3. `git diff <upstream-tag> HEAD -- .storybook/preview.tsx .github/workflows/chromatic.yml`
-   を取り、変更が相変わらず1行ずつであることを確認する
+- `.github/workflows/chromatic.yml` は上流と完全一致しているはずなので、コンフリクトは
+  起きない。コンフリクトが出た場合は取り込み漏れなどの異常なので原因を調査する
+- `.github/workflows/ikatodon-chromatic.yml` は上流に存在しないファイルなのでコンフリクト
+  しない
+- `.storybook/preview.tsx` は変更が1行だけなので、上流がインポート文の周辺行を書き換えた
+  場合でも `application.scss` を import している行を探して `ikadon.scss` に差し替える
+  だけでよい（前後の import 順が変わっても対応箇所は自明）
 
-`.storybook/preview.tsx` 側で上流がインポート文の周辺行を書き換えた場合は、
-`application.scss` を import している行を探して `ikadon.scss` に差し替えるだけでよい
-（前後の import 順が変わっても対応箇所は自明）。
+確認コマンド:
+
+```bash
+git diff <upstream-tag> HEAD -- .storybook/preview.tsx .github/workflows/chromatic.yml
+# preview.tsx は1行の diff のみ、chromatic.yml は無出力（完全一致）であること
+```
 
 ### 検証
 

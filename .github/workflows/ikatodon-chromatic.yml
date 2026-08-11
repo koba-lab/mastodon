@@ -1,0 +1,101 @@
+name: 'ikatodon: Chromatic'
+
+# 上流の .github/workflows/chromatic.yml は `github.repository == 'mastodon/mastodon'` で
+# ガードされているため、このフォークでは一度も走らない。上流ファイルには手を入れず
+# （CLAUDE.md の方針）、代わりにこの独自ワークフローで Chromatic を実行する。
+#
+# あわせて、chromaui/action の outputs (errorCount / changeCount など) を
+# $GITHUB_STEP_SUMMARY と PR コメントに書き出す。Chromatic は「差分の承認待ち」と
+# 「Story のレンダリングエラー」を同じ commit status 文言 (`Failed tests`) で報告するため、
+# outputs を見なければ GitHub 上から原因を判別できない。
+
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  pull_request:
+
+jobs:
+  chromatic:
+    name: Run Chromatic
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Javascript environment
+        uses: ./.github/actions/setup-javascript
+
+      - name: Build Storybook
+        run: yarn build-storybook
+
+      - name: Run Chromatic
+        id: chromatic
+        uses: chromaui/action@07791f8243f4cb2698bf4d00426baf4b2d1cb7e0 # v13
+        with:
+          projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+          zip: true
+          storybookBuildDir: 'storybook-static'
+          exitOnceUploaded: true # Exit immediately after upload
+          exitZeroOnChanges: true # 差分だけではジョブを落とさない。エラー判定は後段で行う
+
+      - name: Report results
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ERROR_COUNT: ${{ steps.chromatic.outputs.errorCount }}
+          CHANGE_COUNT: ${{ steps.chromatic.outputs.changeCount }}
+          TEST_COUNT: ${{ steps.chromatic.outputs.testCount }}
+          ACTUAL_CAPTURE_COUNT: ${{ steps.chromatic.outputs.actualCaptureCount }}
+          COMPONENT_COUNT: ${{ steps.chromatic.outputs.componentCount }}
+          SPEC_COUNT: ${{ steps.chromatic.outputs.specCount }}
+          BUILD_URL: ${{ steps.chromatic.outputs.buildUrl }}
+          STORYBOOK_URL: ${{ steps.chromatic.outputs.storybookUrl }}
+        run: |
+          {
+            echo "## Chromatic 結果"
+            echo ""
+            echo "| key | value |"
+            echo "| --- | --- |"
+            echo "| errorCount | ${ERROR_COUNT:-N/A} |"
+            echo "| changeCount | ${CHANGE_COUNT:-N/A} |"
+            echo "| testCount | ${TEST_COUNT:-N/A} |"
+            echo "| actualCaptureCount | ${ACTUAL_CAPTURE_COUNT:-N/A} |"
+            echo "| componentCount | ${COMPONENT_COUNT:-N/A} |"
+            echo "| specCount | ${SPEC_COUNT:-N/A} |"
+            echo "| buildUrl | ${BUILD_URL:-N/A} |"
+            echo "| storybookUrl | ${STORYBOOK_URL:-N/A} |"
+            echo ""
+            echo '```'
+            echo "errorCount=${ERROR_COUNT:-}"
+            echo "changeCount=${CHANGE_COUNT:-}"
+            echo "testCount=${TEST_COUNT:-}"
+            echo "actualCaptureCount=${ACTUAL_CAPTURE_COUNT:-}"
+            echo "componentCount=${COMPONENT_COUNT:-}"
+            echo "specCount=${SPEC_COUNT:-}"
+            echo "buildUrl=${BUILD_URL:-}"
+            echo "storybookUrl=${STORYBOOK_URL:-}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY" > /tmp/chromatic-summary.md
+
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            gh pr comment "${{ github.event.pull_request.number }}" \
+              --repo "${{ github.repository }}" \
+              --edit-last \
+              --create-if-none \
+              --body-file /tmp/chromatic-summary.md
+          fi
+
+      - name: Fail if Chromatic reported real errors
+        if: always()
+        env:
+          ERROR_COUNT: ${{ steps.chromatic.outputs.errorCount }}
+        run: |
+          if [ "${ERROR_COUNT:-0}" -gt 0 ]; then
+            echo "Chromatic reported ${ERROR_COUNT} rendering error(s). See the summary above."
+            exit 1
+          fi
