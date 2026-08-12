@@ -1,6 +1,7 @@
 name: 'Chromatic'
 permissions:
   contents: read
+  pull-requests: write
 
 on:
   push:
@@ -41,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: pathcheck
-    if: github.repository == 'mastodon/mastodon' && needs.pathcheck.outputs.changed == 'true'
+    if: github.repository == 'koba-lab/mastodon' && needs.pathcheck.outputs.changed == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -55,10 +56,110 @@ jobs:
         run: yarn build-storybook
 
       - name: Run Chromatic
+        id: chromatic
         uses: chromaui/action@07791f8243f4cb2698bf4d00426baf4b2d1cb7e0 # v13
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
           zip: true
           storybookBuildDir: 'storybook-static'
-          exitOnceUploaded: true # Exit immediately after upload
           autoAcceptChanges: 'main' # Auto-accept changes on main branch only
+          # ikatodon: 撮影対象を ikadon 用の Story に限定する（上流の Story は対象外）
+          onlyStoryFiles: '**/*.ikadon.stories.tsx'
+          # ikatodon: Story 単位の結果を JUnit XML で得るため。デフォルトのファイル名は
+          # chromatic-build-{buildNumber}.xml（カレントディレクトリに出力される）
+          junitReport: true
+          # ikatodon: exitOnceUploaded は付けない。付けるとテスト完了前にジョブが終了し、
+          # errorCount / interactionTestFailuresCount などの outputs が空のまま読まれてしまう
+
+      # ikatodon: chromaui/action の outputs と JUnit XML の失敗詳細を
+      # $GITHUB_STEP_SUMMARY と PR コメントに書き出す。Chromatic は「差分の承認待ち」
+      # 「レンダリングエラー」「Interaction test の失敗」を commit status 上ではすべて
+      # 同じ `Failed tests` という文言で報告するため、outputs を見なければ
+      # GitHub 上から原因を判別できない
+      - name: Report results
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ERROR_COUNT: ${{ steps.chromatic.outputs.errorCount }}
+          INTERACTION_TEST_FAILURES_COUNT: ${{ steps.chromatic.outputs.interactionTestFailuresCount }}
+          CHANGE_COUNT: ${{ steps.chromatic.outputs.changeCount }}
+          TEST_COUNT: ${{ steps.chromatic.outputs.testCount }}
+          ACTUAL_CAPTURE_COUNT: ${{ steps.chromatic.outputs.actualCaptureCount }}
+          COMPONENT_COUNT: ${{ steps.chromatic.outputs.componentCount }}
+          SPEC_COUNT: ${{ steps.chromatic.outputs.specCount }}
+          BUILD_URL: ${{ steps.chromatic.outputs.buildUrl }}
+          STORYBOOK_URL: ${{ steps.chromatic.outputs.storybookUrl }}
+        run: |
+          {
+            echo "## Chromatic 結果"
+            echo ""
+            echo "| key | value |"
+            echo "| --- | --- |"
+            echo "| errorCount | ${ERROR_COUNT:-N/A} |"
+            echo "| interactionTestFailuresCount | ${INTERACTION_TEST_FAILURES_COUNT:-N/A} |"
+            echo "| changeCount | ${CHANGE_COUNT:-N/A} |"
+            echo "| testCount | ${TEST_COUNT:-N/A} |"
+            echo "| actualCaptureCount | ${ACTUAL_CAPTURE_COUNT:-N/A} |"
+            echo "| componentCount | ${COMPONENT_COUNT:-N/A} |"
+            echo "| specCount | ${SPEC_COUNT:-N/A} |"
+            echo "| buildUrl | ${BUILD_URL:-N/A} |"
+            echo "| storybookUrl | ${STORYBOOK_URL:-N/A} |"
+            echo ""
+            echo '```'
+            echo "errorCount=${ERROR_COUNT:-}"
+            echo "interactionTestFailuresCount=${INTERACTION_TEST_FAILURES_COUNT:-}"
+            echo "changeCount=${CHANGE_COUNT:-}"
+            echo "testCount=${TEST_COUNT:-}"
+            echo "actualCaptureCount=${ACTUAL_CAPTURE_COUNT:-}"
+            echo "componentCount=${COMPONENT_COUNT:-}"
+            echo "specCount=${SPEC_COUNT:-}"
+            echo "buildUrl=${BUILD_URL:-}"
+            echo "storybookUrl=${STORYBOOK_URL:-}"
+            echo '```'
+
+            junit_file=$(ls chromatic-build-*.xml 2>/dev/null | head -n1 || true)
+            if [ -n "$junit_file" ]; then
+              echo ""
+              echo "### 失敗した Story"
+              echo ""
+              python3 .github/scripts/chromatic_junit_summary.py "$junit_file"
+            else
+              echo ""
+              echo "(JUnit XML が見つかりませんでした)"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY" > /tmp/chromatic-summary.md
+
+          # ikatodon: chromatic.yml は push トリガーなので github.event.pull_request が無い。
+          # push されたブランチに紐づく open な PR を探してコメントする
+          pr_number=$(gh pr list --repo "${{ github.repository }}" \
+            --head "${{ github.ref_name }}" --state open \
+            --json number --jq '.[0].number // empty')
+
+          if [ -n "$pr_number" ]; then
+            gh pr comment "$pr_number" \
+              --repo "${{ github.repository }}" \
+              --edit-last \
+              --create-if-none \
+              --body-file /tmp/chromatic-summary.md
+          else
+            echo "対応する open な PR が見つからなかったため、PR コメントはスキップしました"
+          fi
+
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: chromatic-junit-report
+          path: chromatic-build-*.xml
+          if-no-files-found: ignore
+
+      - name: Fail if Chromatic reported real errors
+        if: always()
+        env:
+          ERROR_COUNT: ${{ steps.chromatic.outputs.errorCount }}
+          INTERACTION_TEST_FAILURES_COUNT: ${{ steps.chromatic.outputs.interactionTestFailuresCount }}
+        run: |
+          if [ "${ERROR_COUNT:-0}" -gt 0 ] || [ "${INTERACTION_TEST_FAILURES_COUNT:-0}" -gt 0 ]; then
+            echo "Chromatic reported ${ERROR_COUNT:-0} rendering error(s) and ${INTERACTION_TEST_FAILURES_COUNT:-0} interaction test failure(s). See the summary above."
+            exit 1
+          fi
