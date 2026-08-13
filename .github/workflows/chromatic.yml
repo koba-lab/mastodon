@@ -55,8 +55,13 @@ jobs:
       - name: Build Storybook
         run: yarn build-storybook
 
+      # ikatodon: chromaui/action は errorCount > 0 だと自身の exit code で
+      # ジョブを失敗させる。上流由来の既知エラー（inherited）を無視する判定は
+      # 後続の「Fail if ikadon's own stories are broken」に一本化したいため、
+      # このステップ単体の失敗ではジョブを止めない
       - name: Run Chromatic
         id: chromatic
+        continue-on-error: true
         uses: chromaui/action@07791f8243f4cb2698bf4d00426baf4b2d1cb7e0 # v13
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
