@@ -156,15 +156,15 @@ yarn lint:css
 ## VRT（Storybook / Chromatic）
 
 ikadon のレイアウト層（ギザギザ地・角丸・ジグザグヘッダー）を Storybook の VRT で
-継続的に撮るための構成。CLAUDE.md の「上流由来のコードには手を入れない」方針との
-折り合いとして、**上流ファイルへの変更は `.storybook/preview.tsx` の1行だけ**に
-抑えている。`.github/workflows/chromatic.yml` は上流のまま一切変更していない
-（`if: github.repository == 'mastodon/mastodon'` のガードにより、このフォークでは
-永久に Skipped になる＝一度も実行されない）。
+継続的に撮るための構成。当初は「独自ワークフローを新設して上流の `chromatic.yml` は
+無傷のまま残す」構成を試したが、それは合意していた方針（上流の `chromatic.yml` を
+ikadon 用として使う）からの逸脱だったため差し戻し、**`chromatic.yml` を直接改変して
+使う**現在の形に確定した。上流ファイルへの変更は `.storybook/preview.tsx` の1行と
+`.github/workflows/chromatic.yml` 本体の2つになる。
 
 ### 変更した上流ファイル
 
-`.storybook/preview.tsx`（27行目付近）のみ。
+**`.storybook/preview.tsx`**（27行目付近）
 
 ```diff
 - import '../app/javascript/styles/application.scss';
@@ -178,50 +178,84 @@ Chromatic プロジェクトで担保している。Storybook 全体が ikadon �
 や `main.ts` は触っていない。テーマ切り替え自体を Storybook に持ち込む変更ではなく、
 単一エントリポイントの差し替えのみ）。
 
-### 独自ワークフロー `ikatodon-chromatic.yml`
+**`.github/workflows/chromatic.yml`**
 
-上流の `chromatic.yml` を書き換えて動かす代わりに、上流に存在しない
-`.github/workflows/ikatodon-chromatic.yml` を新設してそちらで Chromatic を実行している
-（上流に存在しないファイルなので CLAUDE.md の方針に抵触しない）。この構成にした理由は2つ。
+- `if: github.repository == 'mastodon/mastodon'` を `'koba-lab/mastodon'` に変更
+  （このガードのせいで、フォークでは何もしなければ永久に Skipped になり一度も
+  実行されない）
+- `onlyStoryNames: 'Ikadon/*'` を追加し、撮影対象を ikadon の Story（`meta.title` が
+  `Ikadon/` 始まり）に限定
+- `junitReport: true` を追加し、Story 単位の成否と失敗メッセージを JUnit XML で取得
+- `exitOnceUploaded` は付けない。付けるとテスト完了前にジョブが終了し、
+  `errorCount` などの outputs が空のまま読まれてしまう（過去に実際にこれで
+  「エラーなし」と誤判定した）
+- `chromaui/action` の実行ステップに `continue-on-error: true` を付け、outputs の
+  書き出しと ikadon 自身の Story の成否判定は後続のステップに一本化する
+- 実行後、outputs と JUnit XML から抽出した失敗 Story の一覧を
+  `$GITHUB_STEP_SUMMARY` と PR コメントに書き出す（`.github/scripts/chromatic_junit_summary.py`）
+- JUnit XML を `actions/upload-artifact` で保存し、`gh run download` で取得できるようにする
 
-1. **上流ファイルを1行も汚さずに済む。** `chromatic.yml` は `mastodon/mastodon` 専用の
-   ガードが入っており、フォークでは何もしなければ動かない。ガードの条件式を書き換える
-   独自パッチを当てる代わりに、別ファイルとして持つことで上流追随時のコンフリクトを
-   完全にゼロにできる
-2. **`gh` から結果を機械的に読めるようにするため。** `chromaui/action` が返す
-   `errorCount`（Story のレンダリング失敗数＝本当のエラー）と `changeCount`（見た目の
-   差分数＝承認待ち）は、デフォルトでは commit status の `UI Tests: failure "Failed tests"`
-   という文言に潰されてしまい、GitHub 上から原因を判別できない。このワークフローは
-   `chromaui/action` に `id:` を振って outputs を取り出し、`$GITHUB_STEP_SUMMARY` と
-   PR コメントの両方に `key=value` 形式で書き出す
+独自差分は約120行になる。上流がこのファイルを変更するたびにコンフリクトしうるが、
+「失敗内容を GitHub 上で機械的に読めること」を優先してこの形にした。
 
-トリガーは `pull_request`（`paths` フィルタなし）。CLAUDE.md が「`paths` フィルタ付きの
-ワークフローを必須ステータスチェックにするな」としているのに加え、テーマ由来の変更
-（SCSS だけでなく Story ファイルの追加なども含む）を取りこぼさないため、あえて絞り込んで
-いない。`exitZeroOnChanges: true` を指定して「差分がある」だけではジョブを失敗させず、
-最後のステップで `errorCount > 0` の場合のみ明示的に `exit 1` する。
+### なぜ `errorCount` では判定できないか
 
-このワークフローが読める outputs は次の8つ： `errorCount` / `changeCount` /
-`testCount` / `actualCaptureCount` / `componentCount` / `specCount` / `buildUrl` /
-`storybookUrl`。
+`chromaui/action` の `errorCount` は Chromatic のサーバー側で
+「このビルドの testCount のうち BROKEN の数」として集計されており
+（chromatic-cli の GraphQL クエリで `errorCount: testCount(statuses: [BROKEN])`）、
+`onlyStoryNames` で対象外にした上流の Story も**前回ビルドのステータスを引き継いだまま**
+集計対象に含まれる。そのため上流の Story が過去に一度でも壊れていると、以後どれだけ
+絞り込んでも `errorCount` は 0 にならない。
 
-- `errorCount > 0` → Story のレンダリングが実際に失敗している（本当のエラー）
-- `errorCount == 0 && changeCount > 0` → 見た目が変わっただけ（Chromatic 上での承認待ち）
+実際、上流の `Alert / With Action`・`StatusQuoteManager` の5 Story・`AnnualReport` の
+6 Story（計12 Story）が v4.6.5 の時点で Interaction test に失敗しており（後述）、
+`errorCount` は常に 24（12 Story × 2 スナップショット相当）を示す。これは
+`preview.tsx` を `application.scss` に戻してローカルで `yarn test:storybook` を
+実行しても再現する、**イカトドンに起因しない上流のバグ**である。
+
+そのため `errorCount` ではなく、JUnit XML の `classname` が `Ikadon.` で始まる
+testcase だけを見て ikadon 自身の Story が壊れているかを判定する
+（`.github/scripts/chromatic_junit_summary.py` が `ikadon_failed` を
+`$GITHUB_OUTPUT` に書き出し、ワークフロー最後のステップがそれで exit code を決める）。
+JUnit XML が何らかの理由で取得できなかった場合のみ、安全側に倒して
+`errorCount` / `interactionTestFailuresCount` で判定する。
+
+### GitHub 上に残る2つの独立したチェック
+
+- **`Run Chromatic`**（このワークフローのジョブ本体）— ikadon 自身の Story の
+  成否で pass/fail が決まる。**これが実質的な VRT の結果**
+- **`UI Tests`**（Chromatic サービスが commit status として直接書き込むもの）—
+  `errorCount` に基づいて Chromatic 側が自動で付けており、このワークフローの
+  成否とは独立している。上流の12 Story が壊れている限り恒久的に `failure` の
+  ままになる
+
+どちらも `master` の必須ステータスチェック（`test (.ruby-version)` /
+`End to End testing (.ruby-version)`）には含まれていないため、`UI Tests` が
+failure のままでもマージを妨げない。ただし PR の Checks 一覧には赤いチェックが
+1つ残り続けるので、レビュー時に「`UI Tests` は無視してよい」ことを知っておく必要がある。
 
 ### AI／開発者が結果を確認する手順
 
 ```bash
 # 直近の実行を確認
-gh run list --workflow=ikatodon-chromatic.yml --limit 1
+gh run list --repo koba-lab/mastodon --workflow=chromatic.yml --limit 1
 
-# ログから outputs を grep（ワークフロー内で key=value 形式でも出力している）
-gh run view <run-id> --log | grep -E 'errorCount=|changeCount=|testCount=|componentCount=|buildUrl=|storybookUrl='
+# ジョブ内の各ステップの成否
+gh run view <run-id> --repo koba-lab/mastodon --json jobs \
+  --jq '.jobs[].steps[] | "\(.name): \(.conclusion)"'
 
-# PR コメントとして書き出された結果を見る（人間向けの表形式）
-gh pr view <PR番号> --comments
+# outputs と失敗 Story の詳細（job のログから抽出）
+job_id=$(gh api repos/koba-lab/mastodon/actions/runs/<run-id>/jobs \
+  --jq '.jobs[] | select(.name=="Run Chromatic") | .id')
+gh api repos/koba-lab/mastodon/actions/jobs/$job_id/logs --allow-escape-sequences \
+  | sed 's/\x1b\[[0-9;]*m//g' \
+  | grep -E 'errorCount=|specCount=|ikadon_failed|失敗した Story' -A2
 
-# ジョブが失敗した場合は run 自体の結論も見る
-gh run view <run-id> --json conclusion,jobs
+# PR コメントとして書き出された結果を見る（人間向けの表形式、失敗 Story 一覧つき）
+gh pr view <PR番号> --repo koba-lab/mastodon --comments
+
+# JUnit XML そのものを取得する
+gh run download <run-id> --repo koba-lab/mastodon --name chromatic-junit-report
 ```
 
 ### 上流バージョンアップでコンフリクトした場合
@@ -229,19 +263,20 @@ gh run view <run-id> --json conclusion,jobs
 「上流バージョン追随の手順」と同じ判断基準（このファイルにイカトドン独自の変更が
 入っているか）で解決する。
 
-- `.github/workflows/chromatic.yml` は上流と完全一致しているはずなので、コンフリクトは
-  起きない。コンフリクトが出た場合は取り込み漏れなどの異常なので原因を調査する
-- `.github/workflows/ikatodon-chromatic.yml` は上流に存在しないファイルなのでコンフリクト
-  しない
-- `.storybook/preview.tsx` は変更が1行だけなので、上流がインポート文の周辺行を書き換えた
-  場合でも `application.scss` を import している行を探して `ikadon.scss` に差し替える
-  だけでよい（前後の import 順が変わっても対応箇所は自明）
+- `.github/workflows/chromatic.yml` はコンフリクトしうる。判断基準は
+  「そのブロックがイカトドン独自のステップか」で、上流の変更を取り込んだ上で
+  `if` の書き換えと ikadon 用のステップ群を再適用する
+- `.github/scripts/chromatic_junit_summary.py` は上流に存在しないファイルなので
+  コンフリクトしない
+- `.storybook/preview.tsx` は変更が1行だけなので、上流がインポート文の周辺行を
+  書き換えた場合でも `application.scss` を import している行を探して
+  `ikadon.scss` に差し替えるだけでよい
 
 確認コマンド:
 
 ```bash
 git diff <upstream-tag> HEAD -- .storybook/preview.tsx .github/workflows/chromatic.yml
-# preview.tsx は1行の diff のみ、chromatic.yml は無出力（完全一致）であること
+# preview.tsx は1行の diff、chromatic.yml は120行前後の diff であること
 ```
 
 ### 検証
