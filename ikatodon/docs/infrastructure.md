@@ -13,6 +13,13 @@
 事実には根拠を **実測 / 聞き取り / 未確認** の区分で併記します。未確認のものには ⚠️ を付けて
 います。
 
+**細かい実装仕様は、このファイルではなく `infrastructure/` 配下の個別ファイルに分離して
+います。** それらは実装時にあらためて検討・検証する draft であり、内容に誤りを含みます。
+AI レビューの対象外としています。詳しくは各ファイル冒頭の警告を参照してください。
+
+- [`infrastructure/deploy-design.md`](infrastructure/deploy-design.md) — デプロイ自動化の詳細仕様（draft）
+- [`infrastructure/backup-design.md`](infrastructure/backup-design.md) — PITR・鍵管理の詳細仕様（draft）
+
 ---
 
 ## 1. 全体図
@@ -136,8 +143,9 @@ flowchart TB
   パスによっては実行されないため必須にしない。常に実行されるのは `test-ruby.yml` と
   `format-check.yml` の2本
 - 上流追随手順にある「`docker-compose.yml` のイメージタグを3箇所更新する」という手順は、
-  3.2節の変更（compose のテンプレート化）が実現すると不要になる。**`CLAUDE.md` 側の更新も
-  別途必要**（本 PR の対象外、別 PR で対応する）
+  compose のテンプレート化（[`infrastructure/deploy-design.md`](infrastructure/deploy-design.md)
+  参照）が実現すると不要になる。**`CLAUDE.md` 側の更新も別途必要**（本 PR の対象外、別 PR
+  で対応する）
 
 ### 2.3 実測で否定された推測
 
@@ -163,14 +171,8 @@ flowchart TB
 | DB / Redis のマネージド化                                        | **不採用**                | 料金。プライベート網の利点も失う         |
 | Cloudflare 有料 Load Balancing                                   | **不採用**                | 有料。検討のうえ却下済み                 |
 
-### 2.5 要件のみ（解決策は実施時に検討）— Cloudflare 化の判断（トラック C）
-
-Web サーバー本体を Cloudflare 経由にするかどうかは **実施未定**（トラック C）。Origin CA
-証明書（15年）を使えれば Let's Encrypt の更新の仕掛けが不要になるメリットはあるが、切り替
-えるかどうか自体が未決定。
-
-⚠️ **未確認**: そもそも現在 Cloudflare 経由にしていない理由が記録に残っていない。聞き取りが
-必要（10節参照）。
+Web サーバー本体を Cloudflare 経由にするかどうか（トラック C）は実施未定。判断材料の聞き取り
+すら済んでいないため、詳細な検討はまだ行っていない（10節「聞き取りが必要なもの」参照）。
 
 ---
 
@@ -186,71 +188,8 @@ Web サーバー本体を Cloudflare 経由にするかどうかは **実施未�
 - `.env.production` も同じく除外されている（28行目）。**各ホストに手置きで、バックアップが
   無い**（聞き取り + `.gitignore` 確認。詳細は6節）。
 
-### 3.2 決定事項 — compose ファイルのテンプレート化
-
-イメージタグの指定は `ikatodon/compose.override.yml.template` に移し、GitHub Actions が
-`envsubst` でバージョンを埋め込んで各ホストへ配置する（5節参照）。`docker-compose.yml` は
-**本家のまま**に戻す。これにより毎リリースごとに本家との差分がコンフリクトする問題が消える
-（`CLAUDE.md` の「上流に手を入れない」方針にも合致する）。
-
-```yaml
-services:
-  web:
-    image: ghcr.io/koba-lab/ikatodon:${IKATODON_VERSION}
-    ports: ['${PRIVATE_IP:?PRIVATE_IP is required}:3000:3000']
-    logging: { driver: json-file, options: { max-size: 50m, max-file: '3' } }
-  streaming:
-    image: ghcr.io/koba-lab/ikatodon-streaming:${IKATODON_VERSION}
-    ports: ['${PRIVATE_IP:?PRIVATE_IP is required}:4000:4000']
-    logging: { driver: json-file, options: { max-size: 50m, max-file: '3' } }
-  sidekiq:
-    image: ghcr.io/koba-lab/ikatodon:${IKATODON_VERSION}
-    logging: { driver: json-file, options: { max-size: 50m, max-file: '3' } }
-```
-
-- **`sidekiq` にもログ上限を入れる。** Docker の `json-file` ドライバは既定でログサイズが
-  無制限で、現在の compose には上限指定が無い。`web` だけでなく `sidekiq` も大量にログを
-  吐くため、放置するとディスクを食い潰す（既知の問題 #9、9節参照）。3サービスとも同じ
-  上限を設定する
-- `sidekiq` はポートを公開しない。ポート公開先はいずれもプライベート網の中だけで、DB /
-  Redis と同じ信頼範囲に収まる
-- ⚠️ **決定事項 — `${PRIVATE_IP}` は fail-closed にする**（Copilot 指摘）。単純な
-  `${PRIVATE_IP}` という書き方だと、変数が未設定（Ansible の配布漏れ等）のとき Compose は
-  空文字で補間し、`ports: [':3000:3000']` のように**全インターフェースに公開されてしまう**。
-  `web` / `streaming` の両方で Compose の必須変数構文
-  `${PRIVATE_IP:?PRIVATE_IP is required}` を使い、未設定なら `docker compose` 自体が
-  エラーで止まるようにする（上記 yaml に反映済み）
-- ⚠️ **`envsubst` は置換対象の変数を明示的に絞って呼び出す必要がある**（セキュリティ上重要、
-  Copilot 指摘）。変数指定なしで `envsubst` を実行すると、テンプレート内の `${PRIVATE_IP}`
-  まで GHA 側の環境変数（通常は未設定＝空文字）で置換されてしまい、結果として
-  `:3000:3000` のように**全インターフェースに公開され得る**。`envsubst '$IKATODON_VERSION'`
-  のように置換する変数を限定し、`${PRIVATE_IP}` は GHA 側では一切触らずホスト上の
-  `docker compose`（ホストの `.env` を参照）に展開させる
-
-ホストの `.env`（Ansible が配布、秘密は含まない。5.2節の `releases/<version>/` + `current`
-方式に合わせて `COMPOSE_FILE` は `current` 配下を指す）:
-
-```
-PRIVATE_IP=<プライベートIP>
-COMPOSE_PROJECT_NAME=<既存の project 名。5.2節参照>
-COMPOSE_FILE=/opt/ikatodon/current/docker-compose.yml:/opt/ikatodon/current/compose.override.yml
-```
-
-### 3.3 決定事項 — 構成管理（Ansible）
-
-`ikatodon/ansible/` に、`ikatodon-db` と同じ流儀の Ansible playbook を置く。**エージェント
-レス**で、サーバー側に必要なのは SSH と Python3 のみ（どちらも既存）。常駐プロセスは増えない。
-
-管理対象: nginx 設定（テンプレート化。通常版 / drain 版の include を含む。4節参照）、ufw、
-`.env` の非機密部分。
-
-導入は **`--check --diff` の dry run で差分ゼロを確認してから適用する**。難所はツールでは
-なく現状の設定を正確にテンプレートへ起こすことなので、`sudo nginx -T` で完全な現状を吸い
-出してから作業する。
-
-⚠️ nginx の Docker 化（`ikatodon-redis` と同じ方式）は **トラック C（Cloudflare 化の判断）
-の後**に検討する。Ansible でテンプレート化した設定はそのまま `conf.d` に持っていけるので、
-先に Ansible 化してもやり直しにはならない。
+compose ファイルのテンプレート化・構成管理（Ansible）の検討中の詳細は
+[`infrastructure/deploy-design.md`](infrastructure/deploy-design.md) を参照してください。
 
 ---
 
@@ -261,44 +200,10 @@ COMPOSE_FILE=/opt/ikatodon/current/docker-compose.yml:/opt/ikatodon/current/comp
 - nginx はホストの systemd で動く。**Docker の外**。`user mastodon` で稼働。
 - `acme-challenge` upstream に、現役でない IP が2つ残っている（既知の問題 #7）。
 
-### 4.2 決定事項 — ゼロダウンタイムデプロイ
+ゼロダウンタイムデプロイ（隣サーバーへのフォールバック、drain）の検討中の詳細は
+[`infrastructure/deploy-design.md`](infrastructure/deploy-design.md) を参照してください。
 
-コンテナをプライベート IP にも公開し、nginx に「隣のサーバー」をバックアップ登録する。
-**既存の `acme-challenge` upstream と同じパターン**を踏襲する。転送先は隣の nginx ではなく
-**隣のアプリのポートを直接**指すのでループしない。プライベート網なので平文 HTTP で足りる。
-
-```nginx
-upstream mastodon_web {
-  server 127.0.0.1:3000 max_fails=2 fail_timeout=5s;
-  server <隣のプライベートIP>:3000 backup;
-}
-```
-
-**`proxy_next_upstream` は POST を再送しない**ため、これだけでは投稿が失敗し得る。対策として
-コンテナを止める前に **nginx から自分を外す（drain）**。Ansible が「通常版」「drain 版」両方
-の include を配布し、**デプロイ時にシンボリックリンクを張り替えて reload** する（5節参照）。
-
-**WebSocket（streaming）は再接続が発生する。** ここは構造上ゼロにできない。
-
-**決定事項 — 切替の可否判定は web / streaming / sidekiq の3つのヘルスチェックを使う。**
-`docker-compose.yml` の `web` / `streaming` には既にコンテナレベルの healthcheck
-（`curl localhost:3000/health`）が定義されているが、**`docker compose up -d` はコンテナを
-起動して即座に終了し、healthcheck の結果を待たない**（後から `unhealthy` になってもコマン
-ド自体は失敗として扱われない）。実際に切替可否を判定しているのは **5.2節のデプロイ手順に
-ある明示的なポーリング**であり、次の3つがすべて確認できて初めて nginx を復帰する。
-
-- `web` の `/health`（`app/controllers/health_controller.rb:3-6`）
-- **`streaming` の `/api/v1/streaming/health`**（当初 `web` の `/health` だけを見ていたが、
-  streaming は `web` と同時に更新されるにもかかわらず起動失敗を検出できていなかった。
-  ストリーミングだけが停止した状態を「成功」扱いしてしまう問題があったため追加した）
-- **`sidekiq` が起動後も running であること**（同様の理由。healthcheck エンドポイントは
-  持たないため、コンテナの状態確認で代替する）
-
-⚠️ **残余リスク**: `web` の `/health` は DB / Redis への接続確認を行わないため、新イメージに
-アプリ側のバグがあり DB/Redis 接続だけが壊れているケースは検知できないが、初期段階では
-シンプルさを優先し、これは受け入れたリスクとする（オーナー判断）。
-
-### 4.3 未確認事項
+### 4.2 未確認事項
 
 **確認済み**（既知の問題 #12。9.1節参照）: 実際に `500.html` に到達できないことを確認した
 （オーナーによる実機確認）。`error_page` の第2引数が URI として解釈され `root` と二重連結
@@ -317,288 +222,11 @@ upstream mastodon_web {
 される追加コマンド」がどこにも記録されていない（既知の問題 #4）。post deployment
 migration を「1台目だけ新しい」状態で実行してしまっている（既知の問題 #3）。
 
-### 5.2 決定事項 — GitHub Actions がファイルを配信する（Web サーバーの git clone を廃止）
-
-**Web サーバー上の git clone を廃止する。** clone は compose ファイルの配送手段でしか
-なかったが、静的ファイルはイメージ内のアプリ自身が配信できる（3.1節・2.1節で確認済み）ため、
-clone を維持する理由が無い。
-
-**なぜ nginx 側の変更なしで安全か（実測）。** 本家のサンプル設定 `dist/nginx.conf` は
-`try_files $uri @rails` のような、静的ファイルをディスクから優先して探す構成を例示している
-が、**`dist/nginx.conf` は upstream と完全一致しており（`git diff <現行タグ> HEAD --
-dist/nginx.conf` の出力が空）、実際には一度も使われていない。** 実際に運用されている
-`/etc/nginx/sites-available/ika.queloud.net` は、`location / { try_files $uri @proxy; }`
-や `location ~ ^/(emoji|packs|system/accounts/avatars|system/media_attachments/files) {
-... try_files $uri @proxy; }` のように、**既に全パスで「ディスクに無ければ常にアプリへ
-フォールバックする」構成になっている。** そのため、clone を廃止してディスク上に静的ファイル
-が置かれなくなっても、nginx は常に `@proxy`（アプリ）へフォールバックするだけで、
-`RAILS_SERVE_STATIC_FILES=true`（2.1節）によりアプリ側が配信を引き継ぐ。**nginx 設定側の
-切り替え作業は不要。**
-
-> ⚠️ 以下は検討初期のラフスケッチです。ステージング・退避を経ない直接上書きは、後述の
-> 「採用した設計」に書いたとおりの理由により不採用としています。正式な手順は後述の
-> 「#### ワークフロー構造（目指す形）」を参照してください。
-
-```
-GHA が envsubst で override（compose.override.yml）を生成
-  → 対象バージョンの「タグ」から本家の docker-compose.yml も取得
-  → 両方を scp で2台へ配置  （appleboy/scp-action 等）
-  → docker compose pull    （appleboy/ssh-action 等）
-  → docker compose up -d
-```
-
-⚠️ **決定事項 — ベースの `docker-compose.yml` も override と一緒に配布する。**
-git clone を廃止すると、override（イメージタグ）だけを配布してもホスト上の
-`docker-compose.yml` はそのとき置いた版のまま固定されてしまう。本家が `command` /
-`healthcheck` / ネットワーク設定などを変更しても、配布対象に入っていなければ新しい
-イメージと同期せず、**Kamal を不採用にした理由（`deploy.yml` が compose と二重管理になり
-本家の変更が伝播しない）と同じ不整合**が起きる。これを避けるため、`prepare` は
-override だけでなく **対象バージョンのタグ時点の `docker-compose.yml` も同じタイミングで
-取得・配布する**。
-
-⚠️ **`version` 入力は「タグ」に限定する。** `ikatodon-build.yml` はタグ push
-（`on: push: tags: '*'`）のときだけイメージをビルドするため、コミット単位のイメージは
-存在しない。`${IKATODON_VERSION}` にコミット SHA を指定すると `docker compose pull` が
-失敗するため、`version` 入力・`docker-compose.yml` の取得元ともに**タグのみを受け付ける**。
-
-ロールバック時もこの2ファイルを常に同じ版の組で戻す（5.2節のロールバック手順、3.2節参照）。
-
-**これでバージョン指定の問題が消える。** 入力値がそのままファイルに入る。`git pull` も
-`git checkout` もデプロイから消える。整形は `sed` ではなく **`envsubst`** を使う。
-
-⚠️ **`envsubst` はここでも置換対象の変数を `IKATODON_VERSION` だけに絞って呼び出す**
-（3.2節参照）。絞らずに実行すると、テンプレート内の `${PRIVATE_IP}` が GHA 側の空の環境
-変数で置換され `:3000:3000` のように全インターフェースへ公開されかねない。`PRIVATE_IP` は
-GHA 側では触らず、ホスト上の `docker compose` がホストの `.env` から展開する。
-
-#### 採用しなかった案と理由
-
-同じ検討を繰り返さないための記録。
-
-| 案                           | 不採用の理由                                                                                                                                                                                                                                                                                                                                 |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Kamal**                    | `deploy.yml` が compose と二重管理になる。本家が `command` や `healthcheck` を変えても伝播せず静かに壊れる。ステージングが無く CI しか使えない環境では反映結果の検証がしにくい。**ステージングを用意できるなら再検討の価値あり**（※この制約は自前のロールバック機構（5.2節）にも同様に残っており、本番以外での検証手段が無い点は変わらない） |
-| **Docker Swarm**             | 2台間で `2377/tcp` `7946/tcp+udp` `4789/udp` を開ける必要があり、**VPS の制約で開けられない可能性**。compose にも複数の書き換えが要る                                                                                                                                                                                                        |
-| **Ansible をデプロイに使う** | Ansible は構成管理ツールでデプロイツールではない。切替もロールバックも自作になる                                                                                                                                                                                                                                                             |
-| **Kubernetes / k3s**         | 2台構成に対して過大                                                                                                                                                                                                                                                                                                                          |
-| **git clone を維持する**     | 版指定の設計が別途必要になり、`public/` の更新への追従作業も残ってしまう                                                                                                                                                                                                                                                                     |
-
-#### 採用した設計 — `releases/<version>/` + `current` シンボリックリンク（オーナー承認済み）
-
-以前の案は `*.next.yml` / `*.previous.yml` という**ファイル命名によるステージ・退避方式**
-だったが、`/code-review` で見つかった2つのバグ（ステージファイルの接尾辞が `.next.yml` と
-`.yml.next` で不統一でグロブが片方にしかマッチしない／`prepare` の再実行で退避先の
-`compose.previous.yml` 自体を上書きしてしまう）は、**どちらも「今どの版が有効か」を命名規約
-というアプリケーション側の取り決めだけで表現していたことが根本原因**だった。そこで
-**Capistrano と同じ、バージョン番号付きディレクトリ＋ `current` シンボリックリンク方式**に
-設計を変更する（オーナーと合意済み）。
-
-```
-/opt/ikatodon/
-  releases/
-    v4.6.4/   docker-compose.yml, compose.override.yml, .env.production -> ../../.env.production
-    v4.6.5/   docker-compose.yml, compose.override.yml, .env.production -> ../../.env.production
-  current -> releases/v4.6.5        ← シンボリックリンク
-  .env                              ← PRIVATE_IP, COMPOSE_PROJECT_NAME, COMPOSE_FILE（Ansible が配布）
-  .env.production                   ← 秘密ファイル本体はここに1つだけ（Ansible が配布）
-```
-
-「今どの版が有効か」は `current` シンボリックリンクの参照先という **OS の機能（構造的な
-事実）** で表現され、ファイル命名の整合性を人や CI が手作業で守る必要が無くなる。
-
-| 担当                             | 内容                                                                                                                                                                                                                                                                                                                                                                                                     |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Ansible**（一度きり・冪等）    | `/opt/ikatodon/releases/` を作る（`file: state=directory` の1タスク）。**初回移行（下記ブートストラップ）を実行し、その完了後に**`.env` の `COMPOSE_FILE` を `current` 配下（`current/docker-compose.yml:current/compose.override.yml`）へ向ける。**`.env.production` の配置**（`/opt/ikatodon/.env.production` に1つだけ）と、**既存の `COMPOSE_PROJECT_NAME` を `.env` に設定する**のも Ansible の責務 |
-| **GitHub Actions**（毎デプロイ） | `releases/.tmp-<version>-<run_id>/` に compose 2ファイルと `.env.production` への symlink を組み立て、内容が完成してから `mv -T` で `releases/<version>/` へ**アトミックに**配置する（既に `releases/<version>/` が存在する場合は上書きせずそのまま再利用する）→ drain 後に `ln -sfn releases/<version> current` で切替                                                                                  |
-| **世代管理**                     | **直近2世代を保持**。それ以前は削除する。**切替前に `readlink current` で現在版を記録し、現在版とその直前版を明示的に除外して削除する**（バージョン番号のソート順に依存しない）。詳細は下記                                                                                                                                                                                                              |
-
-⚠️ **決定事項 — `.env.production` は releases 配下へコピーせずシンボリックリンクで参照する**
-（Copilot 指摘・重大）。`docker-compose.yml` の3サービスすべてが `env_file: .env.production`
-を**相対パス**で指定している（`docker-compose.yml:65,89,108`）。compose ファイルを
-`releases/<version>/` へ移すと、Docker は `releases/<version>/.env.production` を探しに
-行くが、この設計では各 release 配下に置くのは compose 2ファイルだけなので、対策が無いと
-**`pull` / `pre-migrate` / `up -d` がすべて env file 不在で失敗する。** 秘密ファイル本体は
-`/opt/ikatodon/.env.production` の1箇所にだけ置き（Ansible が配布・管理）、`prepare` の
-タイミングで各 `releases/<version>/` 配下にシンボリックリンクを作ることで、秘密の実体を
-複製せずに解決する。
-
-⚠️ **決定事項 — `COMPOSE_PROJECT_NAME` を固定する**（Copilot 指摘・重大）。compose ファイルの
-置き場所が変わると、`-p` / `COMPOSE_PROJECT_NAME` 未指定時に Docker Compose が自動生成する
-project 名（通常はディレクトリ名から導出される）も変わる。**初回切替時、旧 project のコンテナ
-が残ってポートを保持したままだと、新 project の `up -d` が衝突して置換できない。** 移行前に
-現行の project 名を実機で確認し（10節参照）、**Ansible が同じ `COMPOSE_PROJECT_NAME` を
-`.env` に設定する**ことで新旧の project 名を一致させ、`up -d` が同一 project のコンテナを
-正しく置き換えるようにする。
-
-⚠️ **決定事項 — `prepare` は冪等かつアトミックに書く**（Copilot 指摘・重大）。以前の記述は
-「`releases/<version>/` 配下へ配置する」としか書いておらず、同じ version のディレクトリが
-既に存在する場合に compose ファイルを上書きしてしまう問題があった。特に**対象 version が
-既に `current` の参照先だった場合**（例: 同じバージョンでの再実行）、これは稼働中の設定を
-書き換えてしまうことに等しく、「既存の `releases/*/` や `current` は一切変更しない」という
-このセクションの前提が崩れる。加えて、`.env.production` へのシンボリックリンク作成に単純な
-`ln -s` を使うと、既にリンクが存在する場合に失敗する（再実行できない）。これらを避けるため、
-**`prepare` は一時ディレクトリ（`releases/.tmp-<version>-<run_id>/`）の中で compose ファイル
-と symlink を含む release の中身を完成させてから、`mv -T` で `releases/<version>/` へ
-アトミックに配置する。** `releases/<version>/` が既に存在する場合は、（内容が生成物として
-一致する前提のもとで）上書きせずそのまま再利用し、`current` の参照先であっても一切触らない。
-symlink 作成にも `ln -sfn` を使い、既存リンクがあっても失敗しないようにする。
-
-⚠️ **決定事項 — リモートでの `docker compose` 操作は作業ディレクトリを明示する**（Copilot
-指摘・重大）。Compose が `.env` を自動読込するのは実行時のカレントディレクトリに依存するが、
-GHA の ssh アクションの既定の作業ディレクトリは通常ホームディレクトリであり、`/opt/ikatodon`
-ではない。作業ディレクトリを指定しないと、`prepare` では `PRIVATE_IP` が見つからず
-`${PRIVATE_IP:?...}` により停止し、`deploy` / `post-migrate` では `.env` の
-`COMPOSE_FILE` / `COMPOSE_PROJECT_NAME` が適用されない。**すべてのリモート `docker compose`
-呼び出しは、`cd /opt/ikatodon` してから実行するか `--project-directory /opt/ikatodon` を
-明示する。** 下記のワークフロー構造の各ステップ（prepare / pre-migrate / deploy /
-post-migrate）はすべてこの前提で書かれている。
-
-**手動設定は一切不要。すべて IaC（Ansible + GitHub Actions）で完結する。**
-
-#### 決定事項 — 初回移行（ブートストラップ）は通常のデプロイと切り離した Ansible の一度きりタスクで行う
-
-⚠️ **重要**: 現在、本番は checkout 上の compose ファイルで稼働しており、
-`/opt/ikatodon/releases/` も `current` シンボリックリンクも存在しない。**この状態のまま
-通常のデプロイワークフローを実行すると、`readlink current` が失敗し（`current` が無い）、
-ロールバック先も存在しない（`releases/` が空）ため、成立しない。** `releases/` 方式への
-移行には、以下の初回だけの手順（ブートストラップ）が必要であり、これを経るまでは通常の
-デプロイワークフローを実行できない。
-
-ブートストラップは **Ansible の冪等なタスクとして書く**（一度きりの手動作業や専用ワーク
-フローにはしない。Ansible なら再実行しても安全に収束し、他の Ansible タスクと同じ経路で
-管理できるため）。
-
-1. `/opt/ikatodon/releases/` ディレクトリを作る
-2. 現行の `COMPOSE_PROJECT_NAME` を実機で確認し（10節参照）、`.env` に固定する
-   （前述の「`COMPOSE_PROJECT_NAME` を固定する」と同じ項目）
-3. **`COMPOSE_FILE` を `current` 配下へ向ける前に**、現在稼働中のバージョンの compose
-   一式（checkout 上の `docker-compose.yml` と `compose.override.yml`）を初期 release
-   として `releases/<現行version>/` へ取り込む
-4. `.env.production` の本体を `/opt/ikatodon/.env.production` へ移動し、初期 release
-   （`releases/<現行version>/.env.production`）からのシンボリックリンクを張る
-5. `current` を初期 release へ向ける（`ln -sfn releases/<現行version> current`）
-6. **ここまで完了してから**、`.env` の `COMPOSE_FILE` を `current` 配下
-   （`current/docker-compose.yml:current/compose.override.yml`）へ向ける
-
-この順序（先に `releases/<現行version>/` と `current` を整えてから `COMPOSE_FILE` を
-切り替える）により、切り替えの前後で `docker compose` が参照する実体は常に「今動いている
-のと同じ compose ファイル」であり続け、ブートストラップの過程でコンテナが不要に再起動する
-ことはない。
-
-#### ワークフロー構造（目指す形）
-
-```
-on: workflow_dispatch
-  inputs: version（例 v4.6.5）, pause_before_post（既定 false）
-concurrency: 本番デプロイで1本に限定    ← 必須。複数 dispatch の同時実行による競合を防ぐ
-
-verify        PR 時の CI で担保済みの内容を再確認
-prepare       各ホストで、releases/.tmp-<version>-<run_id>/ に新しい override と対象タグの
-                docker-compose.yml を envsubst で生成し、同ディレクトリに .env.production への
-                symlink（ln -sfn）を張って中身を完成させる → mv -T で releases/<version>/ へ
-                アトミックに配置（既に存在するなら上書きせず再利用。current は一切変更しない）
-                → cd /opt/ikatodon && docker compose -f releases/<version>/docker-compose.yml \
-                -f releases/<version>/compose.override.yml pull で新イメージのみ事前取得
-pre-migrate   cd /opt/ikatodon && docker compose -f releases/<version>/docker-compose.yml \
-                -f releases/<version>/compose.override.yml run --rm web \
-                env SKIP_POST_DEPLOYMENT_MIGRATIONS=true bundle exec rails db:migrate
-                ← releases/<version>/ にステージ済みの新イメージから実行する。exec は使わない
-deploy        単一ジョブ内で host1 → host2 の順に明示的に直列実行する（matrix は使わない。
-                理由は下記「matrix をやめた理由」）。各ホストで:
-                1. nginx を drain（自分を外して reload）
-                2. cd /opt/ikatodon && readlink current で切替前の版を読み取り、
-                   このホスト専用の変数（例 rollback_target_host1）としてジョブ内に保持
-                   （$GITHUB_ENV 等。同一ジョブ内の以降のステップから参照できる）
-                3. cd /opt/ikatodon && ln -sfn releases/<version> current で切替
-                   （＝ここが唯一の「有効化」操作）
-                4. cd /opt/ikatodon && docker compose up -d
-                   （--project-directory /opt/ikatodon と同義。down は不要）
-                5. web の /health、streaming の /api/v1/streaming/health、
-                   sidekiq が起動後も running であること、の3つがすべて確認できるまで待つ
-                   （/health だけでは streaming/sidekiq の起動失敗を検出できない）
-                6. host1 が失敗: cd /opt/ikatodon && ln -sfn releases/<rollback_target_host1> \
-                   current → docker compose up -d → nginx を復帰。host2 には進まず終了
-                7. host2 が失敗: host2 を rollback_target_host2 へ戻す
-                   → 続けて host1 も rollback_target_host1 へ逆順に drain・戻す
-                   （両ホストの rollback target が同一ジョブ内の変数として残っているため、
-                   host2 の失敗時点でも host1 の戻し先を参照できる）
-                   → 両台とも旧版に揃った状態でロールバックを完了する。
-                   **この逆順の復元自体が失敗した場合**（例: host1 を戻した後に `/health` が
-                   戻らない）は、自動でのリトライや追加の巻き戻しは行わず、その時点で
-                   デプロイを停止して通知する。新旧混在状態が残り得ることを許容したうえで、
-                   収束は手動対応に委ねる
-                8. 両ホスト成功時: nginx を復帰（reload）→ 世代削除（各ホストで、
-                   手順2で記録した「切替前の版」と今回切替た新しい版の2つだけを残し、
-                   それ以外の releases/<version>/ を削除。バージョン番号のソート順には
-                   依存しない）
-gate          if: inputs.pause_before_post → Environments の承認待ち（追加コマンドを流す）
-post-migrate  cd /opt/ikatodon && docker compose run --rm web bundle exec rails db:migrate
-```
-
-##### matrix をやめた理由（設計変更）
-
-以前の案は `deploy` を `matrix: [host1, host2]` + `max-parallel: 1` で書いていたが、これは
-**設計上の欠陥**だった。`readlink current` で読み取る「切替前の版（ロールバック先）」を
-matrix の各 leg（=別々のジョブ実行）のシェル内にしか保持できず、host1 が切替を終えた
-時点でそのホストの `current` は既に新版を指している。**host2 が失敗したとき、host1 を
-戻すための「切替前の版」を知る手段が matrix の構造上ない。** ドキュメントに書いていた
-「host2 が失敗したら host1 も逆順に drain して戻す」という手順は、matrix のままでは
-実装できなかった。
-
-対応として2案を検討し、**matrix をやめて単一ジョブ内で2ホストを明示的に直列制御する方式**
-を採用した。
-
-| 案                                             | 内容                                                                                                                                                                               | 採否                                                                                                                                                           |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| job outputs / artifact で leg 間の値を受け渡す | matrix の構造は維持し、各 leg の rollback target を job outputs や artifact 経由で次のジョブへ渡す                                                                                 | **不採用**。matrix の並列実行モデルに逆行する受け渡しの配線が増え、`max-parallel: 1` で直列化しているにもかかわらず leg 間通信の仕組みを別途組む必要があり複雑 |
-| **matrix をやめ、単一ジョブ内で直列制御する**  | host1・host2 を同じジョブの中で順番に処理する。両ホストの rollback target を同じシェル変数（`$GITHUB_ENV` 等）として自然に保持でき、逆順ロールバックもジョブ内の分岐で素直に書ける | **採用**。順序は `max-parallel: 1` に頼らずジョブの実行順そのもので保証され、状態共有の配線も不要になる。より単純                                              |
-
-- **`version` の入力値がそのまま `releases/<version>/` のディレクトリ名・
-  `${IKATODON_VERSION}` の両方に使われる。** prepare ジョブは対象バージョンの compose
-  ファイルを生成・配置するところまでを担い、ホスト側で `git pull` して版を合わせるような
-  手順は取らない
-- **ロールバックは `current` を1つ前の `releases/<version>/` へ張り替えるだけ。** 「退避
-  ファイルを正しい組で作れているか」を人や CI が気にする必要が構造的に無くなる（以前の
-  `*.previous.yml` 方式で起きていた、命名規約の不統一やペアの一部だけ上書きされる事故は
-  この設計では起こり得ない）
-- **workflow-level の `concurrency` グループを必須とする。** 単一ジョブ内で直列制御しても、
-  複数の `workflow_dispatch` が同時に始まった場合の drain・migration・デプロイの競合は
-  防げないため、引き続き必須
-- **バックアップのジョブは持たない**（トラック B の PITR で対応。6節参照）
-- **post migration が全台更新後に走る**（現状の問題 #3 の修正）
-- migration の有無は GHA 側で
-  `git diff --name-only <稼働中> <対象> -- db/migrate db/post_migrate` で判定し、空なら
-  pre/post ごとスキップできる
-
-#### 決定事項 — ロールバックは層ごとに分ける
-
-| いつ                                                                               | 動作                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **web / streaming / sidekiq のいずれかのヘルスチェックが通らない**（4.2節・5.2節） | **自動。** `current` を切替直前に記録した版へ張り替え、前のイメージ・前の base compose の組で起動し直してから nginx を戻す。**host2 で失敗した場合は、既に更新済みの host1 も逆順に drain して同じ手順で `current` を戻す**（新旧混在のまま終わらせない。単一ジョブ内で直列制御しているため両ホストの戻し先を参照できる）。**この逆順の復元自体が失敗した場合は、自動リトライや追加の巻き戻しを行わずその時点で停止・通知する**（新旧混在状態が残り得ることを許容し、収束は手動）。サイトは終始生きている |
-| **migration が失敗**                                                               | 自動で中断。コンテナは入れ替えていないためサービスは継続するが、**`db:migrate` は複数の migration を順に確定していき `disable_ddl_transaction!` を使うものもあるため、DB が部分的に更新されている可能性がある**。「影響なし」ではない。DB 状態を確認し手動復旧するまで次のステップに進まない                                                                                                                                                                                                              |
-| **post migration が失敗**                                                          | **自動では戻さない。** 両台とも新版で DB が中途半端な状態。デプロイを止めて通知する                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| **公開後に不具合が判明（post migration 実行前）**                                  | 手動。前の `version` を入力して再実行する。**DB は戻らない**（トラック B の PITR が保険）                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **公開後に不具合が判明（post migration 実行後）**                                  | ⚠️ **単純なアプリロールバックは安全ではない。** `db/post_migrate` にはカラム・テーブルを削除する migration が含まれるため、旧コードに戻すと既に削除されたスキーマへアクセスして起動後に壊れる。**forward fix（前進での修正）** か、**DB の復元（トラック B の PITR）を伴う手順**が必要                                                                                                                                                                                                                    |
-
-#### 検証の分担
-
-| どこ           | 何を                                                                               | 何を確認していないか                                                                                                                                                                                          |
-| -------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PR 時の CI     | 生成した compose の構文検証。イメージが定義どおり起動し `/health` を返すか         | ホスト固有値（`PRIVATE_IP` 等）が無いので**不完全**。`/health` の応答を切替可否の判断基準とする（4.2節の決定を参照）                                                                                          |
-| prepare ジョブ | `releases/<version>/` に配置した compose ファイルの構文検証（`compose config -q`） | **「100%」とは書かない。** これは構成（構文・変数展開結果）の検証であって、ホスト IP に実際に bind できるか、ポートが空いているか、コンテナが起動して `/health` を返すかは別途 preflight で確認する必要がある |
-
-### 5.3 GHA からサーバーへの ssh 経路 — ⚠️ 未確認（要確認事項）
-
-以前「`ufw` が無効なので解消済み」と記載していたが、これは撤回する。**`ufw` が無効である
-ことは、GitHub-hosted runner から実際に SSH できることを保証しない。** ConoHa 側のファイア
-ウォール、nftables/iptables、`sshd` の `Match Address` など、`ufw` とは別の制限が存在する
-可能性がある。
-
-⚠️ **未確認**: `ufw` は無効だが、実際に GitHub Actions の runner から 22/tcp への到達性と
-鍵認証が通るかどうかは確認できていない。10節の確認事項として扱う。
-
-**セルフホストランナーは採用しない。** このフォークはパブリックリポジトリで、フォークからの
-PR で任意コードがサーバー上で実行され得る既知の問題があるため。
+GitHub Actions によるデプロイ自動化（`releases/` + `current` 方式、ロールバック、検証の
+分担など）の検討中の詳細は [`infrastructure/deploy-design.md`](infrastructure/deploy-design.md)
+を参照してください。ssh 経路が実際に通るかどうかは未確認です（10節参照）。セルフホスト
+ランナーは採用しない方針です（このフォークはパブリックリポジトリで、フォークからの PR で
+任意コードがサーバー上で実行され得るため）。
 
 ---
 
@@ -610,78 +238,10 @@ PR で任意コードがサーバー上で実行され得る既知の問題が�
   playbook（`deploy-postgres.yml`）は存在しない `docker-compose.postgres16.yml` を参照して
   おり**実行できない**（既知の問題 #1）。
 - `restore.sh` が対話式で、緊急時に自動実行できない（既知の問題 #5）。
-- `.env.production` にバックアップが無い（既知の問題 #11。下記 6.3 参照）。
+- `.env.production` にバックアップが無い（既知の問題 #11）。
 
-### 6.2 決定事項 — PITR（トラック B）
-
-用途は migration の保険。**保持は24〜48時間で十分**、優先するのは**復旧点の細かさ**、
-**コストは抑える**（参照しないファイルへの固定費は高い）。
-
-- フルダンプの高頻度化は**保管費用が用途に見合わない**ため採らない
-- **WAL アーカイブ + ベースバックアップの両方が必要。** WAL アーカイブだけでは PITR できない
-  ——復元の起点となるベースバックアップと、それ以降の連続した WAL の両方が揃って初めて任意
-  時点への復旧ができる。24〜48時間の復旧窓を実現するため、ベースバックアップの取得頻度と
-  保持方針も要件に含める
-- 実装は自作しない。**wal-g** か **pgBackRest** を使う。B2 は S3 互換 API を持つ
-- ⚠️ **アーカイブが失敗し続けると `pg_wal` が溜まってディスクを埋め、PostgreSQL が停止する**
-  （監視の必須項目、7節参照）
-- ⚠️ `postgres:16` 公式イメージに wal-g は入っていない。独自イメージか別コンテナが要る
-
-先に測るべき値（10節の確認コマンドも参照）:
-
-```bash
-docker exec mastodon_postgres16 du -sh /var/lib/postgresql/data/pg_wal   # PGDATA は postgres UID 所有・0700 のためコンテナ内から確認する
-docker exec mastodon_postgres16 psql -U mastodon -d mastodon_production \
-  -c "SELECT * FROM pg_stat_archiver;"
-time /opt/mastodon/backup.sh   # 10分前後の見込み
-```
-
-### 6.3 決定事項 — 鍵の管理（鍵ごとに喪失影響が異なる）
-
-**`.env.production` 内の各鍵は、失ったときの影響が鍵ごとに異なる。** 一律に「DB バックアップ
-だけでは復旧できない」とまとめると復旧要件を誤るため、鍵ごとに分けて記載する。
-
-| 鍵                           | 失うと                                                                                                                                                                                                                    | 再生成の可否                               |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `ACTIVE_RECORD_ENCRYPTION_*` | **DB の暗号化カラムが復号不能になる。DB のバックアップがあっても復旧できない**                                                                                                                                            | 不可                                       |
-| `SECRET_KEY_BASE`            | 全セッションが無効化される。署名済み Cookie が壊れる                                                                                                                                                                      | 再生成すると影響が発生するが致命的ではない |
-| `OTP_SECRET`                 | **移行後の DB では影響なし。** 旧形式 2FA 秘密を移行する post-migration でのみ参照される（`db/post_migrate/20240307180905_migrate_devise_two_factor_secrets.rb:82-115`）。移行済みであれば失っても既存 2FA には影響しない | 移行時にのみ必要                           |
-| `VAPID_PRIVATE_KEY`          | **再生成可能。** 既存の push 購読が無効になるだけで、暗号化カラムの復号とは無関係                                                                                                                                         | 可                                         |
-| `AWS_SECRET_ACCESS_KEY`      | 再発行可能                                                                                                                                                                                                                | 可                                         |
-
-PITR を整えても、`ACTIVE_RECORD_ENCRYPTION_*` のような復号不能系の鍵が失われれば意味が
-半減する点に変わりはない。
-
-保管方針:
-
-- 保管は **koba-lab さん個人の保管庫**（Google Drive / Notion / パスワードマネージャ）
-- **LastPass は避ける** — 2022年に暗号化 Vault のバックアップが流出した事案がある
-- Google Drive / Notion は**平文で置きがち**。暗号化してから、2FA 必須
-- **2箇所以上に置く**（片方はオフラインでもよいという想定）
-
-#### GitHub Secrets での配布は検討したが、保管の主役にはしない
-
-**メリット**: GHA + ssh のデプロイ設計（5.2節）と自然に噛み合う。リポジトリと同じ場所で
-管理でき、権限管理も GitHub の体系に乗る。
-
-**デメリット**: GitHub Secrets は書き込み専用で値を読み出せない（誤って上書きすると過去の
-値を確認する手段が無い）。`.env.production` の変数を1つずつ登録し GHA 経由で書き戻す変換の
-手間が生じる。緊急時に人が直接 `restore.sh` を叩くような手動復旧作業との相性が悪い。ワーク
-フローのログへ誤って秘密値を出力してしまう事故のリスクも伴う（本ドキュメントで繰り返し
-指摘している `docker compose config` の秘密漏洩と同種のリスク）。
-
-**結論**: 既知の問題 #11（`.env.production` にバックアップが無い）への解決策としては、
-GitHub Secrets は主役にならない。主役は上記で決定済みの**個人の保管庫**のままとする。
-GitHub Secrets は、サーバーへの**配布を自動化する用途**では有用な選択肢だが、それは
-「バックアップ」とは別の話として区別する（採用するかどうかは実施時にあらためて検討する
-要件のみ）。
-
-### 6.4 あわせて直す既知の問題
-
-- `restore.sh` の非対話モード対応（#5）
-- `deploy-postgres.yml` の参照ファイル名の修正（#1）
-- `PRIVATE_IP` のデフォルトが `0.0.0.0` になっている点の廃止（#2。抜けると PostgreSQL が
-  全世界に公開されてしまう）
+PITR（WAL アーカイブ + ベースバックアップ）の方向性と、鍵ごとの喪失影響・保管方針の検討中の
+詳細は [`infrastructure/backup-design.md`](infrastructure/backup-design.md) を参照してください。
 
 ---
 
@@ -721,7 +281,7 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 導入する方針自体は変わらないため、導入前に重複導入がないか確認する）。⚠️ 無料枠のホスト数は
 未確認（10節参照）。
 
-### 7.3 見つけた穴（8節のセキュリティとも関連）
+### 7.3 見つけた穴
 
 `ikatodon-db/docker-compose.yml` の mackerel-agent が `/var/run/docker.sock:ro` を
 マウントしている。**`:ro` はほぼ無意味**で、このソケットに触れれば任意のコンテナを特権起動
@@ -742,31 +302,8 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 - マイニングに使われていないかを確認できる
 - 予防側を固める（パッチ適用、鍵の権限、SSH は鍵のみ、Docker ソケットの扱い）
 
-### 8.2 候補として挙がったもの（未選定）
-
-- AIDE によるファイル改ざん検知
-- CrowdSec
-- Mackerel の CPU / ネットワーク監視（7節と兼用）
-
-**Wazuh は1人運用には重いと判断し、候補から外している**（ただし正式な不採用決定ではなく、
-検討の結果として重いと分かっている、という位置づけ）。
-
-### 8.3 実現が難しいと分かっているもの（過度な期待をしないための記録）
-
-- **「変なところと通信していないか」の検知** — ActivityPub は不特定多数へ能動的に HTTP
-  リクエストを出すのが正常動作であるため、宛先ベースの異常検知は誤検知の海になり実用に
-  ならない
-- **「情報が漏れた/盗まれたか」の検知** — 正規のアクセスと不正アクセスを区別する手段が
-  無い。検知より予防（8.1）への投資の方が費用対効果で勝ると考えている
-
-### 8.4 見つけている穴
-
-| 穴                                     | 内容                                                                                                                                                                                                                                                                                                    |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`ufw` が無効**                       | **公開インターフェースに bind / publish されているサービスに限り**、ufw による防御がない状態（`127.0.0.1` にのみバインドしている web / streaming は対象外。3.1節参照）。なお、コンテナの公開ポートは元々 ufw を迂回する性質があるため、`ufw` を有効化しても Docker の `ports:` 公開自体は別途対処が要る |
-| **Redis に認証が無い**                 | ⚠️ 認証が無いことは確定事項だが、**到達範囲（プライベート網からのみか、外部からも届くか）は未確認**（9.2節 #15）。確認が終わるまでは「防御が1枚ある」ではなく「露出範囲が未確認の穴」として扱う                                                                                                         |
-| **Docker ソケットのマウント**          | mackerel-agent が `/var/run/docker.sock:ro` をマウントしている（7.3節）。`:ro` はほぼ無意味で、乗っ取られれば実質ホストの root。Web 2台に入れると同じ構成が増える                                                                                                                                       |
-| `.env.production` にバックアップが無い | 6.3節参照                                                                                                                                                                                                                                                                                               |
+具体的な候補（ツールの比較検討）はまだ行っていません。9節「既知の問題」に記録済みの穴
+（`ufw` 無効、Redis の認証無し、Docker ソケットのマウント）が対応対象です。
 
 ---
 
@@ -785,9 +322,9 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 | 7   | `acme-challenge` upstream に現役でない IP が2つ残っている                                                                                                        |
 | 8   | イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する                                                                                     |
 | 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                       |
-| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3、8.4）                                                                                        |
-| 11  | `.env.production` にバックアップが無い（6.3）                                                                                                                    |
-| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.3節） |
+| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                           |
+| 11  | `.env.production` にバックアップが無い                                                                                                                           |
+| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.2節） |
 
 ### 9.2 要確認
 
@@ -796,6 +333,7 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 | 13  | 全台で同じ `bundle exec sidekiq` が動いていると `scheduler` が多重実行される可能性                                                                      | 稼働中コンテナの command を直接確認（10節）                                                         |
 | 14  | `nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残る                                                                                                    | `sudo nginx -T`                                                                                     |
 | 15  | Redis ホストの `docker-compose.yml` が `ports: 6379:6379` でコンテナを直接公開している疑い（nginx 経由ではない）。Docker の publish は ufw を迂回し得る | Redis ホストで `docker compose config` の `ports` 設定を確認、`sudo ufw status`、外部からの疎通確認 |
+| 16  | GitHub-hosted runner から Web サーバーへ実際に SSH（22/tcp・鍵認証）が通るか。`ufw` が無効なことは到達性を保証しない                                    | 実際に workflow から接続して確認する（デプロイ自動化の実装時）                                      |
 
 ---
 
@@ -823,10 +361,10 @@ docker exec mastodon_postgres16 psql -U mastodon -d mastodon_production \
   -c "SELECT * FROM pg_stat_archiver;"
 time /opt/mastodon/backup.sh                      # 10分前後の見込み
 docker inspect --format '{{.Config.Cmd}}' <sidekiq コンテナ名>   # scheduler 重複（#13）
-# GHA runner からの ssh 到達性（5.3節）。GitHub-hosted runner の IP レンジから
+# GHA runner からの ssh 到達性（#16）。GitHub-hosted runner の IP レンジから
 # 22/tcp への到達性と鍵認証が通るかは、実際に workflow から接続して確認する必要がある
 docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' <稼働中コンテナ名>
-                                                   # 現行の COMPOSE_PROJECT_NAME（releases/ 移行時に要一致。5.2節参照）
+                                                   # 現行の COMPOSE_PROJECT_NAME（releases/ 移行時に要一致）
 ```
 
 ⚠️ **`ip -4 addr` は上記の理由により公開 PR には貼らない**（秘密管理下で直接 Ansible 変数へ）。
@@ -859,6 +397,6 @@ docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' 
 | 3    | デプロイ自動化（issue #876 本体）                            | 2    |
 | 4    | PITR（3 と並行可）                                           | 0    |
 | 5    | 監視の拡張（7節）                                            | 0    |
-| 6    | セキュリティ（要件から解決策を選定、8節）                    | 5    |
-| 7    | Cloudflare 化の判断（トラック C）                            | 独立 |
-| 8    | nginx の Docker 化                                           | 7    |
+
+セキュリティの解決策選定（8節）、Cloudflare 化の判断（トラック C）は、判断材料が揃って
+いないため段階に組み込んでいません。実施するタイミングであらためて検討します。
