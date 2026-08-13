@@ -406,11 +406,11 @@ GHA 側では触らず、ホスト上の `docker compose` がホストの `.env`
 「今どの版が有効か」は `current` シンボリックリンクの参照先という **OS の機能（構造的な
 事実）** で表現され、ファイル命名の整合性を人や CI が手作業で守る必要が無くなる。
 
-| 担当                             | 内容                                                                                                                                                                                                                                                                                                                                           |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Ansible**（一度きり・冪等）    | `/opt/ikatodon/releases/` を作る（`file: state=directory` の1タスク）。`.env` の `COMPOSE_FILE` を `current` 配下（`current/docker-compose.yml:current/compose.override.yml`）へ向ける。**`.env.production` の配置**（`/opt/ikatodon/.env.production` に1つだけ）と、**既存の `COMPOSE_PROJECT_NAME` を `.env` に設定する**のも Ansible の責務 |
-| **GitHub Actions**（毎デプロイ） | `releases/<version>/` に compose 2ファイルを配置し、**同じディレクトリに `/opt/ikatodon/.env.production` へのシンボリックリンクを作る**（`ln -s ../../.env.production releases/<version>/.env.production`）→ drain 後に `ln -sfn releases/<version> current` で切替（アトミックにするなら一時リンクを作って `mv -T` で置き換える）             |
-| **世代管理**                     | **直近2世代を保持**。それ以前は削除する。**切替前に `readlink current` で現在版を記録し、現在版とその直前版を明示的に除外して削除する**（バージョン番号のソート順に依存しない）。詳細は下記                                                                                                                                                    |
+| 担当                             | 内容                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Ansible**（一度きり・冪等）    | `/opt/ikatodon/releases/` を作る（`file: state=directory` の1タスク）。**初回移行（下記ブートストラップ）を実行し、その完了後に**`.env` の `COMPOSE_FILE` を `current` 配下（`current/docker-compose.yml:current/compose.override.yml`）へ向ける。**`.env.production` の配置**（`/opt/ikatodon/.env.production` に1つだけ）と、**既存の `COMPOSE_PROJECT_NAME` を `.env` に設定する**のも Ansible の責務 |
+| **GitHub Actions**（毎デプロイ） | `releases/.tmp-<version>-<run_id>/` に compose 2ファイルと `.env.production` への symlink を組み立て、内容が完成してから `mv -T` で `releases/<version>/` へ**アトミックに**配置する（既に `releases/<version>/` が存在する場合は上書きせずそのまま再利用する）→ drain 後に `ln -sfn releases/<version> current` で切替                                                                                  |
+| **世代管理**                     | **直近2世代を保持**。それ以前は削除する。**切替前に `readlink current` で現在版を記録し、現在版とその直前版を明示的に除外して削除する**（バージョン番号のソート順に依存しない）。詳細は下記                                                                                                                                                                                                              |
 
 ⚠️ **決定事項 — `.env.production` は releases 配下へコピーせずシンボリックリンクで参照する**
 （Copilot 指摘・重大）。`docker-compose.yml` の3サービスすべてが `env_file: .env.production`
@@ -430,7 +430,60 @@ project 名（通常はディレクトリ名から導出される）も変わる
 `.env` に設定する**ことで新旧の project 名を一致させ、`up -d` が同一 project のコンテナを
 正しく置き換えるようにする。
 
+⚠️ **決定事項 — `prepare` は冪等かつアトミックに書く**（Copilot 指摘・重大）。以前の記述は
+「`releases/<version>/` 配下へ配置する」としか書いておらず、同じ version のディレクトリが
+既に存在する場合に compose ファイルを上書きしてしまう問題があった。特に**対象 version が
+既に `current` の参照先だった場合**（例: 同じバージョンでの再実行）、これは稼働中の設定を
+書き換えてしまうことに等しく、「既存の `releases/*/` や `current` は一切変更しない」という
+このセクションの前提が崩れる。加えて、`.env.production` へのシンボリックリンク作成に単純な
+`ln -s` を使うと、既にリンクが存在する場合に失敗する（再実行できない）。これらを避けるため、
+**`prepare` は一時ディレクトリ（`releases/.tmp-<version>-<run_id>/`）の中で compose ファイル
+と symlink を含む release の中身を完成させてから、`mv -T` で `releases/<version>/` へ
+アトミックに配置する。** `releases/<version>/` が既に存在する場合は、（内容が生成物として
+一致する前提のもとで）上書きせずそのまま再利用し、`current` の参照先であっても一切触らない。
+symlink 作成にも `ln -sfn` を使い、既存リンクがあっても失敗しないようにする。
+
+⚠️ **決定事項 — リモートでの `docker compose` 操作は作業ディレクトリを明示する**（Copilot
+指摘・重大）。Compose が `.env` を自動読込するのは実行時のカレントディレクトリに依存するが、
+GHA の ssh アクションの既定の作業ディレクトリは通常ホームディレクトリであり、`/opt/ikatodon`
+ではない。作業ディレクトリを指定しないと、`prepare` では `PRIVATE_IP` が見つからず
+`${PRIVATE_IP:?...}` により停止し、`deploy` / `post-migrate` では `.env` の
+`COMPOSE_FILE` / `COMPOSE_PROJECT_NAME` が適用されない。**すべてのリモート `docker compose`
+呼び出しは、`cd /opt/ikatodon` してから実行するか `--project-directory /opt/ikatodon` を
+明示する。** 下記のワークフロー構造の各ステップ（prepare / pre-migrate / deploy /
+post-migrate）はすべてこの前提で書かれている。
+
 **手動設定は一切不要。すべて IaC（Ansible + GitHub Actions）で完結する。**
+
+#### 決定事項 — 初回移行（ブートストラップ）は通常のデプロイと切り離した Ansible の一度きりタスクで行う
+
+⚠️ **重要**: 現在、本番は checkout 上の compose ファイルで稼働しており、
+`/opt/ikatodon/releases/` も `current` シンボリックリンクも存在しない。**この状態のまま
+通常のデプロイワークフローを実行すると、`readlink current` が失敗し（`current` が無い）、
+ロールバック先も存在しない（`releases/` が空）ため、成立しない。** `releases/` 方式への
+移行には、以下の初回だけの手順（ブートストラップ）が必要であり、これを経るまでは通常の
+デプロイワークフローを実行できない。
+
+ブートストラップは **Ansible の冪等なタスクとして書く**（一度きりの手動作業や専用ワーク
+フローにはしない。Ansible なら再実行しても安全に収束し、他の Ansible タスクと同じ経路で
+管理できるため）。
+
+1. `/opt/ikatodon/releases/` ディレクトリを作る
+2. 現行の `COMPOSE_PROJECT_NAME` を実機で確認し（10節参照）、`.env` に固定する
+   （前述の「`COMPOSE_PROJECT_NAME` を固定する」と同じ項目）
+3. **`COMPOSE_FILE` を `current` 配下へ向ける前に**、現在稼働中のバージョンの compose
+   一式（checkout 上の `docker-compose.yml` と `compose.override.yml`）を初期 release
+   として `releases/<現行version>/` へ取り込む
+4. `.env.production` の本体を `/opt/ikatodon/.env.production` へ移動し、初期 release
+   （`releases/<現行version>/.env.production`）からのシンボリックリンクを張る
+5. `current` を初期 release へ向ける（`ln -sfn releases/<現行version> current`）
+6. **ここまで完了してから**、`.env` の `COMPOSE_FILE` を `current` 配下
+   （`current/docker-compose.yml:current/compose.override.yml`）へ向ける
+
+この順序（先に `releases/<現行version>/` と `current` を整えてから `COMPOSE_FILE` を
+切り替える）により、切り替えの前後で `docker compose` が参照する実体は常に「今動いている
+のと同じ compose ファイル」であり続け、ブートストラップの過程でコンテナが不要に再起動する
+ことはない。
 
 #### ワークフロー構造（目指す形）
 
@@ -440,73 +493,77 @@ on: workflow_dispatch
 concurrency: 本番デプロイで1本に限定    ← 必須。複数 dispatch の同時実行による競合を防ぐ
 
 verify        PR 時の CI で担保済みの内容を再確認
-prepare       各ホストで、新しい override と対象タグの docker-compose.yml を envsubst で
-                生成し releases/<version>/ 配下へ配置する（既存の releases/*/ や current は
-                一切変更しない） → 同ディレクトリに .env.production への symlink を張る
-                （ln -s ../../.env.production releases/<version>/.env.production）
-                → docker compose -f releases/<version>/docker-compose.yml \
+prepare       各ホストで、releases/.tmp-<version>-<run_id>/ に新しい override と対象タグの
+                docker-compose.yml を envsubst で生成し、同ディレクトリに .env.production への
+                symlink（ln -sfn）を張って中身を完成させる → mv -T で releases/<version>/ へ
+                アトミックに配置（既に存在するなら上書きせず再利用。current は一切変更しない）
+                → cd /opt/ikatodon && docker compose -f releases/<version>/docker-compose.yml \
                 -f releases/<version>/compose.override.yml pull で新イメージのみ事前取得
-pre-migrate   docker compose -f releases/<version>/docker-compose.yml \
+pre-migrate   cd /opt/ikatodon && docker compose -f releases/<version>/docker-compose.yml \
                 -f releases/<version>/compose.override.yml run --rm web \
                 env SKIP_POST_DEPLOYMENT_MIGRATIONS=true bundle exec rails db:migrate
                 ← releases/<version>/ にステージ済みの新イメージから実行する。exec は使わない
-deploy        matrix [host1, host2]、max-parallel: 1
+deploy        単一ジョブ内で host1 → host2 の順に明示的に直列実行する（matrix は使わない。
+                理由は下記「matrix をやめた理由」）。各ホストで:
                 1. nginx を drain（自分を外して reload）
-                2. readlink current で切替前の版（ロールバック先）を記録
-                3. ln -sfn releases/<version> current で切替（＝ここが唯一の「有効化」操作）
-                4. docker compose up -d             ← COMPOSE_FILE は current 配下を指す。down は不要
+                2. cd /opt/ikatodon && readlink current で切替前の版を読み取り、
+                   このホスト専用の変数（例 rollback_target_host1）としてジョブ内に保持
+                   （$GITHUB_ENV 等。同一ジョブ内の以降のステップから参照できる）
+                3. cd /opt/ikatodon && ln -sfn releases/<version> current で切替
+                   （＝ここが唯一の「有効化」操作）
+                4. cd /opt/ikatodon && docker compose up -d
+                   （--project-directory /opt/ikatodon と同義。down は不要）
                 5. web の /health、streaming の /api/v1/streaming/health、
                    sidekiq が起動後も running であること、の3つがすべて確認できるまで待つ
                    （/health だけでは streaming/sidekiq の起動失敗を検出できない）
-                6. 失敗時: current を手順2で記録した直前の releases/<version> へ張り替え直し、
-                   docker compose up -d（＝前のイメージ・前の base compose の組で再起動）
-                   → nginx を復帰。**2台目の失敗なら、既に新版へ更新済みの1台目も
-                   逆順に drain → 同じ手順で current を戻す**（新旧混在のまま終わらせない）。
+                6. host1 が失敗: cd /opt/ikatodon && ln -sfn releases/<rollback_target_host1> \
+                   current → docker compose up -d → nginx を復帰。host2 には進まず終了
+                7. host2 が失敗: host2 を rollback_target_host2 へ戻す
+                   → 続けて host1 も rollback_target_host1 へ逆順に drain・戻す
+                   （両ホストの rollback target が同一ジョブ内の変数として残っているため、
+                   host2 の失敗時点でも host1 の戻し先を参照できる）
+                   → 両台とも旧版に揃った状態でロールバックを完了する。
                    **この逆順の復元自体が失敗した場合**（例: host1 を戻した後に `/health` が
                    戻らない）は、自動でのリトライや追加の巻き戻しは行わず、その時点で
                    デプロイを停止して通知する。新旧混在状態が残り得ることを許容したうえで、
                    収束は手動対応に委ねる
-                7. 成功時: nginx を復帰（reload）→ 世代削除（手順2で記録した「切替前の版」＝
-                   直前の release と、今回切替た新しい release の2つだけを残し、それ以外の
-                   releases/<version>/ を削除。バージョン番号のソート順には依存しない）
+                8. 両ホスト成功時: nginx を復帰（reload）→ 世代削除（各ホストで、
+                   手順2で記録した「切替前の版」と今回切替た新しい版の2つだけを残し、
+                   それ以外の releases/<version>/ を削除。バージョン番号のソート順には
+                   依存しない）
 gate          if: inputs.pause_before_post → Environments の承認待ち（追加コマンドを流す）
-post-migrate  docker compose run --rm web bundle exec rails db:migrate
+post-migrate  cd /opt/ikatodon && docker compose run --rm web bundle exec rails db:migrate
 ```
+
+##### matrix をやめた理由（設計変更）
+
+以前の案は `deploy` を `matrix: [host1, host2]` + `max-parallel: 1` で書いていたが、これは
+**設計上の欠陥**だった。`readlink current` で読み取る「切替前の版（ロールバック先）」を
+matrix の各 leg（=別々のジョブ実行）のシェル内にしか保持できず、host1 が切替を終えた
+時点でそのホストの `current` は既に新版を指している。**host2 が失敗したとき、host1 を
+戻すための「切替前の版」を知る手段が matrix の構造上ない。** ドキュメントに書いていた
+「host2 が失敗したら host1 も逆順に drain して戻す」という手順は、matrix のままでは
+実装できなかった。
+
+対応として2案を検討し、**matrix をやめて単一ジョブ内で2ホストを明示的に直列制御する方式**
+を採用した。
+
+| 案                                             | 内容                                                                                                                                                                               | 採否                                                                                                                                                           |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| job outputs / artifact で leg 間の値を受け渡す | matrix の構造は維持し、各 leg の rollback target を job outputs や artifact 経由で次のジョブへ渡す                                                                                 | **不採用**。matrix の並列実行モデルに逆行する受け渡しの配線が増え、`max-parallel: 1` で直列化しているにもかかわらず leg 間通信の仕組みを別途組む必要があり複雑 |
+| **matrix をやめ、単一ジョブ内で直列制御する**  | host1・host2 を同じジョブの中で順番に処理する。両ホストの rollback target を同じシェル変数（`$GITHUB_ENV` 等）として自然に保持でき、逆順ロールバックもジョブ内の分岐で素直に書ける | **採用**。順序は `max-parallel: 1` に頼らずジョブの実行順そのもので保証され、状態共有の配線も不要になる。より単純                                              |
 
 - **`version` の入力値がそのまま `releases/<version>/` のディレクトリ名・
   `${IKATODON_VERSION}` の両方に使われる。** prepare ジョブは対象バージョンの compose
   ファイルを生成・配置するところまでを担い、ホスト側で `git pull` して版を合わせるような
   手順は取らない
-- ⚠️ **決定事項 — `prepare` は `current` を書き換えない。** `releases/<version>/` への
-  配置は既存の世代に一切影響しないため、2台目への配布・pull や pre-migrate がどの段階で
-  失敗しても、稼働中の `current` はそのまま無傷で残る。安全に停止・再試行できる
 - **ロールバックは `current` を1つ前の `releases/<version>/` へ張り替えるだけ。** 「退避
   ファイルを正しい組で作れているか」を人や CI が気にする必要が構造的に無くなる（以前の
   `*.previous.yml` 方式で起きていた、命名規約の不統一やペアの一部だけ上書きされる事故は
   この設計では起こり得ない）
-- ⚠️ **決定事項 — 世代削除は「切替前の版」を明示的に除外して行う**（Copilot 指摘・重大）。
-  `find | sort -rV | tail -n +3` のようなバージョン番号順のソートに依存する削除は、
-  「バージョン番号が大きい順に2つ残す」であって「直近2回のデプロイを残す」ではない。
-  **ロールバックで古い版に戻した直後は、稼働中の `current` の参照先（番号が小さい版）が
-  削除対象に入り、シンボリックリンクが壊れてロールバック先も失われる。** これを避けるため、
-  切替の直前に `readlink current` で当時の版を記録しておき、**「切替前に記録した版」と
-  「今回切替た新しい版」の2つだけを明示的に除外して残りを削除する**（手順2・7参照）。
-  ソート順に依存しない
-- **2台目が失敗すると新旧混在のまま止まる問題への対応。** `deploy` の matrix は
-  `max-parallel: 1` で直列に進むため、2台目のヘルスチェックが失敗した時点では
-  1台目は既に新版のまま残っている。これを放置すると「自動ロールバックで元の状態に戻る」
-  という前提が崩れるため、**2台目の失敗時は、既に更新済みの1台目についても逆順に
-  drain して `current` を戻す**。両台とも旧版に揃った状態でロールバックを完了する
-- ⚠️ **決定事項 — streaming / sidekiq のヘルスチェックも必須とする**（Copilot 指摘）。以前は
-  `deploy` ステップで Rails の `/health` だけを待っていたが、streaming と sidekiq は
-  `web` と同時に更新されるにもかかわらず、それぞれの起動失敗を検出できていなかった。
-  これだと両ホスト更新後にストリーミングやジョブ処理だけが停止した状態を「成功」扱いして
-  しまう。**streaming の `/api/v1/streaming/health` も明示的にポーリングし、sidekiq が
-  起動後も running であることを確認してから**（例: `docker compose ps` でコンテナの状態を
-  見る）nginx を復帰する
-- **workflow-level の `concurrency` グループを必須とする。** `max-parallel: 1` は同一 run
-  内の matrix を直列化するだけで、複数の `workflow_dispatch` が同時に始まった場合の drain・
-  migration・デプロイの競合は防げない
+- **workflow-level の `concurrency` グループを必須とする。** 単一ジョブ内で直列制御しても、
+  複数の `workflow_dispatch` が同時に始まった場合の drain・migration・デプロイの競合は
+  防げないため、引き続き必須
 - **バックアップのジョブは持たない**（トラック B の PITR で対応。6節参照）
 - **post migration が全台更新後に走る**（現状の問題 #3 の修正）
 - migration の有無は GHA 側で
@@ -515,13 +572,13 @@ post-migrate  docker compose run --rm web bundle exec rails db:migrate
 
 #### 決定事項 — ロールバックは層ごとに分ける
 
-| いつ                                                                               | 動作                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **web / streaming / sidekiq のいずれかのヘルスチェックが通らない**（4.2節・5.2節） | **自動。** `current` を切替直前に記録した版へ張り替え、前のイメージ・前の base compose の組で起動し直してから nginx を戻す。**2台目で失敗した場合は、既に新版へ更新済みの1台目も逆順に drain して同じ手順で `current` を戻す**（新旧混在のまま終わらせない）。**この逆順の復元自体が失敗した場合は、自動リトライや追加の巻き戻しを行わずその時点で停止・通知する**（新旧混在状態が残り得ることを許容し、収束は手動）。サイトは終始生きている |
-| **migration が失敗**                                                               | 自動で中断。コンテナは入れ替えていないためサービスは継続するが、**`db:migrate` は複数の migration を順に確定していき `disable_ddl_transaction!` を使うものもあるため、DB が部分的に更新されている可能性がある**。「影響なし」ではない。DB 状態を確認し手動復旧するまで次のステップに進まない                                                                                                                                                 |
-| **post migration が失敗**                                                          | **自動では戻さない。** 両台とも新版で DB が中途半端な状態。デプロイを止めて通知する                                                                                                                                                                                                                                                                                                                                                          |
-| **公開後に不具合が判明（post migration 実行前）**                                  | 手動。前の `version` を入力して再実行する。**DB は戻らない**（トラック B の PITR が保険）                                                                                                                                                                                                                                                                                                                                                    |
-| **公開後に不具合が判明（post migration 実行後）**                                  | ⚠️ **単純なアプリロールバックは安全ではない。** `db/post_migrate` にはカラム・テーブルを削除する migration が含まれるため、旧コードに戻すと既に削除されたスキーマへアクセスして起動後に壊れる。**forward fix（前進での修正）** か、**DB の復元（トラック B の PITR）を伴う手順**が必要                                                                                                                                                       |
+| いつ                                                                               | 動作                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **web / streaming / sidekiq のいずれかのヘルスチェックが通らない**（4.2節・5.2節） | **自動。** `current` を切替直前に記録した版へ張り替え、前のイメージ・前の base compose の組で起動し直してから nginx を戻す。**host2 で失敗した場合は、既に更新済みの host1 も逆順に drain して同じ手順で `current` を戻す**（新旧混在のまま終わらせない。単一ジョブ内で直列制御しているため両ホストの戻し先を参照できる）。**この逆順の復元自体が失敗した場合は、自動リトライや追加の巻き戻しを行わずその時点で停止・通知する**（新旧混在状態が残り得ることを許容し、収束は手動）。サイトは終始生きている |
+| **migration が失敗**                                                               | 自動で中断。コンテナは入れ替えていないためサービスは継続するが、**`db:migrate` は複数の migration を順に確定していき `disable_ddl_transaction!` を使うものもあるため、DB が部分的に更新されている可能性がある**。「影響なし」ではない。DB 状態を確認し手動復旧するまで次のステップに進まない                                                                                                                                                                                                              |
+| **post migration が失敗**                                                          | **自動では戻さない。** 両台とも新版で DB が中途半端な状態。デプロイを止めて通知する                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **公開後に不具合が判明（post migration 実行前）**                                  | 手動。前の `version` を入力して再実行する。**DB は戻らない**（トラック B の PITR が保険）                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **公開後に不具合が判明（post migration 実行後）**                                  | ⚠️ **単純なアプリロールバックは安全ではない。** `db/post_migrate` にはカラム・テーブルを削除する migration が含まれるため、旧コードに戻すと既に削除されたスキーマへアクセスして起動後に壊れる。**forward fix（前進での修正）** か、**DB の復元（トラック B の PITR）を伴う手順**が必要                                                                                                                                                                                                                    |
 
 #### 検証の分担
 
