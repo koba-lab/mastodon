@@ -9,7 +9,7 @@ Mastodon v2.9 の頃に作られたが、バージョンアップに追随でき
 [PR #19](https://github.com/koba-lab/mastodon/pull/19) で v3.1.5 対応が試みられ、
 マルチカラムはほぼ移植されたがシングルカラム／SP 対応を残して停止した。
 
-v4.6.4 で復活させたのが現行の実装。デザインの一次ソースは PR #19 の
+v4.6.5 で復活させたのが現行の実装。デザインの一次ソースは PR #19 の
 `app/javascript/styles/ikadon/{variables,diff,ika-style}.scss` と、
 同 PR のコメントに残っているスクリーンショットおよびデザイン指示。
 

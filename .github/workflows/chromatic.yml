@@ -63,19 +63,18 @@ jobs:
           zip: true
           storybookBuildDir: 'storybook-static'
           autoAcceptChanges: 'main' # Auto-accept changes on main branch only
-          # ikatodon: 撮影対象を ikadon 用の Story に限定する（上流の Story は対象外）
-          onlyStoryFiles: '**/*.ikadon.stories.tsx'
-          # ikatodon: Story 単位の結果を JUnit XML で得るため。デフォルトのファイル名は
-          # chromatic-build-{buildNumber}.xml（カレントディレクトリに出力される）
+          # ikatodon: 撮影対象を ikadon の Story (title が Ikadon/*) に限定する。
+          # onlyStoryFiles '**/*.ikadon.stories.tsx' では絞り込めなかった
+          # （detail: docs/ikadon-theme.md の「VRT (Chromatic)」節）
+          onlyStoryNames: 'Ikadon/*'
+          # ikatodon: Story 単位の結果を JUnit XML で得る（既定のファイル名は
+          # chromatic-build-{buildNumber}.xml、カレントディレクトリに出力される）
           junitReport: true
-          # ikatodon: exitOnceUploaded は付けない。付けるとテスト完了前にジョブが終了し、
-          # errorCount / interactionTestFailuresCount などの outputs が空のまま読まれてしまう
+          # ikatodon: exitOnceUploaded は付けない。付けるとテスト完了前にジョブが終了し
+          # errorCount 等の outputs が空のまま読まれてしまうため
 
-      # ikatodon: chromaui/action の outputs と JUnit XML の失敗詳細を
-      # $GITHUB_STEP_SUMMARY と PR コメントに書き出す。Chromatic は「差分の承認待ち」
-      # 「レンダリングエラー」「Interaction test の失敗」を commit status 上ではすべて
-      # 同じ `Failed tests` という文言で報告するため、outputs を見なければ
-      # GitHub 上から原因を判別できない
+      # ikatodon: outputs と JUnit XML の失敗詳細を summary/PR コメントに書き出す。
+      # commit status だけでは失敗理由が判別できないため（詳細は docs/ikadon-theme.md）
       - name: Report results
         if: always()
         env:
@@ -90,31 +89,33 @@ jobs:
           BUILD_URL: ${{ steps.chromatic.outputs.buildUrl }}
           STORYBOOK_URL: ${{ steps.chromatic.outputs.storybookUrl }}
         run: |
+          # key の並び順を1箇所にまとめ、テーブルと ```code``` ブロックの両方で使い回す
+          keys=(errorCount interactionTestFailuresCount changeCount testCount \
+                actualCaptureCount componentCount specCount buildUrl storybookUrl)
+          declare -A values=(
+            [errorCount]="$ERROR_COUNT"
+            [interactionTestFailuresCount]="$INTERACTION_TEST_FAILURES_COUNT"
+            [changeCount]="$CHANGE_COUNT"
+            [testCount]="$TEST_COUNT"
+            [actualCaptureCount]="$ACTUAL_CAPTURE_COUNT"
+            [componentCount]="$COMPONENT_COUNT"
+            [specCount]="$SPEC_COUNT"
+            [buildUrl]="$BUILD_URL"
+            [storybookUrl]="$STORYBOOK_URL"
+          )
           {
             echo "## Chromatic 結果"
             echo ""
             echo "| key | value |"
             echo "| --- | --- |"
-            echo "| errorCount | ${ERROR_COUNT:-N/A} |"
-            echo "| interactionTestFailuresCount | ${INTERACTION_TEST_FAILURES_COUNT:-N/A} |"
-            echo "| changeCount | ${CHANGE_COUNT:-N/A} |"
-            echo "| testCount | ${TEST_COUNT:-N/A} |"
-            echo "| actualCaptureCount | ${ACTUAL_CAPTURE_COUNT:-N/A} |"
-            echo "| componentCount | ${COMPONENT_COUNT:-N/A} |"
-            echo "| specCount | ${SPEC_COUNT:-N/A} |"
-            echo "| buildUrl | ${BUILD_URL:-N/A} |"
-            echo "| storybookUrl | ${STORYBOOK_URL:-N/A} |"
+            for k in "${keys[@]}"; do
+              echo "| $k | ${values[$k]:-N/A} |"
+            done
             echo ""
             echo '```'
-            echo "errorCount=${ERROR_COUNT:-}"
-            echo "interactionTestFailuresCount=${INTERACTION_TEST_FAILURES_COUNT:-}"
-            echo "changeCount=${CHANGE_COUNT:-}"
-            echo "testCount=${TEST_COUNT:-}"
-            echo "actualCaptureCount=${ACTUAL_CAPTURE_COUNT:-}"
-            echo "componentCount=${COMPONENT_COUNT:-}"
-            echo "specCount=${SPEC_COUNT:-}"
-            echo "buildUrl=${BUILD_URL:-}"
-            echo "storybookUrl=${STORYBOOK_URL:-}"
+            for k in "${keys[@]}"; do
+              echo "$k=${values[$k]:-}"
+            done
             echo '```'
 
             junit_file=$(ls chromatic-build-*.xml 2>/dev/null | head -n1 || true)
@@ -127,7 +128,7 @@ jobs:
               echo ""
               echo "(JUnit XML が見つかりませんでした)"
             fi
-          } | tee -a "$GITHUB_STEP_SUMMARY" > /tmp/chromatic-summary.md
+          } | tee -a "$GITHUB_STEP_SUMMARY" | tee /tmp/chromatic-summary.md
 
           # ikatodon: chromatic.yml は push トリガーなので github.event.pull_request が無い。
           # push されたブランチに紐づく open な PR を探してコメントする
