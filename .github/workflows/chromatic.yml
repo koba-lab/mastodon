@@ -1,7 +1,6 @@
 name: 'Chromatic'
 permissions:
   contents: read
-  pull-requests: write
 
 on:
   push:
@@ -54,103 +53,48 @@ jobs:
 
       - name: Build Storybook
         run: yarn build-storybook
+        env:
+          # ikatodon: Chromatic に上げるビルドは ikadon の Story だけにする。
+          # 上流 Story を含めると、撮影対象外でも前回ビルドの BROKEN ステータスを
+          # 引き継ぎ続け、UI Tests が恒久的に赤くなる
+          # （detail: docs/ikadon-theme.md の「VRT (Chromatic)」節）
+          IKADON_STORIES_ONLY: '1'
 
-      # ikatodon: chromaui/action は errorCount > 0 だと自身の exit code で
-      # ジョブを失敗させる。上流由来の既知エラー（inherited）を無視する判定は
-      # 後続の「Fail if ikadon's own stories are broken」に一本化したいため、
-      # このステップ単体の失敗ではジョブを止めない
+      # ikatodon: ビルドを ikadon の Story だけに絞っているため、このステップの
+      # 合否（errorCount）がそのまま「ikadon の Story が壊れていないか」を表す。
+      # 視覚差分（changeCount）ではジョブを落とさない — その判定は Chromatic 側の
+      # commit status (UI Tests) に委ね、人間が Chromatic の Web UI で見て承認する
       - name: Run Chromatic
         id: chromatic
-        continue-on-error: true
         uses: chromaui/action@07791f8243f4cb2698bf4d00426baf4b2d1cb7e0 # v13
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
           zip: true
           storybookBuildDir: 'storybook-static'
           autoAcceptChanges: 'main' # Auto-accept changes on main branch only
-          # ikatodon: 撮影対象を ikadon の Story (title が Ikadon/*) に限定する。
-          # onlyStoryFiles '**/*.ikadon.stories.tsx' では絞り込めなかった
-          # （detail: docs/ikadon-theme.md の「VRT (Chromatic)」節）
-          onlyStoryNames: 'Ikadon/*'
+          exitZeroOnChanges: true
           # ikatodon: Story 単位の結果を JUnit XML で得る（既定のファイル名は
-          # chromatic-build-{buildNumber}.xml、カレントディレクトリに出力される）
+          # chromatic-build-{buildNumber}.xml、カレントディレクトリに出力される）。
+          # Story が壊れた場合に AI エージェントが原因をテキストで読むための唯一の経路
           junitReport: true
           # ikatodon: exitOnceUploaded は付けない。付けるとテスト完了前にジョブが終了し
-          # errorCount 等の outputs が空のまま読まれてしまうため
+          # JUnit XML に結果が入らない
 
-      # ikatodon: outputs と JUnit XML の失敗詳細を summary/PR コメントに書き出す。
+      # ikatodon: JUnit XML から失敗した Story の一覧を summary に書き出す。
       # commit status だけでは失敗理由が判別できないため（詳細は docs/ikadon-theme.md）
-      - name: Report results
-        id: report
+      - name: Report failed stories
         if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ERROR_COUNT: ${{ steps.chromatic.outputs.errorCount }}
-          INTERACTION_TEST_FAILURES_COUNT: ${{ steps.chromatic.outputs.interactionTestFailuresCount }}
-          CHANGE_COUNT: ${{ steps.chromatic.outputs.changeCount }}
-          TEST_COUNT: ${{ steps.chromatic.outputs.testCount }}
-          ACTUAL_CAPTURE_COUNT: ${{ steps.chromatic.outputs.actualCaptureCount }}
-          COMPONENT_COUNT: ${{ steps.chromatic.outputs.componentCount }}
-          SPEC_COUNT: ${{ steps.chromatic.outputs.specCount }}
-          BUILD_URL: ${{ steps.chromatic.outputs.buildUrl }}
-          STORYBOOK_URL: ${{ steps.chromatic.outputs.storybookUrl }}
         run: |
-          # key の並び順を1箇所にまとめ、テーブルと ```code``` ブロックの両方で使い回す
-          keys=(errorCount interactionTestFailuresCount changeCount testCount \
-                actualCaptureCount componentCount specCount buildUrl storybookUrl)
-          declare -A values=(
-            [errorCount]="$ERROR_COUNT"
-            [interactionTestFailuresCount]="$INTERACTION_TEST_FAILURES_COUNT"
-            [changeCount]="$CHANGE_COUNT"
-            [testCount]="$TEST_COUNT"
-            [actualCaptureCount]="$ACTUAL_CAPTURE_COUNT"
-            [componentCount]="$COMPONENT_COUNT"
-            [specCount]="$SPEC_COUNT"
-            [buildUrl]="$BUILD_URL"
-            [storybookUrl]="$STORYBOOK_URL"
-          )
+          junit_file=$(ls chromatic-build-*.xml 2>/dev/null | head -n1 || true)
           {
-            echo "## Chromatic 結果"
+            echo "## Chromatic で壊れた Story"
             echo ""
-            echo "| key | value |"
-            echo "| --- | --- |"
-            for k in "${keys[@]}"; do
-              echo "| $k | ${values[$k]:-N/A} |"
-            done
-            echo ""
-            echo '```'
-            for k in "${keys[@]}"; do
-              echo "$k=${values[$k]:-}"
-            done
-            echo '```'
-
-            junit_file=$(ls chromatic-build-*.xml 2>/dev/null | head -n1 || true)
             if [ -n "$junit_file" ]; then
-              echo ""
-              echo "### 失敗した Story"
-              echo ""
               python3 .github/scripts/chromatic_junit_summary.py "$junit_file"
             else
-              echo ""
               echo "(JUnit XML が見つかりませんでした)"
             fi
-          } | tee -a "$GITHUB_STEP_SUMMARY" | tee /tmp/chromatic-summary.md
-
-          # ikatodon: chromatic.yml は push トリガーなので github.event.pull_request が無い。
-          # push されたブランチに紐づく open な PR を探してコメントする
-          pr_number=$(gh pr list --repo "${{ github.repository }}" \
-            --head "${{ github.ref_name }}" --state open \
-            --json number --jq '.[0].number // empty')
-
-          if [ -n "$pr_number" ]; then
-            gh pr comment "$pr_number" \
-              --repo "${{ github.repository }}" \
-              --edit-last \
-              --create-if-none \
-              --body-file /tmp/chromatic-summary.md
-          else
-            echo "対応する open な PR が見つからなかったため、PR コメントはスキップしました"
-          fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload JUnit report
         if: always()
@@ -159,27 +103,3 @@ jobs:
           name: chromatic-junit-report
           path: chromatic-build-*.xml
           if-no-files-found: ignore
-
-      # ikatodon: errorCount ではなく JUnit XML から判定した ikadon_failed で見る。
-      # errorCount はビルドの testCount(statuses: [BROKEN]) というサーバー側集計で、
-      # onlyStoryNames で除外した上流 Story も前回ビルドのステータスを引き継いで
-      # 数え続けるため、上流の壊れた Story が一度でもあると恒久的に 0 にならない
-      # （詳細は docs/ikadon-theme.md）。JUnit XML が取得できなかった場合のみ、
-      # 安全側に倒して errorCount / interactionTestFailuresCount で判定する
-      - name: Fail if ikadon's own stories are broken
-        if: always()
-        env:
-          IKADON_FAILED: ${{ steps.report.outputs.ikadon_failed }}
-          ERROR_COUNT: ${{ steps.chromatic.outputs.errorCount }}
-          INTERACTION_TEST_FAILURES_COUNT: ${{ steps.chromatic.outputs.interactionTestFailuresCount }}
-        run: |
-          if [ -n "$IKADON_FAILED" ]; then
-            if [ "$IKADON_FAILED" = "true" ]; then
-              echo "ikadon の Story が壊れています。summary の「失敗した Story」を参照してください。"
-              exit 1
-            fi
-            echo "ikadon の Story はすべて成功しました（上流 Story の既知エラーは無視）。"
-          elif [ "${ERROR_COUNT:-0}" -gt 0 ] || [ "${INTERACTION_TEST_FAILURES_COUNT:-0}" -gt 0 ]; then
-            echo "JUnit XML が取得できなかったため errorCount で判定します: ${ERROR_COUNT:-0} error(s), ${INTERACTION_TEST_FAILURES_COUNT:-0} interaction failure(s)."
-            exit 1
-          fi
