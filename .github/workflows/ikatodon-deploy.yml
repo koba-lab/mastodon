@@ -1,0 +1,87 @@
+name: Deploy ikatodon
+
+# 本番 Web サーバーへのデプロイ (issue #876)。
+#
+# 現状は Phase 1 (デプロイ対象の存在確認 + ssh 到達性確認) のみを実装している。
+# 実際の checkout・compose 起動・nginx 切替は後続の PR (Ansible mastodon / nginx role) で追加する。
+#
+# セルフホストランナーは使わない (このフォークはパブリックリポジトリで、フォークからの PR で
+# 任意コードがサーバー上で実行され得るため)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'デプロイ対象のタグ名 (例: v4.6.5, v4.6.5.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ikatodon-deploy
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check that required secrets are set
+        env:
+          ENV_PRODUCTION_SET: ${{ secrets.IKATODON_ENV_PRODUCTION != '' }}
+          SSH_KEY_SET: ${{ secrets.IKATODON_DEPLOY_SSH_KEY != '' }}
+          KNOWN_HOSTS_SET: ${{ secrets.IKATODON_DEPLOY_KNOWN_HOSTS != '' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ "${ENV_PRODUCTION_SET}" = "true" ] || missing+=(IKATODON_ENV_PRODUCTION)
+          [ "${SSH_KEY_SET}" = "true" ] || missing+=(IKATODON_DEPLOY_SSH_KEY)
+          [ "${KNOWN_HOSTS_SET}" = "true" ] || missing+=(IKATODON_DEPLOY_KNOWN_HOSTS)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::未設定の secrets があります: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Check that the tag exists
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/${GH_REPO}/git/ref/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "::error::タグ ${VERSION} がリポジトリに存在しません"
+            exit 1
+          fi
+
+      - name: Check that the images exist
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${ACTOR}" --password-stdin
+          docker manifest inspect "ghcr.io/koba-lab/ikatodon:${VERSION}" >/dev/null
+          docker manifest inspect "ghcr.io/koba-lab/ikatodon-streaming:${VERSION}" >/dev/null
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Ansible ssh access
+        env:
+          SSH_KEY: ${{ secrets.IKATODON_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.IKATODON_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_KEY}" > ~/.ssh/ikatodon_deploy
+          printf '%s\n' "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/ikatodon_deploy ~/.ssh/known_hosts
+
+      - name: Check ssh reachability of both hosts
+        working-directory: ikatodon/ansible
+        run: |
+          set -euo pipefail
+          ansible all -m ping --private-key ~/.ssh/ikatodon_deploy
