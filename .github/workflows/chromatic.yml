@@ -65,7 +65,6 @@ jobs:
       # 視覚差分（changeCount）ではジョブを落とさない — その判定は Chromatic 側の
       # commit status (UI Tests) に委ね、人間が Chromatic の Web UI で見て承認する
       - name: Run Chromatic
-        id: chromatic
         uses: chromaui/action@07791f8243f4cb2698bf4d00426baf4b2d1cb7e0 # v13
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
@@ -73,33 +72,5 @@ jobs:
           storybookBuildDir: 'storybook-static'
           autoAcceptChanges: 'main' # Auto-accept changes on main branch only
           exitZeroOnChanges: true
-          # ikatodon: Story 単位の結果を JUnit XML で得る（既定のファイル名は
-          # chromatic-build-{buildNumber}.xml、カレントディレクトリに出力される）。
-          # Story が壊れた場合に AI エージェントが原因をテキストで読むための唯一の経路
-          junitReport: true
-          # ikatodon: exitOnceUploaded は付けない。付けるとテスト完了前にジョブが終了し
-          # JUnit XML に結果が入らない
-
-      # ikatodon: JUnit XML から失敗した Story の一覧を summary に書き出す。
-      # commit status だけでは失敗理由が判別できないため（詳細は docs/ikadon-theme.md）
-      - name: Report failed stories
-        if: always()
-        run: |
-          junit_file=$(ls chromatic-build-*.xml 2>/dev/null | head -n1 || true)
-          {
-            echo "## Chromatic で壊れた Story"
-            echo ""
-            if [ -n "$junit_file" ]; then
-              python3 .github/scripts/chromatic_junit_summary.py "$junit_file"
-            else
-              echo "(JUnit XML が見つかりませんでした)"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload JUnit report
-        if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: chromatic-junit-report
-          path: chromatic-build-*.xml
-          if-no-files-found: ignore
+          # ikatodon: exitOnceUploaded は付けない。付けるとアップロード直後に
+          # exit code 0 で終了し、Story の破損（exit code 2）を検出できなくなる

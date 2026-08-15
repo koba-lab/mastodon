@@ -199,14 +199,10 @@ Story（`*.ikadon.stories.tsx`）だけが Storybook のビルドに含まれる
   実行されない）
 - `Build Storybook` に `IKADON_STORIES_ONLY: '1'` を設定し、Chromatic にアップロード
   するビルドを ikadon の Story だけに絞る
-- `junitReport: true` を追加し、Story 単位の成否と失敗メッセージを JUnit XML で取得
 - `exitZeroOnChanges: true` を追加し、視覚差分ではジョブを落とさない（差分の合否は
   人間が Chromatic UI で判断する領域であり、GitHub Actions の責務ではない）
-- `exitOnceUploaded` は付けない。付けるとテスト完了前にジョブが終了し、JUnit XML に
-  結果が入らない（過去にこれで「エラーなし」と誤判定した）
-- 実行後、JUnit XML から抽出した失敗 Story の一覧を `$GITHUB_STEP_SUMMARY` に書き出す
-  （`.github/scripts/chromatic_junit_summary.py`）
-- JUnit XML を `actions/upload-artifact` で保存し、`gh run download` で取得できるようにする
+- `exitOnceUploaded` は付けない。付けるとアップロード直後に exit code 0 で終了し、
+  Story の破損（exit code 2）を検出できなくなる
 
 独自差分は数十行程度。
 
@@ -255,14 +251,19 @@ gh run list --repo koba-lab/mastodon --workflow=chromatic.yml --limit 1
 # ジョブ内の各ステップの成否
 gh run view <run-id> --repo koba-lab/mastodon --json jobs \
   --jq '.jobs[].steps[] | "\(.name): \(.conclusion)"'
-
-# JUnit XML を取得し、失敗した testcase を確認する
-gh run download <run-id> --repo koba-lab/mastodon --name chromatic-junit-report
 ```
 
-`Run Chromatic` が fail していれば、ダウンロードした JUnit XML の `error`/`failure`
-要素（`classname` は常に `Ikadon.` で始まる。絞り込みにより ikadon 以外の Story は
-ビルドに含まれないため）に例外メッセージが入っている。
+`Run Chromatic` が fail していたら、まずローカルで下記の「ローカルでの検証」の
+コマンドを実行して再現・原因特定する。実際の例外とスタックトレースが読めるのは
+この経路だけである。ローカルで再現しない場合は、ジョブログに出る `BUILD_URL`
+から Chromatic の Web UI を人間が確認する。
+
+以前は `junitReport: true` で JUnit XML を取得し、専用スクリプトで壊れた Story の
+一覧を抽出していたが廃止した。実際の失敗データを調べたところ、`message` は
+`Snapshot is broken due to an error in your Storybook` という定型文のみで、
+どの Story が壊れたか以上の情報を含んでいなかった。ジョブログの
+`Tested N stories ... found M component errors` で件数は既に分かり、原因の特定は
+ローカル再現の方が実例外付きで確実なため、XML を経由する意味がなかった。
 
 ### ローカルでの検証
 
@@ -290,8 +291,6 @@ Interaction test を実行しているため）。**視覚差分だけはロー�
   「そのブロックがイカトドン独自のステップか」で、上流の変更を取り込んだ上で
   `if` の書き換えと ikadon 用のステップ群を再適用する
 - `.storybook/main.ts` は `stories` の値を三項演算子で包み直すだけでよい
-- `.github/scripts/chromatic_junit_summary.py` は上流に存在しないファイルなので
-  コンフリクトしない
 - `.storybook/preview.tsx` は変更が1行だけなので、上流がインポート文の周辺行を
   書き換えた場合でも `application.scss` を import している行を探して
   `ikadon.scss` に差し替えるだけでよい
