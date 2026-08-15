@@ -1,0 +1,99 @@
+---
+# checkout・override 配布・.env.production 配布・pull まで。
+# up -d とヘルスチェック、nginx との切替は nginx role (後続 PR) で行う。
+
+- name: Require ikatodon_version
+  ansible.builtin.assert:
+    that: ikatodon_version is defined and ikatodon_version | length > 0
+    fail_msg: >-
+      ikatodon_version が指定されていません。
+      -e "ikatodon_version=<タグ名>" で渡してください。
+
+- name: Fail if the working tree is dirty
+  ansible.builtin.command: git status --porcelain
+  args:
+    chdir: '{{ mastodon_dir }}'
+  register: ikatodon_git_status
+  changed_when: false
+
+- name: Abort when local changes exist
+  ansible.builtin.fail:
+    msg: >-
+      {{ mastodon_dir }} の作業ツリーに未コミットの変更があります。
+      手作業の内容を失わないため、強制的な上書きはせず中断します。
+  when: ikatodon_git_status.stdout | length > 0
+
+- name: Fetch tags
+  ansible.builtin.command: git fetch --tags
+  args:
+    chdir: '{{ mastodon_dir }}'
+  changed_when: true
+
+- name: Get the currently checked-out tag
+  ansible.builtin.command: git describe --tags --exact-match
+  args:
+    chdir: '{{ mastodon_dir }}'
+  register: ikatodon_current_tag
+  changed_when: false
+  failed_when: false
+
+- name: Get the running container image tag
+  ansible.builtin.command: >-
+    docker inspect --format '{{ '{{' }} index .Config.Image {{ '}}' }}'
+    {{ mastodon_compose_project_name }}-web-1
+  register: ikatodon_running_image
+  changed_when: false
+  failed_when: false
+
+- name: Abort if the clone tag and the running image disagree
+  # 前回のデプロイが中途半端に終わった証拠のため、その上に重ねない。
+  # 初回デプロイ等でどちらかが取得できない場合はこのチェックを飛ばす。
+  ansible.builtin.fail:
+    msg: >-
+      作業ツリーのタグ ({{ ikatodon_current_tag.stdout }}) と稼働中イメージ
+      ({{ ikatodon_running_image.stdout }}) が一致しません。中断します。
+  when:
+    - ikatodon_current_tag.stdout | length > 0
+    - ikatodon_running_image.stdout | length > 0
+    - not ikatodon_running_image.stdout.endswith(':' + ikatodon_current_tag.stdout)
+
+- name: Checkout the target version
+  ansible.builtin.command: 'git checkout {{ ikatodon_version }}'
+  args:
+    chdir: '{{ mastodon_dir }}'
+  changed_when: true
+
+- name: Deploy docker-compose.override.yml
+  ansible.builtin.template:
+    src: docker-compose.override.yml.j2
+    dest: '{{ mastodon_dir }}/docker-compose.override.yml'
+    owner: mastodon
+    group: mastodon
+    mode: '0640'
+
+- name: Rotate .env.production backups
+  ansible.builtin.shell: |
+    set -e
+    cd {{ mastodon_dir | quote }}
+    if [ -f .env.production ]; then
+      if [ -f .env.production.bak.1 ]; then
+        cp -p .env.production.bak.1 .env.production.bak.2
+      fi
+      cp -p .env.production .env.production.bak.1
+    fi
+  changed_when: false
+
+- name: Deploy .env.production
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.env', 'IKATODON_ENV_PRODUCTION') }}"
+    dest: '{{ mastodon_dir }}/.env.production'
+    owner: mastodon
+    group: mastodon
+    mode: '0600'
+  no_log: true
+
+- name: Pull images
+  ansible.builtin.command: docker compose pull
+  args:
+    chdir: '{{ mastodon_dir }}'
+  changed_when: true

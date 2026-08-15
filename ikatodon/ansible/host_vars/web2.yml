@@ -1,0 +1,8 @@
+# mastodon_private_ip はプライベート IP であり、このファイルには平文で書かない
+# （CLAUDE.md 方針・infrastructure.md 参照）。ansible-vault で値単位に暗号化した
+# ブロックをここへ追記すること。
+#
+#   ansible-vault encrypt_string --ask-vault-pass '<PRIVATE_IP>' --name 'mastodon_private_ip'
+#
+# 出力される `mastodon_private_ip: !vault | ...` のブロックをそのままここに貼り付ける。
+{}
