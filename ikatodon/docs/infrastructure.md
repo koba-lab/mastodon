@@ -199,18 +199,34 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 
 - nginx はホストの systemd で動く。**Docker の外**。`user mastodon` で稼働。
 - `acme-challenge` upstream に、現役でない IP が2つ残っている（既知の問題 #7）。
+- 2台の `sudo nginx -T` 出力を実測で突き合わせた結果、`geo $allow_ip` の許可 IP 一覧
+  （既知の問題 #19）を除き2台の設定は完全に一致していることを確認した。他の既知の問題は
+  2台に共通する。
 
 ゼロダウンタイムデプロイ（隣サーバーへのフォールバック、drain）の検討中の詳細は
 [`infrastructure/deploy-design.md`](infrastructure/deploy-design.md) を参照してください。
+実機の詳しい棚卸しは [`infrastructure/nginx-audit.md`](infrastructure/nginx-audit.md) を
+参照してください。
 
-### 4.2 未確認事項
+### 4.2 実測で確定した事項
 
-**確認済み**（既知の問題 #12。9.1節参照）: 実際に `500.html` に到達できないことを確認した
-（オーナーによる実機確認）。`error_page` の第2引数が URI として解釈され `root` と二重連結
-されるためと見られる。
+- `error_page` の第2引数が URI として `root` と二重連結され、実際に `500.html` へ到達できない
+  ことを実測で確認した（既知の問題 #12。オーナーによる実機確認と一致）。
+- `nginx.conf` の `http` ブロックに `ssl_protocols TLSv1 TLSv1.1` が残っていることを実測で
+  確定した（既知の問題 #14）。ただし各 vhost の `server` ブロックで `TLSv1.2` に上書きされて
+  おり、TLS 1.0 / 1.1 で実際に接続できるわけではない。実害は限定的。
+- `server_name default_server;` が `listen 80 default_server;` の書き間違いであることが
+  判明し、HTTP から HTTPS へのリダイレクトが機能していないこと・
+  `/.well-known/acme-challenge/` が vhost に到達せず `acme-challenge` upstream の仕組みが
+  機能していないことを実測で確認した（既知の問題 #17・#18）。証明書更新自体は certbot の
+  nginx プラグインが一時的な server ブロックを注入する迂回で成立している。
+- HSTS ヘッダが nginx とアプリの両方から送られ、レスポンスに2本含まれることを実測で
+  確認した（既知の問題 #20）。
+- `test.ika.queloud.net` vhost は A レコードが存在せず到達不能であり、証明書は
+  2019-09-11 に失効済みであることを実測で確認した（既知の問題 #21）。以後の
+  `certbot renew` は毎回この証明書の更新に失敗している。
 
-⚠️ `nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残っている疑いがある（既知の問題
-#14）。`sudo nginx -T` で確認する。
+詳細は [`infrastructure/nginx-audit.md`](infrastructure/nginx-audit.md) を参照してください。
 
 ---
 
@@ -311,29 +327,41 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 
 ### 9.1 確認済み
 
-| #   | 問題                                                                                                                                                             |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している。実行できない                                                      |
-| 2   | 同 compose の `PRIVATE_IP` デフォルトが `0.0.0.0`。設定を抜くと PostgreSQL が全世界に開く                                                                        |
-| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                                                                                                |
-| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                     |
-| 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                  |
-| 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                   |
-| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている                                                                                                        |
-| 8   | イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する                                                                                     |
-| 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                       |
-| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                           |
-| 11  | `.env.production` にバックアップが無い                                                                                                                           |
-| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.2節） |
+| #   | 問題                                                                                                                                                                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している。実行できない                                                                     |
+| 2   | 同 compose の `PRIVATE_IP` デフォルトが `0.0.0.0`。設定を抜くと PostgreSQL が全世界に開く                                                                                       |
+| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                                                                                                               |
+| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                                    |
+| 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                                 |
+| 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                                  |
+| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている（実測で確定。[`infrastructure/nginx-audit.md`](infrastructure/nginx-audit.md) 2.3節）                                 |
+| 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                                      |
+| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                                          |
+| 11  | `.env.production` にバックアップが無い                                                                                                                                          |
+| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認 + 実測で再確認。4.2節） |
+| 14  | `nginx.conf` の `http` ブロックに `ssl_protocols TLSv1 TLSv1.1` が残る（実測で確定。ただし各 vhost で `TLSv1.2` に上書きされ実害は限定的。4.2節）                               |
+| 17  | `server_name default_server;` が `listen 80 default_server;` の書き間違いで、HTTP → HTTPS リダイレクトが機能していない（実測で確定。4.2節）                                     |
+| 18  | 17 と同じ原因で `/.well-known/acme-challenge/` が `ika.queloud.net` vhost に到達せず、`acme-challenge` upstream の仕組みが機能していない（実測で確定。4.2節）                   |
+| 19  | 2台の nginx 設定がドリフトしている。`geo $allow_ip` の許可 IP が1台でコメントアウトされている（実測で確定。4.1節）                                                              |
+| 20  | HSTS ヘッダが nginx とアプリの両方から送られ、レスポンスに2本含まれる（実測で確定。4.2節）                                                                                      |
+| 21  | `test.ika.queloud.net` vhost が A レコード不在で到達不能。証明書は2019-09-11に失効済みで `certbot renew` が毎回この証明書の更新に失敗している（実測で確定。4.2節）              |
+
+欠番の #8（イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する）は
+問題ではなく意図した設計と判明したため削除しました。上流追随のたびにコンフリクトが起きるのは、
+上流の変更に気づくための機構として意図的に受け入れています（オーナー判断）。詳細は
+[`infrastructure/deploy-design.md`](infrastructure/deploy-design.md) を参照してください。
+番号は欠番のまま維持し、以降の項目を繰り上げません（他節からの番号参照を壊さないため）。
 
 ### 9.2 要確認
 
 | #   | 疑い                                                                                                                                                    | 確認方法                                                                                            |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | 13  | 全台で同じ `bundle exec sidekiq` が動いていると `scheduler` が多重実行される可能性                                                                      | 稼働中コンテナの command を直接確認（10節）                                                         |
-| 14  | `nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残る                                                                                                    | `sudo nginx -T`                                                                                     |
 | 15  | Redis ホストの `docker-compose.yml` が `ports: 6379:6379` でコンテナを直接公開している疑い（nginx 経由ではない）。Docker の publish は ufw を迂回し得る | Redis ホストで `docker compose config` の `ports` 設定を確認、`sudo ufw status`、外部からの疎通確認 |
 | 16  | GitHub-hosted runner から Web サーバーへ実際に SSH（22/tcp・鍵認証）が通るか。`ufw` が無効なことは到達性を保証しない                                    | 実際に workflow から接続して確認する（デプロイ自動化の実装時）                                      |
+
+#14（`ssl_protocols TLSv1 TLSv1.1`）は実測で確定したため9.1節へ移動しました。
 
 ---
 
@@ -351,7 +379,7 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 項目だけは秘密管理下で確認し、結果を直接 Ansible の変数（`PRIVATE_IP` 等）へ記録すること。
 
 ```bash
-sudo nginx -T                                     # Ansible テンプレート化の元データ
+sudo nginx -T                                     # Ansible テンプレート化の元データ（取得・棚卸し済み。infrastructure/nginx-audit.md参照）
 sudo ufw status                                   # Redis の 6379/tcp 等が ufw で防御されているか（#15）
 # Redis ホストの 6379/tcp が外部（インターネット）から疎通できないか確認する（#15）
 sudo crontab -l -u mastodon                       # バックアップ cron が本当にあるか（-u は root 権限が必要）
