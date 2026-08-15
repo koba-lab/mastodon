@@ -185,10 +185,20 @@ Web サーバー本体を Cloudflare 経由にするかどうか（トラック 
   いない**ため、「3種類すべてが `127.0.0.1` にバインドしている」という言い方は不正確（この
   制約が当てはまるのは `web` と `streaming` のみ）。
 - `docker-compose.override.yml` は本家の `.gitignore` で除外されている（73行目）。
-- `.env.production` も同じく除外されている（28行目）。**各ホストに手置きで、バックアップが
-  無い**（聞き取り + `.gitignore` 確認。詳細は6節）。
+- `.env.production` も同じく除外されている（28行目）。
 
-compose ファイルのテンプレート化・構成管理（Ansible）の検討中の詳細は
+### 3.2 実装済みの構成
+
+- Ansible の `mastodon` role が `docker-compose.override.yml` と `.env.production` を
+  配布する（5節参照）。`override` はホストごとに異なるプライベート IP への publish
+  （peer fallback 用）のみを追記する。したがって稼働中の `web` / `streaming` は
+  `127.0.0.1` に加えてプライベート IP でも待ち受ける。
+- `.env.production` は配布のたびに2世代のバックアップ（`.bak.1` / `.bak.2`）を残す
+  ようにした（既知の問題 #11 は解消）。
+- Docker の `json-file` ログに上限（`max-size: 50m` / `max-file: 3`）を設定した
+  （既知の問題 #9 は解消）。
+
+compose ファイルのテンプレート化を採らなかった理由など、検討過程の詳細は
 [`infrastructure/deploy-design.md`](infrastructure/deploy-design.md) を参照してください。
 
 ---
@@ -233,17 +243,48 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 
 ## 5. デプロイ
 
-### 5.1 現状の手順（聞き取り）
+### 5.1 実装済みの構成
 
-手動デプロイ。Web サーバー上で `git pull`（本体の checkout）を行っている。「本家で必要と
-される追加コマンド」がどこにも記録されていない（既知の問題 #4）。post deployment
-migration を「1台目だけ新しい」状態で実行してしまっている（既知の問題 #3）。
+GitHub Actions の `workflow_dispatch`（`.github/workflows/ikatodon-deploy.yml`）から
+Ansible の `mastodon` role・`nginx` role を呼び出し、本番 Web 2台をゼロダウンタイムで
+デプロイする（issue #876）。ロールバックは前バージョンのタグで同じワークフローを実行
+するだけで、専用の切り戻し経路は持たない。
 
-GitHub Actions によるデプロイ自動化（`releases/` + `current` 方式、ロールバック、検証の
-分担など）の検討中の詳細は [`infrastructure/deploy-design.md`](infrastructure/deploy-design.md)
-を参照してください。ssh 経路が実際に通るかどうかは未確認です（10節参照）。セルフホスト
-ランナーは採用しない方針です（このフォークはパブリックリポジトリで、フォークからの PR で
-任意コードがサーバー上で実行され得るため）。
+サーバー上の既存 git clone を版管理の主役として使い続ける。タグをチェックアウトすれば、
+そのバージョンの `docker-compose.yml` と `public/` が同時に揃うためである。この判断に
+至った経緯・採らなかった設計（`releases/` + `current` 方式など）は
+[`infrastructure/deploy-design.md`](infrastructure/deploy-design.md) を参照してください。
+
+デプロイの流れ（`serial: 1` で1台ずつ処理する）:
+
+1. 作業ツリーが clean であることを確認し、対象タグへ checkout
+2. `docker-compose.override.yml`（プライベート IP への publish のみ）・`.env.production`
+   （2世代バックアップ）を配布し、`docker compose pull`
+3. pre-deployment migration（1台目のみ。要否は GitHub Actions が
+   `db/migrate`・`db/post_migrate` の差分から判定する）
+4. nginx を drain（自ホストを upstream から外す）
+5. `docker compose up -d`
+6. ヘルスチェック（web `/health`・streaming `/api/v1/streaming/health`・sidekiq が
+   running であること）
+7. nginx を undrain
+8. 全台入替後、post-deployment migration（1台目のみ）
+
+上記の手順に組み込んだことで、既知の問題 #3（post migration を1台目だけ新しい状態で
+実行していた）・#4（本家で必要とされる追加コマンドがどこにも記録されていなかった）は
+解消した。
+
+nginx 側は `upstream ikatodon_web` / `upstream ikatodon_streaming` を導入し、隣サーバー
+への `backup` フォールバックで切替中も無停止にする。nginx-audit.md で洗い出した修正
+（HTTP→HTTPS リダイレクトの修復、応答のない acme-challenge IP の除外、test vhost の
+削除、TLS 1.2/1.3 化）も同時に適用する。詳細は
+[`infrastructure/nginx-audit.md`](infrastructure/nginx-audit.md) を参照してください。
+
+運用手順・必要な GitHub Secrets・障害時の対応は
+[`infrastructure/deploy-runbook.md`](infrastructure/deploy-runbook.md) を参照して
+ください。
+
+セルフホストランナーは採用していません（このフォークはパブリックリポジトリで、フォーク
+からの PR で任意コードがサーバー上で実行され得るため）。
 
 ---
 
@@ -328,25 +369,25 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 
 ### 9.1 確認済み
 
-| #   | 問題                                                                                                                                                                            |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している。実行できない                                                                     |
-| 2   | 同 compose の `PRIVATE_IP` デフォルトが `0.0.0.0`。設定を抜くと PostgreSQL が全世界に開く                                                                                       |
-| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                                                                                                               |
-| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                                    |
-| 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                                 |
-| 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                                  |
-| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている（実測で確定。[`infrastructure/nginx-audit.md`](infrastructure/nginx-audit.md) 2.3節）                                 |
-| 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                                      |
-| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                                          |
-| 11  | `.env.production` にバックアップが無い                                                                                                                                          |
-| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認 + 実測で再確認。4.2節） |
-| 14  | `nginx.conf` の `http` ブロックに `ssl_protocols TLSv1 TLSv1.1` が残る（実測で確定。ただし各 vhost で `TLSv1.2` に上書きされ実害は限定的。4.2節）                               |
-| 17  | `server_name default_server;` が要求ホスト名 `ika.queloud.net` と一致せず、HTTP → HTTPS リダイレクトが機能していない（実測で確定。4.2節）                                       |
-| 18  | 17 と同じ原因で `/.well-known/acme-challenge/` が `ika.queloud.net` vhost に到達せず、`acme-challenge` upstream の仕組みが機能していない（実測で確定。4.2節）                   |
-| 19  | 2台の nginx 設定がドリフトしている。`geo $allow_ip` の許可 IP が1台でコメントアウトされている（実測で確定。4.1節）                                                              |
-| 20  | HSTS ヘッダが nginx とアプリの両方から送られ、レスポンスに2本含まれる（実測で確定。4.2節）                                                                                      |
-| 21  | `test.ika.queloud.net` vhost が A レコード不在で到達不能。証明書は2019-09-11に失効済みで `certbot renew` が毎回この証明書の更新に失敗している（実測で確定。4.2節）              |
+| #   | 問題                                                                                                                                                                            | 対応状況                                                                              |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している。実行できない                                                                     | 未対応（別リポジトリ）                                                                |
+| 2   | 同 compose の `PRIVATE_IP` デフォルトが `0.0.0.0`。設定を抜くと PostgreSQL が全世界に開く                                                                                       | 未対応（別リポジトリ）                                                                |
+| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                                                                                                               | **解消**（pre → 全台入替 → post の順に実装。5節）                                     |
+| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                                    | **解消**（Ansible の mastodon role として記録。5節）                                  |
+| 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                                 | 未対応（backup-design.md 参照）                                                       |
+| 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                                  | 該当なし（`command` / `template` モジュールで実装し、非推奨モジュールを使っていない） |
+| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている（実測で確定。[`infrastructure/nginx-audit.md`](infrastructure/nginx-audit.md) 2.3節）                                 | **解消**（nginx role が inventory のホストのみで生成する）                            |
+| 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                                      | **解消**（`max-size: 50m` / `max-file: 3` を追加）                                    |
+| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                                          | 未対応                                                                                |
+| 11  | `.env.production` にバックアップが無い                                                                                                                                          | **解消**（配布のたびに2世代バックアップを残す）                                       |
+| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認 + 実測で再確認。4.2節） | **解消**（nginx role が相対 URI `/500.html` を生成）                                  |
+| 14  | `nginx.conf` の `http` ブロックに `ssl_protocols TLSv1 TLSv1.1` が残る（実測で確定。ただし各 vhost で `TLSv1.2` に上書きされ実害は限定的。4.2節）                               | 未対応（issue 化。nginx role は vhost のみを生成し、`nginx.conf` 本体は変更しない）   |
+| 17  | `server_name default_server;` が要求ホスト名 `ika.queloud.net` と一致せず、HTTP → HTTPS リダイレクトが機能していない（実測で確定。4.2節）                                       | **解消**                                                                              |
+| 18  | 17 と同じ原因で `/.well-known/acme-challenge/` が `ika.queloud.net` vhost に到達せず、`acme-challenge` upstream の仕組みが機能していない（実測で確定。4.2節）                   | **解消**（17 と同じ修正）                                                             |
+| 19  | 2台の nginx 設定がドリフトしている。`geo $allow_ip` の許可 IP が1台でコメントアウトされている（実測で確定。4.1節）                                                              | **解消**（nginx role がテンプレートから生成するため2台が常に一致する）                |
+| 20  | HSTS ヘッダが nginx とアプリの両方から送られ、レスポンスに2本含まれる（実測で確定。4.2節）                                                                                      | 未対応（アプリ側の設定確認が必要なため見送り。nginx-audit.md 2.5節）                  |
+| 21  | `test.ika.queloud.net` vhost が A レコード不在で到達不能。証明書は2019-09-11に失効済みで `certbot renew` が毎回この証明書の更新に失敗している（実測で確定。4.2節）              | **解消**（vhost 削除。証明書自体の削除は運用手順として deploy-runbook.md に記載）     |
 
 欠番の #8（イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する）は
 問題ではなく意図した設計と判明したため削除しました。上流追随のたびにコンフリクトが起きるのは、
