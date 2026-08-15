@@ -1,9 +1,7 @@
 name: Deploy ikatodon
 
-# 本番 Web サーバーへのデプロイ (issue #876)。
-#
-# 現状は Phase 2 (存在確認・ssh 到達性確認・checkout・.env.production 配布・pull) まで
-# 実装している。up -d・ヘルスチェック・nginx との切替は後続の PR (nginx role) で追加する。
+# 本番 Web サーバーへのデプロイ (issue #876)。ロールバックも同じワークフローを前バージョンの
+# タグで実行するだけで、専用の切り戻し経路は持たない (infrastructure.md 参照)。
 #
 # セルフホストランナーは使わない (このフォークはパブリックリポジトリで、フォークからの PR で
 # 任意コードがサーバー上で実行され得るため)。
@@ -15,6 +13,11 @@ on:
         description: 'デプロイ対象のタグ名 (例: v4.6.5, v4.6.5.1)'
         required: true
         type: string
+      dry_run:
+        description: 'checkout・override 配布・.env.production 配布・pull までで打ち切る (本番への影響なし)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version }}
+      DRY_RUN: ${{ inputs.dry_run }}
     steps:
       - name: Check that this is run by the repository owner
         env:
@@ -82,6 +86,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Ansible ssh access
@@ -105,13 +110,52 @@ jobs:
           set -euo pipefail
           ansible all -m ping --private-key ~/.ssh/ikatodon_deploy --vault-password-file ~/.ansible_vault_pass
 
-      - name: Run the mastodon role (checkout, override, .env.production, pull)
+      - name: Determine current versions and whether migrations are needed
+        id: migrations
+        working-directory: ikatodon/ansible
+        run: |
+          set -euo pipefail
+
+          get_tag() {
+            local host_alias="$1" user ip
+            user="$(yq ".all.hosts.${host_alias}.ansible_user" inventory/hosts.yml)"
+            ip="$(yq ".all.hosts.${host_alias}.ansible_host" inventory/hosts.yml)"
+            ssh -o StrictHostKeyChecking=yes -i ~/.ssh/ikatodon_deploy "${user}@${ip}" \
+              'git -C /home/mastodon/live describe --tags --exact-match' 2>/dev/null || true
+          }
+
+          tag1="$(get_tag web1)"
+          tag2="$(get_tag web2)"
+
+          if [ -n "${tag1}" ] && [ -n "${tag2}" ] && [ "${tag1}" != "${tag2}" ]; then
+            echo "::error::2台の稼働バージョンが一致しません (web1: ${tag1}, web2: ${tag2})。前回のデプロイが中途半端に終わっている可能性があるため中断します"
+            exit 1
+          fi
+
+          current_tag="${tag1:-${tag2}}"
+          if [ -z "${current_tag}" ]; then
+            echo "::notice::稼働中バージョンを取得できませんでした (初回デプロイ等)。安全側として migration を実行します"
+            echo "run_migrations=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          cd ../..
+          if git diff --quiet "${current_tag}" "${VERSION}" -- db/migrate db/post_migrate; then
+            echo "run_migrations=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "run_migrations=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the deploy playbook
         working-directory: ikatodon/ansible
         env:
           IKATODON_ENV_PRODUCTION: ${{ secrets.IKATODON_ENV_PRODUCTION }}
+          RUN_MIGRATIONS: ${{ steps.migrations.outputs.run_migrations }}
         run: |
           set -euo pipefail
           ansible-playbook playbooks/deploy.yml \
             --private-key ~/.ssh/ikatodon_deploy \
             --vault-password-file ~/.ansible_vault_pass \
-            -e "ikatodon_version=${VERSION}"
+            -e "ikatodon_version=${VERSION}" \
+            -e "dry_run=${DRY_RUN}" \
+            -e "run_migrations=${RUN_MIGRATIONS}"

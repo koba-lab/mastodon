@@ -1,0 +1,10 @@
+---
+# nginx 設定の適用（棚卸しに基づく修正・upstream 導入）。稀にしか実行しない。
+# デプロイのたびに実行する drain / undrain は deploy.yml 側で行う。
+#
+#   ansible-playbook playbooks/nginx.yml [--check --diff]
+
+- name: Apply nginx configuration
+  hosts: all
+  roles:
+    - nginx
