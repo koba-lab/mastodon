@@ -1,0 +1,6 @@
+# 実機確認で得た値をここで上書きする（ikatodon/ansible/roles/mastodon/defaults/main.yml 参照）。
+#
+#   docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' <稼働中コンテナ名>
+#
+# mastodon_compose_project_name: <ここに実機確認結果を書く>
+{}

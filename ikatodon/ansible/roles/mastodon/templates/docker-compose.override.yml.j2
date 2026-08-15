@@ -1,0 +1,10 @@
+{# ホストごとに値が違うもの1つだけをここに足す（インフラドキュメント参照）。
+   ports はシーケンスなので base の 127.0.0.1:3000:3000 に追記される。
+   peer fallback (隣サーバーへのゼロダウンタイム切替) のためだけに必要。 #}
+services:
+  web:
+    ports:
+      - '{{ mastodon_private_ip }}:3000:3000'
+  streaming:
+    ports:
+      - '{{ mastodon_private_ip }}:4000:4000'
