@@ -29,26 +29,39 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version }}
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
     steps:
+      - name: Check that this is run by the repository owner
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          if [ "${ACTOR}" != "koba-lab" ]; then
+            echo "::error::このワークフローはリポジトリオーナーのみ実行できます (actor: ${ACTOR})"
+            exit 1
+          fi
+
       - name: Check that required secrets are set
         env:
           ENV_PRODUCTION_SET: ${{ secrets.IKATODON_ENV_PRODUCTION != '' }}
           SSH_KEY_SET: ${{ secrets.IKATODON_DEPLOY_SSH_KEY != '' }}
           KNOWN_HOSTS_SET: ${{ secrets.IKATODON_DEPLOY_KNOWN_HOSTS != '' }}
+          VAULT_PASSWORD_SET: ${{ secrets.IKATODON_ANSIBLE_VAULT_PASSWORD != '' }}
         run: |
           set -euo pipefail
           missing=()
           [ "${ENV_PRODUCTION_SET}" = "true" ] || missing+=(IKATODON_ENV_PRODUCTION)
           [ "${SSH_KEY_SET}" = "true" ] || missing+=(IKATODON_DEPLOY_SSH_KEY)
           [ "${KNOWN_HOSTS_SET}" = "true" ] || missing+=(IKATODON_DEPLOY_KNOWN_HOSTS)
+          [ "${VAULT_PASSWORD_SET}" = "true" ] || missing+=(IKATODON_ANSIBLE_VAULT_PASSWORD)
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::未設定の secrets があります: ${missing[*]}"
             exit 1
           fi
 
       - name: Check that the tag exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if ! gh api "repos/${GH_REPO}/git/ref/tags/${VERSION}" >/dev/null 2>&1; then
@@ -58,6 +71,7 @@ jobs:
 
       - name: Check that the images exist
         env:
+          GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
@@ -67,11 +81,14 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up Ansible ssh access
         env:
           SSH_KEY: ${{ secrets.IKATODON_DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.IKATODON_DEPLOY_KNOWN_HOSTS }}
+          VAULT_PASSWORD: ${{ secrets.IKATODON_ANSIBLE_VAULT_PASSWORD }}
         run: |
           set -euo pipefail
           umask 077
@@ -79,9 +96,11 @@ jobs:
           printf '%s\n' "${SSH_KEY}" > ~/.ssh/ikatodon_deploy
           printf '%s\n' "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/ikatodon_deploy ~/.ssh/known_hosts
+          printf '%s\n' "${VAULT_PASSWORD}" > ~/.ansible_vault_pass
+          chmod 600 ~/.ansible_vault_pass
 
       - name: Check ssh reachability of both hosts
         working-directory: ikatodon/ansible
         run: |
           set -euo pipefail
-          ansible all -m ping --private-key ~/.ssh/ikatodon_deploy
+          ansible all -m ping --private-key ~/.ssh/ikatodon_deploy --vault-password-file ~/.ansible_vault_pass
