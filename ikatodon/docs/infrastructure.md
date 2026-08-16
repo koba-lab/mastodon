@@ -210,16 +210,17 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 
 ### 4.2 実測で確定した事項
 
-- `error_page` の第2引数が URI として `root` と二重連結され、実際に `500.html` へ到達できない
-  ことを実測で確認した（既知の問題 #12。オーナーによる実機確認と一致）。
+- `error_page` の最後の引数が URI として `root` と二重連結され、実際に `500.html` へ到達
+  できないことを実測で確認した（既知の問題 #12。オーナーによる実機確認と一致）。
 - `nginx.conf` の `http` ブロックに `ssl_protocols TLSv1 TLSv1.1` が残っていることを実測で
   確定した（既知の問題 #14）。ただし各 vhost の `server` ブロックで `TLSv1.2` に上書きされて
   おり、TLS 1.0 / 1.1 で実際に接続できるわけではない。実害は限定的。
-- `server_name default_server;` が `listen 80 default_server;` の書き間違いであることが
-  判明し、HTTP から HTTPS へのリダイレクトが機能していないこと・
-  `/.well-known/acme-challenge/` が vhost に到達せず `acme-challenge` upstream の仕組みが
-  機能していないことを実測で確認した（既知の問題 #17・#18）。証明書更新自体は certbot の
-  nginx プラグインが一時的な server ブロックを注入する迂回で成立している。
+- `server_name default_server;` は誤指定で、`Host: ika.queloud.net` がこの vhost の
+  `server_name` に一致せず Debian の既定 vhost へ落ちていることが判明した。HTTP から
+  HTTPS へのリダイレクトが機能していないこと・`/.well-known/acme-challenge/` が vhost に
+  到達せず `acme-challenge` upstream の仕組みが機能していないことを実測で確認した
+  （既知の問題 #17・#18）。証明書更新自体は certbot の nginx プラグインが一時的な
+  server ブロックを注入する迂回で成立している。
 - HSTS ヘッダが nginx とアプリの両方から送られ、レスポンスに2本含まれることを実測で
   確認した（既知の問題 #20）。
 - `test.ika.queloud.net` vhost は A レコードが存在せず到達不能であり、証明書は
@@ -341,7 +342,7 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 | 11  | `.env.production` にバックアップが無い                                                                                                                                          |
 | 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認 + 実測で再確認。4.2節） |
 | 14  | `nginx.conf` の `http` ブロックに `ssl_protocols TLSv1 TLSv1.1` が残る（実測で確定。ただし各 vhost で `TLSv1.2` に上書きされ実害は限定的。4.2節）                               |
-| 17  | `server_name default_server;` が `listen 80 default_server;` の書き間違いで、HTTP → HTTPS リダイレクトが機能していない（実測で確定。4.2節）                                     |
+| 17  | `server_name default_server;` が要求ホスト名 `ika.queloud.net` と一致せず、HTTP → HTTPS リダイレクトが機能していない（実測で確定。4.2節）                                       |
 | 18  | 17 と同じ原因で `/.well-known/acme-challenge/` が `ika.queloud.net` vhost に到達せず、`acme-challenge` upstream の仕組みが機能していない（実測で確定。4.2節）                   |
 | 19  | 2台の nginx 設定がドリフトしている。`geo $allow_ip` の許可 IP が1台でコメントアウトされている（実測で確定。4.1節）                                                              |
 | 20  | HSTS ヘッダが nginx とアプリの両方から送られ、レスポンスに2本含まれる（実測で確定。4.2節）                                                                                      |

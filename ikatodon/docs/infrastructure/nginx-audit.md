@@ -8,9 +8,11 @@
 対応は、後続の PR（Ansible `nginx` role によるゼロダウンタイムデプロイ導入）でまとめて
 行います。
 
-⚠️ 実 IP・証明書パス・内部構成の詳細はパブリックリポジトリの制約上、意図的に記載していません
-（[`../infrastructure.md`](../infrastructure.md) 冒頭の方針を参照）。2台の Web サーバーは
-以下「host1」「host2」と呼びます。
+⚠️ プライベート IP・退役サーバーの IP・証明書パス・内部構成の詳細はパブリックリポジトリの
+制約上、意図的に記載していません（[`../infrastructure.md`](../infrastructure.md) 冒頭の
+方針を参照）。2台の Web サーバーは以下「host1」「host2」と呼びます。現役2台のグローバル IP
+自体は `ika.queloud.net` の A レコードで引けるため、[`../ansible/inventory/hosts.yml`](../../ansible/inventory/hosts.yml)
+に平文で記載しています。
 
 ---
 
@@ -42,9 +44,10 @@ server {
 }
 ```
 
-`server_name default_server;` は `listen 80 default_server;` の書き間違いです。`server_name`
-に指定した `default_server` は特別な意味を持たず、ただの文字列として扱われます。実際に
-`listen 80 default_server;` を持つのは `sites-enabled/default` の Debian 既定 vhost の方です。
+`server_name` に指定した `default_server` は特別な意味を持たず、ただの文字列として扱われます。
+`default_server` は `listen` 側の属性であり、`sites-enabled/default` の Debian 既定 vhost が
+既に `listen 80 default_server;` を持っています。したがってこの誤指定は「`listen` の書き間違い」
+ではなく、「`server_name` に実ホスト名を書き忘れた」ことが原因です。
 
 この結果、`Host: ika.queloud.net` を含むリクエストはどの `server_name` にも一致せず、
 `sites-enabled/default` の default_server ブロックへ落ちます。**HTTP でのアクセスは
@@ -55,7 +58,7 @@ Debian の初期セットアップページが返り、HTTPS へのリダイレ�
 `test.ika.queloud.net` の両 vhost がどちらも `server_name` に文字列 `default_server` を
 掲げているため、同一 listen ソケット上での重複としてはじかれています。
 
-```
+```text
 nginx: [warn] conflicting server name "default_server" on 0.0.0.0:80, ignored
 nginx: [warn] conflicting server name "default_server" on [::]:80, ignored
 ```
@@ -71,21 +74,23 @@ server ブロック内に定義されていますが、`Host: ika.queloud.net` �
 `openssl s_client` で確認済み）。これは certbot が `authenticator = nginx` で稼働しており、
 更新のたびに nginx プラグインが一時的な server ブロックを自前で注入して、上記の誤指定を
 迂回しているためです。`authenticator = nginx` を維持する方針の詳細は
-[`../infrastructure.md`](../infrastructure.md) 5節を参照してください。
+[`deploy-runbook.md`](deploy-runbook.md) の nginx 設定の節を参照してください。
 
 ### 2.3 `acme-challenge` upstream の退役 IP（既知の問題 #7・実測で確定）
 
 ```nginx
 upstream acme-challenge {
-  server 150.95.184.57:80;
-  server 133.130.122.196:80;
-  server 150.95.138.129:80;
-  server 163.44.167.100:80;
+  server <host1 のグローバル IP>:80;
+  server <retired-1 のグローバル IP>:80;
+  server <retired-2 のグローバル IP>:80;
+  server <host2 のグローバル IP>:80;
 }
 ```
 
-4件のうち2件（host1・host2 自身）は生きていますが、残り2件は接続してもタイムアウトし
-応答がありません。過去に存在したサーバーの IP が残ったままになっています。
+4件のうち2件（host1・host2 自身。[`../../ansible/inventory/hosts.yml`](../../ansible/inventory/hosts.yml)
+に平文記載済み）は生きていますが、残り2件（retired-1・retired-2）は接続してもタイムアウトし
+応答がありません。過去に存在したサーバーの IP が残ったままになっています。実 IP は非公開の
+運用記録で管理します。
 
 ### 2.4 `geo $allow_ip` のドリフト（1節の差分）
 
@@ -104,7 +109,7 @@ nginx 側で `add_header Strict-Transport-Security "max-age=31536000";` を設�
 error_page 500 501 502 504 /home/mastodon/live/public/500.html;
 ```
 
-第2引数は URI として解釈され、`root` ディレクティブと連結されます。絶対パスを書いても
+最後の引数は URI として解釈され、`root` ディレクティブと連結されます。絶対パスを書いても
 `root` の値の後ろに継ぎ足されるだけなので、実際には存在しないパスになり到達できません
 （オーナーによる実機確認済み）。上流サンプルは相対 URI `/500.html` を使っています。
 
@@ -160,14 +165,15 @@ ssl_protocols TLSv1 TLSv1.1 TLSv1.2; # Dropping SSLv3, ref: POODLE
 | `error_page`           | 絶対パスで二重連結（2.6）                                    | 相対 URI `/500.html`                                                                            |
 | `proxy_cache`          | 未使用（本番 vhost）                                         | `@mastodon` に `CACHE` ゾーンを適用                                                             |
 
-`proxy_cache` を今回導入しない理由は [`../infrastructure.md`](../infrastructure.md) 5節・
-issue（連合クローラなどの負荷計測）を参照してください。
+`proxy_cache` を今回導入しない理由は [`deploy-design.md`](deploy-design.md) の
+「採用しなかった案」を参照してください。
 
 ## 4. まとめ
 
 後続 PR（Ansible `nginx` role）での対応候補は以下です。優先度・詳細は着手時に確定します。
 
-- `server_name default_server;` → `listen 80 default_server;`（2.1・2.2）
+- `server_name default_server;` を実ホスト名 `ika.queloud.net` に修正（`default_server` は
+  `sites-enabled/default` 側にのみ残す。2.1・2.2）
 - `acme-challenge` upstream から応答のない2 IP を削除（2.3）
 - `geo $allow_ip` をテンプレート化し2台のドリフトを解消（2.4）
 - HSTS の重複解消（2.5、nginx 側かアプリ側かは着手時に判断）
