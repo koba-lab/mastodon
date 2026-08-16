@@ -1,0 +1,12 @@
+{# drain 中。自ホストを down にし、隣サーバーへ全量流す。
+   streaming の WebSocket は再接続が発生する (構造上ゼロにできない)。 #}
+upstream ikatodon_web {
+  server 127.0.0.1:3000 down;
+  server {{ ikatodon_peer_private_ip }}:3000;
+}
+
+upstream ikatodon_streaming {
+  least_conn;
+  server 127.0.0.1:4000 down;
+  server {{ ikatodon_peer_private_ip }}:4000;
+}

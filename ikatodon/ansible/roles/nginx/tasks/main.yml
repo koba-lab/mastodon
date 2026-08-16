@@ -1,0 +1,72 @@
+---
+# サイト設定と upstream snippets の配布。棚卸し (nginx-audit.md) に基づく修正を含む。
+# 稀にしか実行しない (playbooks/nginx.yml から呼ぶ)。drain / undrain は別タスク
+# ファイル (drain.yml / undrain.yml) で、デプロイのたびに実行する。
+
+- name: Require ikatodon_maintenance_allow_ips to be configured
+  # 既定値の空リストのまま適用すると geo $allow_ip が空になり、メンテナンスモード中に
+  # オーナー自身を含む全員が 503 になる。maintenance.html を消す以外に解除手段が無くなる
+  # ため、投入し忘れたままの適用を明示的に拒否する。
+  ansible.builtin.assert:
+    that: ikatodon_maintenance_allow_ips | length > 0
+    fail_msg: >-
+      ikatodon_maintenance_allow_ips が空です。メンテナンスモード中に誰もアクセス
+      できなくなるため中断します。実機の geo $allow_ip の値を投入してください
+      (deploy-runbook.md 参照)。
+
+- name: Determine the peer host's private IP
+  ansible.builtin.set_fact:
+    ikatodon_peer_private_ip: "{{ hostvars[groups['all'] | difference([inventory_hostname]) | first]['mastodon_private_ip'] }}"
+
+- name: Deploy the vhost
+  ansible.builtin.template:
+    src: site.conf.j2
+    dest: /etc/nginx/sites-available/{{ ikatodon_server_name }}
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+
+- name: Ensure the vhost is enabled
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/{{ ikatodon_server_name }}
+    dest: /etc/nginx/sites-enabled/{{ ikatodon_server_name }}
+    state: link
+
+- name: Remove the retired test vhost (nginx-audit.md 2.8)
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: absent
+  loop:
+    - /etc/nginx/sites-enabled/test.ika.queloud.net
+    - /etc/nginx/sites-available/test.ika.queloud.net
+  notify: reload nginx
+
+- name: Deploy the normal upstream snippet
+  ansible.builtin.template:
+    src: upstream-normal.conf.j2
+    dest: /etc/nginx/snippets/ikatodon-upstream-normal.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+
+- name: Deploy the drain upstream snippet
+  ansible.builtin.template:
+    src: upstream-drain.conf.j2
+    dest: /etc/nginx/snippets/ikatodon-upstream-drain.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Point the upstream snippet symlink at "normal" unless it already exists
+  # drain 中に誤って normal へ戻さないよう、既にリンクがあれば触らない。
+  ansible.builtin.file:
+    src: /etc/nginx/snippets/ikatodon-upstream-normal.conf
+    dest: /etc/nginx/snippets/ikatodon-upstream.conf
+    state: link
+    force: false
+
+- name: Validate nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false

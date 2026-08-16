@@ -1,0 +1,19 @@
+---
+# drain を解除し、自ホストを upstream へ戻す。
+# playbook は必ずこのタスクで通常状態に戻して終える (drain したまま終了する経路を作らない)。
+
+- name: Switch the upstream snippet to normal
+  ansible.builtin.file:
+    src: /etc/nginx/snippets/ikatodon-upstream-normal.conf
+    dest: /etc/nginx/snippets/ikatodon-upstream.conf
+    state: link
+    force: true
+
+- name: Validate nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
