@@ -1,0 +1,23 @@
+// ikadon の構造的な上書き。
+
+// 色は _base.scss のパレット差し替えで大半が片付くため、ここに書くのは
+// トークンでは表現できないもの（ギザギザのストライプ、角丸、ギザギザ画像）だけに限る。
+
+// この PR では「テーマが有効になっていることが画面で分かる」最小限に留めてある。
+// 全体の作り込みは後続の PR で行う。仕様の一次ソースは PR #19 の
+// app/javascript/styles/ikadon/diff.scss。
+
+@use 'image';
+@use 'vars';
+
+// 全体の地。グレーのギザギザ
+.ui {
+  background: vars.$gray-stripe;
+}
+
+// カラムヘッダー。ギザギザ画像＋上側だけ角丸
+.column-header {
+  border-radius: vars.$radius-outer vars.$radius-outer 0 0;
+  background: image.$gray-jagged;
+  color: var(--color-black);
+}
