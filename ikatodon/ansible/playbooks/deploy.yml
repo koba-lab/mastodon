@@ -41,43 +41,63 @@
       changed_when: true
 
     - name: Drain this host
+      # nginx の設定ファイル操作・reload は root が要る。mastodon role 側は
+      # become を付けていない (.env.production 等の所有者が mastodon のまま必要なため)。
       ansible.builtin.include_tasks: ../roles/nginx/tasks/drain.yml
+      become: true
 
-    - name: Start containers
-      ansible.builtin.command: docker compose up -d
-      args:
-        chdir: '{{ mastodon_dir }}'
-      changed_when: true
+    - name: Replace and verify containers, then undrain
+      # block 内のどこかで失敗すると、rescue がこのホストを drain されたままにして
+      # 明示的に止める。ここで自動的に undrain しない理由は、壊れた可能性のある
+      # コンテナへトラフィックを戻すのは drain されたまま (= 隣ホストが全量を受けて
+      # サービス継続) より悪化させ得るため。復旧するまで隣ホストが全量を受ける。
+      block:
+        - name: Start containers
+          ansible.builtin.command: docker compose up -d
+          args:
+            chdir: '{{ mastodon_dir }}'
+          changed_when: true
 
-    - name: Wait for the web health check
-      ansible.builtin.uri:
-        url: http://127.0.0.1:3000/health
-        status_code: 200
-      register: ikatodon_web_health
-      until: ikatodon_web_health.status | default(0) == 200
-      retries: 30
-      delay: 2
+        - name: Wait for the web health check
+          ansible.builtin.uri:
+            url: http://127.0.0.1:3000/health
+            status_code: 200
+          register: ikatodon_web_health
+          until: ikatodon_web_health.status | default(0) == 200
+          retries: 30
+          delay: 2
 
-    - name: Wait for the streaming health check
-      ansible.builtin.uri:
-        url: http://127.0.0.1:4000/api/v1/streaming/health
-        status_code: 200
-      register: ikatodon_streaming_health
-      until: ikatodon_streaming_health.status | default(0) == 200
-      retries: 30
-      delay: 2
+        - name: Wait for the streaming health check
+          ansible.builtin.uri:
+            url: http://127.0.0.1:4000/api/v1/streaming/health
+            status_code: 200
+          register: ikatodon_streaming_health
+          until: ikatodon_streaming_health.status | default(0) == 200
+          retries: 30
+          delay: 2
 
-    - name: Check that sidekiq is running
-      ansible.builtin.command: docker compose ps sidekiq --format '{{ '{{' }}.State{{ '}}' }}'
-      args:
-        chdir: '{{ mastodon_dir }}'
-      register: ikatodon_sidekiq_state
-      changed_when: false
-      failed_when: "'running' not in ikatodon_sidekiq_state.stdout"
+        - name: Check that sidekiq is running
+          ansible.builtin.command: docker compose ps sidekiq --format '{{ '{{' }}.State{{ '}}' }}'
+          args:
+            chdir: '{{ mastodon_dir }}'
+          register: ikatodon_sidekiq_state
+          changed_when: false
+          failed_when: "'running' not in ikatodon_sidekiq_state.stdout"
 
-    - name: Undrain this host
-      # playbook は必ずここまで到達し、drain したまま終了する経路を作らない。
-      ansible.builtin.include_tasks: ../roles/nginx/tasks/undrain.yml
+        - name: Undrain this host
+          # playbook はここまで到達できて初めて undrain する。失敗時に自動で
+          # undrain する経路は意図的に作らない (block のコメント参照)。
+          ansible.builtin.include_tasks: ../roles/nginx/tasks/undrain.yml
+          become: true
+      rescue:
+        - name: Fail with recovery instructions
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }} はコンテナの入替またはヘルスチェックに失敗し、
+              drain されたままです (nginx から外れており、隣ホストが全トラフィックを
+              受けています)。このホストは自動では undrain しません。ログを確認し、
+              deploy-runbook.md の「ヘルスチェックが通らない」を参照して手動で復旧
+              してください。
 
 - name: Run post-deployment migrations
   hosts: "{{ groups['all'][0] }}"

@@ -3,6 +3,17 @@
 # 稀にしか実行しない (playbooks/nginx.yml から呼ぶ)。drain / undrain は別タスク
 # ファイル (drain.yml / undrain.yml) で、デプロイのたびに実行する。
 
+- name: Require ikatodon_maintenance_allow_ips to be configured
+  # 既定値の空リストのまま適用すると geo $allow_ip が空になり、メンテナンスモード中に
+  # オーナー自身を含む全員が 503 になる。maintenance.html を消す以外に解除手段が無くなる
+  # ため、投入し忘れたままの適用を明示的に拒否する。
+  ansible.builtin.assert:
+    that: ikatodon_maintenance_allow_ips | length > 0
+    fail_msg: >-
+      ikatodon_maintenance_allow_ips が空です。メンテナンスモード中に誰もアクセス
+      できなくなるため中断します。実機の geo $allow_ip の値を投入してください
+      (deploy-runbook.md 参照)。
+
 - name: Determine the peer host's private IP
   ansible.builtin.set_fact:
     ikatodon_peer_private_ip: "{{ hostvars[groups['all'] | difference([inventory_hostname]) | first]['mastodon_private_ip'] }}"

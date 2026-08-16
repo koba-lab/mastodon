@@ -26,15 +26,27 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     steps:
+      - name: Check that this is run by the repository owner
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          if [ "${ACTOR}" != "koba-lab" ]; then
+            echo "::error::このワークフローはリポジトリオーナーのみ実行できます (actor: ${ACTOR})"
+            exit 1
+          fi
+
       - name: Check that required secrets are set
         env:
           SSH_KEY_SET: ${{ secrets.IKATODON_DEPLOY_SSH_KEY != '' }}
           KNOWN_HOSTS_SET: ${{ secrets.IKATODON_DEPLOY_KNOWN_HOSTS != '' }}
+          VAULT_PASSWORD_SET: ${{ secrets.IKATODON_ANSIBLE_VAULT_PASSWORD != '' }}
         run: |
           set -euo pipefail
           missing=()
           [ "${SSH_KEY_SET}" = "true" ] || missing+=(IKATODON_DEPLOY_SSH_KEY)
           [ "${KNOWN_HOSTS_SET}" = "true" ] || missing+=(IKATODON_DEPLOY_KNOWN_HOSTS)
+          [ "${VAULT_PASSWORD_SET}" = "true" ] || missing+=(IKATODON_ANSIBLE_VAULT_PASSWORD)
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::未設定の secrets があります: ${missing[*]}"
             exit 1
@@ -42,11 +54,14 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up Ansible ssh access
         env:
           SSH_KEY: ${{ secrets.IKATODON_DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.IKATODON_DEPLOY_KNOWN_HOSTS }}
+          VAULT_PASSWORD: ${{ secrets.IKATODON_ANSIBLE_VAULT_PASSWORD }}
         run: |
           set -euo pipefail
           umask 077
@@ -54,6 +69,8 @@ jobs:
           printf '%s\n' "${SSH_KEY}" > ~/.ssh/ikatodon_deploy
           printf '%s\n' "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/ikatodon_deploy ~/.ssh/known_hosts
+          printf '%s\n' "${VAULT_PASSWORD}" > ~/.ansible_vault_pass
+          chmod 600 ~/.ansible_vault_pass
 
       - name: Apply nginx configuration
         working-directory: ikatodon/ansible
@@ -61,7 +78,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          args=(playbooks/nginx.yml --private-key ~/.ssh/ikatodon_deploy)
+          args=(playbooks/nginx.yml --private-key ~/.ssh/ikatodon_deploy --vault-password-file ~/.ansible_vault_pass)
           if [ "${DRY_RUN}" = "true" ]; then
             args+=(--check --diff)
           fi
