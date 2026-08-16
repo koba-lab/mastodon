@@ -9,6 +9,20 @@
       ikatodon_version が指定されていません。
       -e "ikatodon_version=<タグ名>" で渡してください。
 
+- name: Require deployment variables to be configured
+  # 未投入のまま実行すると、mastodon_private_ip はテンプレート展開時に (checkout の後で)
+  # 失敗し、mastodon_compose_project_name はプレースホルダーのまま稼働中イメージとの
+  # 整合性チェック (下記) を素通りしてしまう。作業ツリーを触る前にここで止める。
+  ansible.builtin.assert:
+    that:
+      - mastodon_private_ip is defined
+      - mastodon_private_ip | length > 0
+      - mastodon_compose_project_name is defined
+      - not mastodon_compose_project_name.startswith('CHANGEME_')
+    fail_msg: >-
+      mastodon_private_ip または mastodon_compose_project_name が未設定です。
+      実機の値を host_vars / group_vars へ投入してください (deploy-runbook.md 参照)。
+
 - name: Fail if the working tree is dirty
   ansible.builtin.command: git status --porcelain
   args:
