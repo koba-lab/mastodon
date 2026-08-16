@@ -113,23 +113,25 @@ git diff --stat <現行タグ> <新タグ> -- db/
 
 ## デプロイ
 
-1. タグを push すると `.github/workflows/ikatodon-build.yml` が ghcr へイメージをビルドする
-2. `docker compose pull`
-3. マイグレーションがある場合は先に流す
+`.github/workflows/ikatodon-deploy.yml` を `workflow_dispatch` で実行するだけです。タグの
+push で `ikatodon-build.yml` が ghcr へイメージをビルドした後、この workflow が Ansible
+（`ikatodon/ansible/`）を呼び出し、本番 Web 2台をゼロダウンタイムでデプロイします。checkout・
+`.env.production` 配布・migration（pre → 全台入替 → post）・drain/undrain を含めて自動化
+されており、手作業の手順はありません。
 
-   ```bash
-   docker compose run --rm web \
-     env SKIP_POST_DEPLOYMENT_MIGRATIONS=true bundle exec rails db:migrate
-   ```
+ロールバックは前バージョンのタグで同じ workflow を再実行するだけです。専用の切り戻し経路は
+持ちません。
 
-   `docker compose exec` は使わないこと。稼働中の**旧**コンテナの中で実行され、新しいマイグレーションファイルが存在しないまま「何もせず成功」します。`run` は `image:` から新しいコンテナを作るため `pull` 済みなら新コードで動きます（`down` は不要）。`--service-ports` は付けないこと（稼働中の web とポートが衝突します）。
+運用手順・必要な GitHub Secrets・障害時の対応は
+[`ikatodon/docs/infrastructure/deploy-runbook.md`](ikatodon/docs/infrastructure/deploy-runbook.md)
+を参照してください。設計の詳細は
+[`ikatodon/docs/infrastructure/deploy-design.md`](ikatodon/docs/infrastructure/deploy-design.md)
+を参照してください。
 
-4. `docker compose up -d` で web を入れ替える
-5. post-deployment マイグレーション
-
-   ```bash
-   docker compose run --rm web bundle exec rails db:migrate
-   ```
+`docker compose exec` でのマイグレーション実行は禁止です。稼働中の**旧**コンテナの中で
+実行され、新しいマイグレーションファイルが存在しないまま「何もせず成功」します。必ず
+`docker compose run --rm web` を使ってください（Ansible の `mastodon` role もこれに
+従っています）。
 
 ## 既知の事情
 
