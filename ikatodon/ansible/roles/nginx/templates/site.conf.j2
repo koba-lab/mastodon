@@ -1,6 +1,9 @@
 {# nginx-audit.md の棚卸しに基づく修正を反映したテンプレート。
    現行設定との差分:
-   - server_name default_server; の誤指定を listen 80 default_server; に修正 (2.1・2.2)
+   - server_name default_server; の誤指定を実ホスト名 (ikatodon_server_name) へ修正
+     (2.1・2.2)。default_server 自体は sites-enabled/default (Debian 既定 vhost) に
+     既に付いているため、ここへは付けない。両方に付けると nginx -t が
+     "a duplicate default server" で失敗する
    - upstream ikatodon_web / ikatodon_streaming 経由にし、peer fallback を導入 (2.9)
    - error_page を相対 URI に統一 (2.6)
    - ssl_protocols を TLSv1.2 TLSv1.3 に、cipher を Mozilla Intermediate 相当に更新 (2.7)
@@ -31,8 +34,8 @@ geo $allow_ip {
 }
 
 server {
-  listen 80 default_server;
-  listen [::]:80 default_server;
+  listen 80;
+  listen [::]:80;
   server_name {{ ikatodon_server_name }};
   root {{ mastodon_dir }}/public;
 

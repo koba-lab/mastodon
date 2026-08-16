@@ -6,5 +6,6 @@
 
 - name: Apply nginx configuration
   hosts: all
+  become: true
   roles:
     - nginx
