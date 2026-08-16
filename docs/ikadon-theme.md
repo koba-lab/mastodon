@@ -9,7 +9,7 @@ Mastodon v2.9 の頃に作られたが、バージョンアップに追随でき
 [PR #19](https://github.com/koba-lab/mastodon/pull/19) で v3.1.5 対応が試みられ、
 マルチカラムはほぼ移植されたがシングルカラム／SP 対応を残して停止した。
 
-v4.6.4 で復活させたのが現行の実装。デザインの一次ソースは PR #19 の
+v4.6.5 で復活させたのが現行の実装。デザインの一次ソースは PR #19 の
 `app/javascript/styles/ikadon/{variables,diff,ika-style}.scss` と、
 同 PR のコメントに残っているスクリーンショットおよびデザイン指示。
 
@@ -152,6 +152,186 @@ yarn lint:css
 テーマの表示ラベルは `I18n.t("themes.#{theme}", default: theme)`
 （`app/views/settings/preferences/appearance/show.html.haml`）により、翻訳が無ければ
 テーマ名がそのまま出る。そのため i18n ファイルへの追加は不要。
+
+## VRT（Storybook / Chromatic）
+
+ikadon のレイアウト層（ギザギザ地・角丸・ジグザグヘッダー）を Storybook の VRT で
+継続的に撮るための構成。上流の `chromatic.yml` を直接改変して使う
+（独自ワークフローの新設はしない、という当初合意どおり）。上流ファイルへの変更は
+`.storybook/preview.tsx`・`.storybook/main.ts`・`.github/workflows/chromatic.yml`
+の3つ。
+
+VRT の対象は「独自テーマ（ikadon）だけ」で、視覚差分の合否判定は人間が Chromatic の
+Web UI で行う。GitHub Actions 側が担うのは **Story が壊れて撮影自体ができない場合に、
+その原因を AI エージェントや開発者がテキストで読めるようにする**ことに限定している。
+
+### 変更した上流ファイル
+
+**`.storybook/preview.tsx`**（27行目付近）
+
+```diff
+- import '../app/javascript/styles/application.scss';
++ import '../app/javascript/styles/ikadon.scss';
+```
+
+`ikadon.scss` は `application.scss` の完全な複製＋イカ味なので、両方 import すると
+後に読まれた方が勝ち、default の見た目しか撮れなくなる。Storybook 全体が ikadon 固定
+になる。
+
+**`.storybook/main.ts`**（`stories` の1箇所）
+
+```ts
+stories: [
+  process.env.IKADON_STORIES_ONLY
+    ? '../app/javascript/**/*.ikadon.stories.@(ts|tsx)'
+    : '../app/javascript/**/*.stories.@(js|jsx|mjs|ts|tsx)',
+],
+```
+
+`IKADON_STORIES_ONLY` が未設定なら上流と完全に同じ挙動（`yarn storybook` で上流
+コンポーネントを ikadon テーマで眺める用途はそのまま使える）。設定時は ikadon の
+Story（`*.ikadon.stories.tsx`）だけが Storybook のビルドに含まれる。
+
+**`.github/workflows/chromatic.yml`**
+
+- `if: github.repository == 'mastodon/mastodon'` を `'koba-lab/mastodon'` に変更
+  （このガードのせいで、フォークでは何もしなければ永久に Skipped になり一度も
+  実行されない）
+- `Build Storybook` に `IKADON_STORIES_ONLY: '1'` を設定し、Chromatic にアップロード
+  するビルドを ikadon の Story だけに絞る
+- `exitZeroOnChanges: true` を追加し、視覚差分ではジョブを落とさない（差分の合否は
+  人間が Chromatic UI で判断する領域であり、GitHub Actions の責務ではない）
+- `exitOnceUploaded` は付けない。付けるとアップロード直後に exit code 0 で終了し、
+  Story の破損（exit code 2）を検出できなくなる
+
+独自差分は数十行程度。
+
+### なぜビルド自体を絞る必要があるか
+
+最初の実装では撮影対象だけを `onlyStoryNames: 'Ikadon/*'` で絞り、アップロードする
+ビルドには上流の Story も含めたままだった。Chromatic は撮影しなかった Story に
+**前回ビルドのステータスを引き継がせる**ため、上流の `Alert / With Action`・
+`StatusQuoteManager` の5 Story・`AnnualReport` の6 Story（計12 Story、v4.6.5 時点で
+Interaction test に失敗している）が BROKEN のまま数えられ続け、`errorCount` が
+永久に 0 にならず、Chromatic 側が付ける `UI Tests` commit status も恒久的に
+`failure` になっていた。
+
+これはイカトドンに起因しない上流のバグで、`preview.tsx` を `application.scss` に
+戻してローカルで `yarn test:storybook` を実行しても再現する。ビルドから Story
+そのものを除外すれば継承元が存在しなくなるため、`.storybook/main.ts` 側で
+絞り込むようにした。
+
+### `Run Chromatic` と `UI Tests` の関係
+
+両者は独立したチェックではなく、`Run Chromatic` がアップロードしたビルドを
+Chromatic サーバが撮影・比較し、その結果を `UI Tests` として書き込むという
+**一方向の因果関係**にある。ビルドを ikadon の Story だけに絞ったことで、
+両者が指す対象は揃っている。
+
+- **`UI Tests`**（Chromatic が付ける commit status）— 視覚差分を含めた総合判定。
+  **人間が Chromatic の Web UI で画像を見て判断する**
+- **`Run Chromatic`**（このワークフローのジョブ本体）— `exitZeroOnChanges: true`
+  により視覚差分では落ちず、**Story が壊れて撮影できない場合にだけ**落ちる。
+  AI エージェントや開発者が原因を追う入り口
+
+以前は `Run Chromatic` 側に「上流由来のエラーを無視して ikadon の Story だけで
+合否を決め直す」独自ロジックがあり、同じビルドを見ているのに両者の結果が食い違う
+ことがあった。ビルド自体を絞った今はその独自ロジックは不要で、`chromaui/action`
+本来の終了コードをそのまま使っている。
+
+### AI／開発者が結果を確認する手順
+
+視覚差分の中身（画像）は GitHub 上では判断できないため、これらのコマンドで追える
+のは「Story が壊れていないか」だけである。
+
+```bash
+# 直近の実行を確認
+gh run list --repo koba-lab/mastodon --workflow=chromatic.yml --limit 1
+
+# ジョブ内の各ステップの成否
+gh run view <run-id> --repo koba-lab/mastodon --json jobs \
+  --jq '.jobs[].steps[] | "\(.name): \(.conclusion)"'
+```
+
+`Run Chromatic` が fail していたら、まずローカルで下記の「ローカルでの検証」の
+コマンドを実行して再現・原因特定する。実際の例外とスタックトレースが読めるのは
+この経路だけである。ローカルで再現しない場合は、ジョブログに出る `BUILD_URL`
+から Chromatic の Web UI を人間が確認する。
+
+以前は `junitReport: true` で JUnit XML を取得し、専用スクリプトで壊れた Story の
+一覧を抽出していたが廃止した。実際の失敗データを調べたところ、`message` は
+`Snapshot is broken due to an error in your Storybook` という定型文のみで、
+どの Story が壊れたか以上の情報を含んでいなかった。ジョブログの
+`Tested N stories ... found M component errors` で件数は既に分かり、原因の特定は
+ローカル再現の方が実例外付きで確実なため、XML を経由する意味がなかった。
+
+### ローカルでの検証
+
+CI と同じ絞り込みをローカルでも効かせられる。
+
+```bash
+IKADON_STORIES_ONLY=1 yarn test:storybook run
+```
+
+これが通れば、視覚差分を除いて CI の `Run Chromatic` も通る（同じ Story 集合・同じ
+Interaction test を実行しているため）。**視覚差分だけはローカルでは検証できない**
+（ベースライン画像は Chromatic サーバ側にしかない）。push 後、実際に Chromatic 上で
+画像を確認するのは人間の役割。
+
+環境変数を付けずに `yarn test:storybook run` を実行すると、上流の12 Story が
+今も Interaction test に失敗する形で再現する。これは Chromatic のビルドには
+含まれないため CI には影響しない。
+
+### 上流バージョンアップでコンフリクトした場合
+
+「上流バージョン追随の手順」と同じ判断基準（このファイルにイカトドン独自の変更が
+入っているか）で解決する。
+
+- `.github/workflows/chromatic.yml` はコンフリクトしうる。判断基準は
+  「そのブロックがイカトドン独自のステップか」で、上流の変更を取り込んだ上で
+  `if` の書き換えと ikadon 用のステップ群を再適用する
+- `.storybook/main.ts` は `stories` の値を三項演算子で包み直すだけでよい
+- `.storybook/preview.tsx` は変更が1行だけなので、上流がインポート文の周辺行を
+  書き換えた場合でも `application.scss` を import している行を探して
+  `ikadon.scss` に差し替えるだけでよい
+
+確認コマンド:
+
+```bash
+git diff <upstream-tag> HEAD -- .storybook/preview.tsx .storybook/main.ts .github/workflows/chromatic.yml
+```
+
+### 検証
+
+```bash
+yarn build-storybook
+```
+
+が通り、以下の3本の Story が ikadon 配色（ギザギザ地・角丸・ジグザグヘッダー）で
+含まれていることを確認する。上流の既存 Story はすべて葉コンポーネント（button・badge・
+account など）で、ikadon が塗るレイアウト容器を撮る Story が無かったため新規に追加した。
+配置は対象コンポーネントの隣、ファイル名に `.ikadon.` を挟む形。
+
+- `app/javascript/mastodon/components/column_header.ikadon.stories.tsx`
+  （`Ikadon/ColumnHeader`）— カラムの種類ごとの色分け（ホーム＝ライム／通知＝水色／
+  ローカルタイムライン＝黄色）とギザギザ地・角丸
+- `app/javascript/mastodon/features/ui/components/columns_area.ikadon.stories.tsx`
+  （`Ikadon/ColumnsArea`）— マルチカラム全体のグレーのギザギザ地。実データに依存しない
+  `ColumnLoading`（Column + ColumnHeader + scrollable の骨格）を子に並べている
+- `app/javascript/mastodon/features/ui/components/drawer.ikadon.stories.tsx`
+  （`Ikadon/Drawer`）— 「ドロワー」の本体は `features/compose/index.tsx` の `Compose`
+  だが、投稿フォーム内の `LanguageDropdown` / `UploadButton` が
+  `mastodon/initial_state` のモジュールレベル定数（import 時点で1度だけ
+  `window.initialState` を読む設計）に依存しており、Redux state ではないため Story 側
+  から上書きできず Storybook では描画できない。ハイドレーション前提の上流設計が原因で
+  ikadon 側には起因しないため、上流には手を入れず、実際に lazy-load 中に表示される
+  依存のない `DrawerLoading` と、`.drawer__header`/`.drawer__tab` の className 構造だけ
+  を軽量に再現したダミーナビゲーションを並べて代替した
+
+各 Story の `meta.parameters.chromatic.modes` はグローバル設定
+（`.storybook/preview.tsx` の `parameters.chromatic.modes`、light/dark の2モード）を
+上書きし、`ikadon` モード1つだけを追加している。ikadon は単一固定配色のため、
+light/dark 両方を撮っても差分が生まれず無駄なスナップショットになるため。
 
 ## 未実装
 
