@@ -43,6 +43,25 @@ flowchart TD
 手順の詳細と判断基準は `CLAUDE.md`「上流バージョン追随の手順」にあります。ここでは
 リリース作業として実行する形にまとめ直しています。
 
+### 1-0. 飛ばす全リリースの Upgrade notes を読む（**取り込み前に**）
+
+現行版から対象版まで**途中のリリースを飛ばす場合、その全部**のリリースノートを読みます。
+上流も「古いバージョンから直接上げる場合は途中のリリースノートを確認すること」と明記して
+います。
+
+`db/` の差分だけでは、依存パッケージの要件変更や「このバージョンで一度だけ実行が必要な
+コマンド」（`tootctl` の一括処理など）を検出できません。マイグレーションが 0 本でも
+手作業が要る回があります。
+
+https://github.com/mastodon/mastodon/releases を現行タグの次から対象タグまで順に開き、
+**Upgrade notes / Breaking changes に書かれた追加作業を書き出してから**取り込みに入って
+ください。書き出した作業は 5 節のどこで流すかまで決めます。
+
+```bash
+# 間に挟まるタグの一覧（どこまで読むかの確認用）
+git log --oneline --decorate <現行タグ>..vX.Y.Z | grep -i "bump version"
+```
+
 ```bash
 # 1-1. 上流タグを fetch する（リモートを追加せず、タグだけ取る）
 git fetch --no-tags https://github.com/mastodon/mastodon \
@@ -138,6 +157,36 @@ git diff --stat vX.Y.Z HEAD -- db/schema.rb # 出力が空 = 独自スキーマ�
 > 昇格 PR は既定の `GITHUB_TOKEN` で作られるため CI がトリガーされません（GitHub の仕様）。
 > 中身は `master` で CI を通したものと同一なので通常は問題になりません。
 
+### 3-1. 上流由来の理由で CI が赤いとき
+
+上流のタグそのものが壊れていて、取り込んだだけで CI が赤くなることがあります（v4.6.8 で
+実際に起きました。付録参照）。`CLAUDE.md` の最重要方針により**上流のコードは直さない**ので、
+この場合イカトドン側の作業では緑になりません。
+
+**まず「本当に上流由来か」を切り分けます。** 上流タグだけを checkout した worktree で
+同じ失敗を再現できれば、イカトドンの変更は無関係だと確定します。
+
+```bash
+git worktree add /tmp/upstream-vX.Y.Z vX.Y.Z
+cd /tmp/upstream-vX.Y.Z
+# 落ちている spec だけを、独自差分ゼロの状態で流す
+DB_NAME=upstream bundle exec rspec <落ちている spec>
+```
+
+再現したら、PR に次を記録します。
+
+- どのチェックが、どの spec / どのパッケージで落ちているか
+- 上流タグ単体で再現した結果（上のコマンドの出力）
+- `master` 側の内容と同一かどうか（`git diff <現行タグ> vX.Y.Z -- <該当ファイル>`）
+- 上流に修正が存在するか（`main` や後続タグに入っていないか）、報告済みか
+
+**そのうえでリリースするかどうかは、手順ではなくオーナーの判断です。** このドキュメントで
+「赤でもマージしてよい」と先に決めておくことはしません。緊急のセキュリティ更新で待てない
+場合と、待てる場合とで答えが変わるためです。判断に必要な材料（上の 4 点）を揃えるところ
+までが、この手順の範囲です。
+
+チェックリストの「CI が緑になった」は、この記録と判断をもって代えられます。
+
 ---
 
 ## 4. タグ push とイメージビルド
@@ -201,12 +250,23 @@ done
 存在する前提で進めないこと。** マイグレーションの有無にかかわらず、デプロイ前に自分で
 1 つ取ります。
 
+本番の PostgreSQL は **`mastodon_postgres16` コンテナの中**で動いています
+（[`infrastructure.md`](infrastructure.md) 10 節の確認コマンドと同じ流儀）。ホスト側の
+既定 Unix socket には繋がらないので、`docker exec` でコンテナ内の `pg_dump` を使います。
+
 ```bash
-# DB ホスト (ikatodon-db) で。出力先とファイル名は実環境に合わせること
-pg_dump -Fc -d mastodon_production -f "/var/backups/pre-vX.Y.Z-$(date +%Y%m%d%H%M).dump"
-ls -lh /var/backups/pre-vX.Y.Z-*.dump      # サイズが 0 でないこと
-pg_restore --list /var/backups/pre-vX.Y.Z-*.dump | head   # 読めること
+# DB ホスト (ikatodon-db) で。出力先は実環境に合わせること
+dump="/var/backups/pre-vX.Y.Z-$(date +%Y%m%d%H%M).dump"
+
+docker exec mastodon_postgres16 \
+  pg_dump -U mastodon -d mastodon_production -Fc > "$dump"
+
+ls -lh "$dump"                       # サイズが 0 でないこと
+pg_restore --list "$dump" | head     # 読めること（壊れていればここで落ちる）
 ```
+
+検証はワイルドカードではなく `$dump`（今回作ったファイル）に固定しています。
+`pre-vX.Y.Z-*.dump` で確認すると、過去の失敗した dump を見て「OK」と判断し得るためです。
 
 取った場所とファイル名を記録してから次へ進みます。7 節のとおり、post-deployment
 マイグレーションを流した後はイメージタグを戻すだけでは巻き戻せず、ここで取った
@@ -291,6 +351,7 @@ docker compose up -d
 
 ```
 ## 上流追随
+- [ ] 飛ばす全リリースの Upgrade notes を読み、追加作業を書き出した
 - [ ] 上流タグを fetch した
 - [ ] 作業前の独自差分（ファイル集合・行数）を記録した
 - [ ] マージし、コンフリクトを解消した
@@ -307,6 +368,7 @@ docker compose up -d
 
 ## マージとビルド
 - [ ] master へ PR を出し、CI が緑になった
+      （上流由来の理由で赤い場合は 3-1 の記録を残し、オーナーの判断を得た）
 - [ ] master へマージした
 - [ ] 自動作成された master → ikatodon の昇格 PR をマージした
 - [ ] ikatodon にタグ vX.Y.Z を push した（ローカルにタグを作らず ref へ直接 push）
@@ -314,6 +376,7 @@ docker compose up -d
 
 ## デプロイ
 - [ ] DB のリストアポイントを取り、サイズと pg_restore --list を確認した
+- [ ] 1-0 で書き出した「このバージョン固有の追加作業」を流した（あれば）
 - [ ] 1 台目: git pull / docker compose pull
 - [ ] 2 台目: git pull / docker compose pull
 - [ ] （マイグレーション有）pre-deployment マイグレーションを 1 回実行した
@@ -375,4 +438,12 @@ v4.6.6 / v4.6.7 / v4.6.8 の 3 バージョン分がまとめて入っていま�
 | `bundler-audit` が `rubyzip 3.3.1` を弾く                          | CVE-2026-85396（path traversal、`>= 3.4.0` で修正）。上流 `main` は 3.6.0 へ上げているが `stable-4.6` は 3.3.1 のまま。CI の `security` が赤になる                                                |
 
 どちらも v4.6.5 時点の `master` と同じ、または上流タグそのものの内容であり、
-イカトドンの変更が原因ではありません。上流へ報告し、`v4.6.9` での修正を待つ想定です。
+イカトドンの変更が原因ではありません。
+
+`avif` / `heic` は 3-1 の手順で切り分け済みです。**独自差分ゼロの v4.6.8 worktree で
+`2 examples, 2 failures`** を再現し、そこで `config/initializers/vips.rb` に
+`VipsForeignLoadHeif` を戻すと **`2 examples, 0 failures`** になりました。原因が
+v4.6.8 の `Vips.block` の変更そのものであることが確定しています。
+
+上流へ報告し、`v4.6.9` での修正を待つのが方針どおりです。ただし今回はセキュリティ更新
+なので、待つか赤のまま進めるかは 3-1 のとおりオーナーの判断になります。
