@@ -222,6 +222,9 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 される追加コマンド」がどこにも記録されていない（既知の問題 #4）。post deployment
 migration を「1台目だけ新しい」状態で実行してしまっている（既知の問題 #3）。
 
+現時点の手動リリース手順は [`release.md`](release.md) に書き起こしました（既知の問題 #4 への
+暫定対応）。上流追随からタグ push、2台への反映、ロールバック、チェックリストまでを含みます。
+
 GitHub Actions によるデプロイ自動化（`releases/` + `current` 方式、ロールバック、検証の
 分担など）の検討中の詳細は [`infrastructure/deploy-design.md`](infrastructure/deploy-design.md)
 を参照してください。ssh 経路が実際に通るかどうかは未確認です（10節参照）。セルフホスト
