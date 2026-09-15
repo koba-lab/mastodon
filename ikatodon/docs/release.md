@@ -145,11 +145,25 @@ git diff --stat vX.Y.Z HEAD -- db/schema.rb # 出力が空 = 独自スキーマ�
 `ikatodon` にタグを push すると `.github/workflows/ikatodon-build.yml` が動き、
 `ghcr.io/koba-lab/ikatodon` と `ghcr.io/koba-lab/ikatodon-streaming` の 2 つをビルドします。
 
+> [!IMPORTANT]
+> **イカトドンのリリースタグは、上流の同名タグとは別のコミットを指します。**
+> 手順 1-1 で `refs/tags/vX.Y.Z` に上流タグを取得しているため、`git tag vX.Y.Z ...` は
+> `fatal: tag 'vX.Y.Z' already exists` で止まります。かといって `git tag -f` で上書きすると、
+> 次回の追随で使う「現行タグ」が上流のコミットを指さなくなり、手順 1-2 / 1-6 の独自差分の
+> 比較が（差分ゼロに見えて）機能しなくなります。
+>
+> **ローカルにタグを作らず、リモートの ref へ直接 push してください。**
+
 ```bash
-git fetch origin ikatodon
-git tag vX.Y.Z origin/ikatodon
-git push origin vX.Y.Z
+git fetch --no-tags origin ikatodon
+git push origin refs/remotes/origin/ikatodon:refs/tags/vX.Y.Z
 ```
+
+`origin` からの fetch に `--no-tags` を付けているのも同じ理由です。付けないと、`ikatodon`
+の履歴を指す koba-lab 側のリリースタグが追随してきて、上流タグと名前が衝突します。
+
+実際、`origin` の `v4.6.5` は `39b1bbf8`（`ikatodon` のコミット）を指しており、上流の
+`v4.6.5`（`1440d55b`）とは別物です。
 
 - タグの向き先は**昇格 PR をマージした後の `ikatodon`** です。`master` に打たないこと
 - 付くタグは `vX.Y.Z` と `vX.Y`（`type=pep440`）。`flavor: latest=auto` により、
@@ -157,9 +171,15 @@ git push origin vX.Y.Z
 - ビルドは十数分かかります。**完了を待ってから 5 節へ進んでください**。
   終わる前に `docker compose pull` すると manifest not found で失敗します
 
+`ikatodon-build.yml` は本体と streaming を**独立したジョブ**でビルドします。片方だけ先に
+出来上がっている状態があるので、**2 つとも**引けることを確認してください。
+
 ```bash
-# ビルド完了の確認（イメージが引けるようになったか）
-docker manifest inspect ghcr.io/koba-lab/ikatodon:vX.Y.Z > /dev/null && echo OK
+# ビルド完了の確認（2 つとも引けるようになったか）
+for image in ikatodon ikatodon-streaming; do
+  docker manifest inspect "ghcr.io/koba-lab/${image}:vX.Y.Z" > /dev/null \
+    && echo "OK  ${image}" || echo "NG  ${image}"
+done
 ```
 
 ---
@@ -173,6 +193,24 @@ docker manifest inspect ghcr.io/koba-lab/ikatodon:vX.Y.Z > /dev/null && echo OK
 マイグレーションファイルが存在しないまま「何もせず成功」します。`run` は `image:` から
 新しいコンテナを作るため、`pull` 済みなら新コードで動きます（`down` は不要）。
 `--service-ports` は付けないこと（稼働中の `web` とポートが衝突します）。
+
+### 5-0. DB のリストアポイントを作る（**毎回、必須**）
+
+**バックアップ cron は未確認**で、その定義がある playbook は実行できない状態です
+（[`infrastructure.md`](infrastructure.md) 既知の問題 #1・#5）。**既存のバックアップが
+存在する前提で進めないこと。** マイグレーションの有無にかかわらず、デプロイ前に自分で
+1 つ取ります。
+
+```bash
+# DB ホスト (ikatodon-db) で。出力先とファイル名は実環境に合わせること
+pg_dump -Fc -d mastodon_production -f "/var/backups/pre-vX.Y.Z-$(date +%Y%m%d%H%M).dump"
+ls -lh /var/backups/pre-vX.Y.Z-*.dump      # サイズが 0 でないこと
+pg_restore --list /var/backups/pre-vX.Y.Z-*.dump | head   # 読めること
+```
+
+取った場所とファイル名を記録してから次へ進みます。7 節のとおり、post-deployment
+マイグレーションを流した後はイメージタグを戻すだけでは巻き戻せず、ここで取った
+リストアポイントが唯一の復旧手段になります。
 
 ### 5-1. 両台でコードとイメージを取得する
 
@@ -243,7 +281,7 @@ docker compose up -d
 マイグレーション（特に post-deployment）を実行済みの場合、**DB スキーマはイメージを戻しても
 戻りません**。旧コードが新スキーマで動かないときは DB のリストアが必要になります
 （[`infrastructure/backup-design.md`](infrastructure/backup-design.md)）。
-リスクの高いリリースでは、5-2 の前にスナップショットを取っておくのが安全です。
+5-0 で取ったリストアポイントが唯一の復旧手段です。
 
 ---
 
@@ -271,10 +309,11 @@ docker compose up -d
 - [ ] master へ PR を出し、CI が緑になった
 - [ ] master へマージした
 - [ ] 自動作成された master → ikatodon の昇格 PR をマージした
-- [ ] ikatodon にタグ vX.Y.Z を push した
-- [ ] ghcr のイメージビルドが完了した（2 つとも）
+- [ ] ikatodon にタグ vX.Y.Z を push した（ローカルにタグを作らず ref へ直接 push）
+- [ ] ghcr のイメージビルドが完了した（ikatodon / ikatodon-streaming の 2 つとも引ける）
 
 ## デプロイ
+- [ ] DB のリストアポイントを取り、サイズと pg_restore --list を確認した
 - [ ] 1 台目: git pull / docker compose pull
 - [ ] 2 台目: git pull / docker compose pull
 - [ ] （マイグレーション有）pre-deployment マイグレーションを 1 回実行した
