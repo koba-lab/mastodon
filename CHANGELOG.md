@@ -2,7 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.6.8] - 2026-09-15
+
+### Security
+
+- Temporarily disable HEIF support
+
+### Fixes
+
+- Fix relative privacy policy links in subscription emails (#40486 by @crafkaz)
+- Fix canonical email blocks interfering with freezing or approving users (#40463 by @ClearlyClaire)
+- Fix 500 error when submitting a status twice (#40439 by @ClearlyClaire)
+- Fix account deletion not deleting generated annual reports (#40394 by @ClearlyClaire)
+- Fix notifications not being cleaned up when notification requests are deleted in bulk (#40393 by @ClearlyClaire)
+
+## [4.6.7] - 2026-09-01
+
+### Security
+
+- Update dependencies
+- Fix password authentication bypass in 2FA auth for LDAP/PAM/SSO accounts ([GHSA-vx32-x96w-qq65](https://github.com/mastodon/mastodon/security/advisories/GHSA-vx32-x96w-qq65))
+- Fix Denial of Service when processing pathological JSON-LD activities ([GHSA-vgm8-frgh-rh2v](https://github.com/mastodon/mastodon/security/advisories/GHSA-vgm8-frgh-rh2v))
+- Fix disabled staff accounts still having access to admin API ([GHSA-62j4-hvj7-px3f](https://github.com/mastodon/mastodon/security/advisories/GHSA-62j4-hvj7-px3f))
+
+### Fixes
+
+- Fix `config/` directory missing from Bootsnap precompilation options in Dockerfile (#40255 by @ClearlyClaire)
+- Fix autosuggestions overstaying their welcome in languages that don't use spaces (#40217 by @Gargron)
+- Fix error when processing remote actors with `null` public keys (#40194 by @ClearlyClaire)
+- Fix various off-by-one errors in statistics time ranges (#40193 by @ClearlyClaire)
+
+## [4.6.6] - 2026-08-13
+
+### Changed
+
+- Change `mastodon:setup` task warning about trademark to match `masto` but ignore subdomains (#40143 by @ClearlyClaire)
+
+### Fixed
+
+- Fix connection errors when processing `fediverse:creator` preventing creation of preview cards (#40135 by @ClearlyClaire)
+- Fix Web UI being inaccessible with URLs ending with `.zip` (#40134 by @ClearlyClaire)
+- Fix semitransparent background of picture-in-picture video player (#40132 by @diondiondion)
+- Fix title tooltip appearing for fullscreen videos (#40127 by @diondiondion)
+- Fix image preview too dark in alt text editor dialog (#40126 by @diondiondion)
+- Fix domain block impact queries being rejected (#40122 by @ClearlyClaire)
+- Fix mobile navigation scrolling to top while opening (#40042 by @sharlayan)
+- Fix selected account being lost when creating a collection (#39897 and #40133 by @diondiondion and @sharlayan)
+
 ## [4.6.5] - 2026-08-06
+
+### Fixed
 
 - Fix Collection items being rejected because of incorrect attribute being read (#40052 by @shleeable)
 - Fix typo in embedded quote handling code (#40049 by @shleeable)

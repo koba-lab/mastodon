@@ -90,7 +90,7 @@ class User < ApplicationRecord
   validates :email, presence: true, email_address: true, length: { maximum: 320 }
   validates :email, email_mx: { attempt_ip: :sign_up_ip }, if: :validate_email_dns?
 
-  validates_with UserEmailValidator, if: -> { ENV['EMAIL_DOMAIN_LISTS_APPLY_AFTER_CONFIRMATION'] == 'true' || !confirmed? }
+  validates_with UserEmailValidator, if: -> { (ENV['EMAIL_DOMAIN_LISTS_APPLY_AFTER_CONFIRMATION'] == 'true' || !confirmed?) && will_save_change_to_email? }
   validates :agreement, acceptance: { allow_nil: false, accept: [true, 'true', '1'] }, on: :create
 
   # Honeypot/anti-spam fields
@@ -317,13 +317,6 @@ class User < ApplicationRecord
     super
   end
 
-  def external_or_valid_password?(compare_password)
-    # If encrypted_password is blank, we got the user from LDAP or PAM,
-    # so credentials are already valid
-
-    encrypted_password.blank? || valid_password?(compare_password)
-  end
-
   def send_reset_password_instructions
     return false if encrypted_password.blank?
 
@@ -525,7 +518,7 @@ class User < ApplicationRecord
   end
 
   def invite_text_required?
-    Setting.require_invite_text && !open_registrations? && !invited? && !external? && !bypass_registration_checks?
+    Setting.require_invite_text && !open_registrations? && !invite&.bypass_approval? && !external? && !bypass_registration_checks?
   end
 
   def trigger_webhooks
