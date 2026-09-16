@@ -1,0 +1,11 @@
+{# 通常時。自ホストを優先し、自ホストが落ちたときだけ隣サーバー (backup) へ流す。 #}
+upstream ikatodon_web {
+  server 127.0.0.1:3000 max_fails=2 fail_timeout=5s;
+  server {{ ikatodon_peer_private_ip }}:3000 backup;
+}
+
+upstream ikatodon_streaming {
+  least_conn;
+  server 127.0.0.1:4000 max_fails=2 fail_timeout=5s;
+  server {{ ikatodon_peer_private_ip }}:4000 backup;
+}
