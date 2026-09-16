@@ -113,9 +113,6 @@ git diff --stat <現行タグ> <新タグ> -- db/
 
 ## デプロイ
 
-手順の全体像（上流追随からタグ push、2 台への反映、ロールバック、チェックリスト）は
-[`ikatodon/docs/release.md`](ikatodon/docs/release.md) にまとめてあります。以下はその要点です。
-
 1. タグを push すると `.github/workflows/ikatodon-build.yml` が ghcr へイメージをビルドする
 2. `docker compose pull`
 3. マイグレーションがある場合は先に流す
