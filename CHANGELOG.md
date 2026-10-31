@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.6.10] - 2026-10-29
+
+### Security
+
+- Fix insufficient ActivityPub identifier verification ([GHSA-288h-6j8h-6x5j](https://github.com/mastodon/mastodon/security/advisories/GHSA-288h-6j8h-6x5j))
+- Updated dependencies, in particular to address security advisories in Ruby, NodeJS, `excon`, `css_parser`, `pghero`, and `sanitize`
+
+### Fixed
+
+- Fix inefficiency in some hashtag timeline queries (#41132 by @hugogameiro)
+- Fix minor inefficiency in timeline deliveries (#41079 by @isidzukuri)
+- Fix account timeline with `exclude_direct` also excluding followers-only posts for non-followed users (#41019 by @ClearlyClaire)
+- Fix error in `dev:populate_sample_data` task (#40995 and #41051 by @isidzukuri and @mjankowski)
+- Fix local collection item revocation not being properly federated (#40930 by @oneiros)
+
+## [4.6.9] - 2026-10-01
+
+### Security
+
+- Update dependencies
+
+### Added
+
+- Add logging of account data removal (#40572 by @ClearlyClaire)
+
+### Changed
+
+- Change account self-deletion page to always ask to confirm username (#40576 and #40733 by @ClearlyClaire)
+
+### Fixed
+
+- Fix threads leak by updating dependency aws-sdk-s3
+- Fix inconsistent horizontal page padding between profile and profile editor (#40700 by @diondiondion)
+- Fix server error on registration for wrong DOB (#40607 by @sudeeptarlekar)
+- Fix quotes disclaimer disappearing on posts with no quote (#40587 by @crafkaz)
+- Fix `POST /api/v1/accounts` still being accessible when `SSO_ACCOUNT_SIGN_UP` is set (#40681 by @ClearlyClaire)
+- Fix reported statuses not being deleted after account deletion (#40650 by @ClearlyClaire)
+- Fix mobile navigation covering up "Next step" button during onboarding (#40634 by @diondiondion)
+- Fix rate limits not normalizing submitted e-mail addresses (#40658 by @Gargron)
+- Fix moderators being able to issue a warning on moderators of higher position (#40646 by @ClearlyClaire)
+- Fix description text overflowing on Overview landing page (#40272 by @diondiondion)
+- Fix account avatar and header descriptions not being deleted when an account is deleted (#40621 by @ClearlyClaire)
+- Fix deleted accounts not being removed from featured collections (#40623 by @ClearlyClaire)
+- Fix `PreviewCardsStatus` records not being deleted on account deletion (#40624 by @ClearlyClaire)
+- Fix replies order (#40481 by @OmmyZhang)
+- Fix missing confirmation when leaving with an unsent post (#40478 by @crafkaz)
+
 ## [4.6.8] - 2026-09-15
 
 ### Security
