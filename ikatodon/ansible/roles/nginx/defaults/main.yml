@@ -1,0 +1,6 @@
+ikatodon_server_name: ika.queloud.net
+
+# メンテナンスモード中のアクセスを許可する IP。実機の geo $allow_ip から移すこと
+# （nginx-audit.md 2.4節）。プライベート IP と同様に公開したくない場合は
+# ansible-vault で値単位に暗号化する。
+ikatodon_maintenance_allow_ips: []

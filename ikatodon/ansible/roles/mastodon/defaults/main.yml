@@ -5,4 +5,4 @@
 #
 mastodon_compose_project_name: CHANGEME_confirm_on_the_real_host
 
-mastodon_dir: /home/mastodon/live
+# mastodon_dir は nginx role からも参照する共通の値のため group_vars/all.yml で定義する。

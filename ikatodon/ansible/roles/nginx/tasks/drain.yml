@@ -1,0 +1,20 @@
+---
+# 自ホストを upstream から外し、隣サーバーへ全量流す。
+# symlink の張り替えなので切替は一瞬。streaming の WebSocket は再接続が発生する
+# (構造上ゼロにできない)。
+
+- name: Switch the upstream snippet to drain
+  ansible.builtin.file:
+    src: /etc/nginx/snippets/ikatodon-upstream-drain.conf
+    dest: /etc/nginx/snippets/ikatodon-upstream.conf
+    state: link
+    force: true
+
+- name: Validate nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded

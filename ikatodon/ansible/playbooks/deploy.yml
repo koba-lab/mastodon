@@ -2,13 +2,112 @@
 # デプロイ (= ロールバックも同じ)。ikatodon_version に前バージョンのタグ名を渡せば
 # ロールバックになる。専用の切り戻し経路は持たない (infrastructure.md 参照)。
 #
-#   ansible-playbook playbooks/deploy.yml -e "ikatodon_version=v4.6.5"
+#   ansible-playbook playbooks/deploy.yml \
+#     -e "ikatodon_version=v4.6.5" \
+#     -e "run_migrations=true" \
+#     -e "dry_run=false"
 #
-# serial: 1 で1台ずつ処理する。現状は checkout・override 配布・.env.production 配布・
-# pull までを実装している。up -d・ヘルスチェック・nginx 切替は後続の PR で追加する。
+# serial: 1 で1台ずつ処理する。1台ごとに drain → up -d → ヘルスチェック → undrain の
+# 順で進め、undrain まで終えてから次のホストに移る。dry_run=true のときは checkout・
+# override 配布・.env.production 配布・pull までで打ち切る (本番への影響がない範囲)。
+#
+# migration は pre (SKIP_POST_DEPLOYMENT_MIGRATIONS=true) → 全台入替 → post の順で
+# 実行する。要否は呼び出し側 (GitHub Actions) が判定して run_migrations に渡す。
 
 - name: Deploy ikatodon
   hosts: all
   serial: 1
+  vars:
+    dry_run: false
+    run_migrations: false
+  pre_tasks:
+    - name: Determine whether this host is first in this run
+      ansible.builtin.set_fact:
+        ikatodon_is_first_host: '{{ inventory_hostname == ansible_play_hosts_all[0] }}'
   roles:
     - mastodon
+  tasks:
+    - name: Stop here for a dry run
+      ansible.builtin.meta: end_play
+      when: dry_run | bool
+
+    - name: Run pre-deployment migrations (first host only)
+      ansible.builtin.command: >-
+        docker compose run --rm web
+        env SKIP_POST_DEPLOYMENT_MIGRATIONS=true bundle exec rails db:migrate
+      args:
+        chdir: '{{ mastodon_dir }}'
+      when: run_migrations | bool and ikatodon_is_first_host
+      changed_when: true
+
+    - name: Drain this host
+      # nginx の設定ファイル操作・reload は root が要る。mastodon role 側は
+      # become を付けていない (.env.production 等の所有者が mastodon のまま必要なため)。
+      ansible.builtin.include_tasks: ../roles/nginx/tasks/drain.yml
+      become: true
+
+    - name: Replace and verify containers, then undrain
+      # block 内のどこかで失敗すると、rescue がこのホストを drain されたままにして
+      # 明示的に止める。ここで自動的に undrain しない理由は、壊れた可能性のある
+      # コンテナへトラフィックを戻すのは drain されたまま (= 隣ホストが全量を受けて
+      # サービス継続) より悪化させ得るため。復旧するまで隣ホストが全量を受ける。
+      block:
+        - name: Start containers
+          ansible.builtin.command: docker compose up -d
+          args:
+            chdir: '{{ mastodon_dir }}'
+          changed_when: true
+
+        - name: Wait for the web health check
+          ansible.builtin.uri:
+            url: http://127.0.0.1:3000/health
+            status_code: 200
+          register: ikatodon_web_health
+          until: ikatodon_web_health.status | default(0) == 200
+          retries: 30
+          delay: 2
+
+        - name: Wait for the streaming health check
+          ansible.builtin.uri:
+            url: http://127.0.0.1:4000/api/v1/streaming/health
+            status_code: 200
+          register: ikatodon_streaming_health
+          until: ikatodon_streaming_health.status | default(0) == 200
+          retries: 30
+          delay: 2
+
+        - name: Check that sidekiq is running
+          ansible.builtin.command: docker compose ps sidekiq --format '{{ '{{' }}.State{{ '}}' }}'
+          args:
+            chdir: '{{ mastodon_dir }}'
+          register: ikatodon_sidekiq_state
+          changed_when: false
+          failed_when: "'running' not in ikatodon_sidekiq_state.stdout"
+
+        - name: Undrain this host
+          # playbook はここまで到達できて初めて undrain する。失敗時に自動で
+          # undrain する経路は意図的に作らない (block のコメント参照)。
+          ansible.builtin.include_tasks: ../roles/nginx/tasks/undrain.yml
+          become: true
+      rescue:
+        - name: Fail with recovery instructions
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }} はコンテナの入替またはヘルスチェックに失敗し、
+              drain されたままです (nginx から外れており、隣ホストが全トラフィックを
+              受けています)。このホストは自動では undrain しません。ログを確認し、
+              deploy-runbook.md の「ヘルスチェックが通らない」を参照して手動で復旧
+              してください。
+
+- name: Run post-deployment migrations
+  hosts: "{{ groups['all'][0] }}"
+  vars:
+    dry_run: false
+    run_migrations: false
+  tasks:
+    - name: Run post-deployment migrations (first host only, after all hosts are updated)
+      ansible.builtin.command: docker compose run --rm web bundle exec rails db:migrate
+      args:
+        chdir: '{{ mastodon_dir }}'
+      when: run_migrations | bool and not (dry_run | bool)
+      changed_when: true
