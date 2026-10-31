@@ -2,22 +2,266 @@
 
 // 色は _base.scss のパレット差し替えで大半が片付くため、ここに書くのは
 // トークンでは表現できないもの（ギザギザのストライプ、角丸、ギザギザ画像）だけに限る。
+// 個別セレクタでの色の直書きは、上流の UI 変更で浮くので避ける。
 
-// この PR では「テーマが有効になっていることが画面で分かる」最小限に留めてある。
-// 全体の作り込みは後続の PR で行う。仕様の一次ソースは PR #19 の
-// app/javascript/styles/ikadon/diff.scss。
+// 仕様の一次ソースは PR #19 の app/javascript/styles/ikadon/diff.scss。
+// ただし v4.6 では既定レイアウトが layout-single-column に変わり、
+// マルチカラムは「上級者 UI」のオプトインになっている。PR #19 が未完のまま
+// 止まったシングルカラムが、現在のメイン画面である。
 
 @use 'image';
 @use 'vars';
 
-// 全体の地。グレーのギザギザ
-.ui {
-  background: vars.$gray-stripe;
-}
+// ---------------------------------------------------------------------------
+// 共通
+// ---------------------------------------------------------------------------
 
-// カラムヘッダー。ギザギザ画像＋上側だけ角丸
-.column-header {
-  border-radius: vars.$radius-outer vars.$radius-outer 0 0;
+// カラムヘッダーのギザギザ。文字は黒
+// カラムの種類ごとに色を変える。ロケールに依存する aria-label ではなく、
+// アイコンの種類（column-header__icon に付く icon-* クラス）で判定する。
+// ホーム = ライム（既定色）、通知 = 水色、ローカルタイムライン = 緑。
+.column-header,
+.column-back-button {
   background: image.$gray-jagged;
   color: var(--color-black);
+
+  a:hover {
+    background: rgb(0 0 0 / 50%);
+    color: var(--color-white);
+  }
+}
+
+.column-header:has(.icon-bell) {
+  background: image.$blue-jagged;
+}
+
+.column-header:has(.icon-globe) {
+  background: image.$yellow-jagged;
+}
+
+.column-header__button,
+.column-header__back-button {
+  background: none;
+  color: var(--color-black);
+  transition: vars.$transition;
+
+  &:hover,
+  &:focus {
+    background: rgb(0 0 0 / 50%);
+    color: var(--color-white);
+    outline: none;
+  }
+}
+
+// スクロール領域はダークのギザギザ
+.scrollable,
+.getting-started,
+.empty-column-indicator,
+.regeneration-indicator,
+.notification__filter-bar,
+.account__section-headline {
+  background: vars.$dark-stripe;
+}
+
+// 検索欄
+.search__input {
+  background: vars.$dark-stripe;
+
+  &:focus {
+    background: vars.$dark-stripe;
+  }
+}
+
+// アバターは角丸。ブースト時に class が変わるので両方指定する
+.account__avatar {
+  border-radius: vars.$radius-inner;
+}
+
+// トゥートの区切り線
+.status {
+  border-bottom-color: var(--color-grey-300);
+}
+
+.focusable:focus {
+  background: rgb(0 0 0 / 30%);
+}
+
+// 詳細表示は地を透かす
+.detailed-status,
+.detailed-status__action-bar {
+  background: none;
+}
+
+// DM は白の薄いオーバーレイ。
+// 上流の実装は --color-bg-brand-softest（ikadon ではオレンジを地の色に割り当てているため
+// 焦げ茶色になる）をそのまま乗せてしまい「浮いて見える」ので上書きする
+// （PR #19 のデザインレビューで machi-48 が指摘し、白いオーバーレイに決着した）。
+// v4.6 では .status.status-direct ではなく以下のクラスが使われる。
+.status__wrapper-direct,
+.notification-ungrouped--direct,
+.notification-group--direct {
+  background: rgb(255 255 255 / 10%);
+
+  &:focus {
+    background: rgb(255 255 255 / 10%);
+  }
+}
+
+.detailed-status__wrapper-direct {
+  .detailed-status,
+  .detailed-status__action-bar {
+    background: rgb(255 255 255 / 10%);
+  }
+}
+
+// お気に入りの星は、タイムライン上でアクティブにするとオレンジにする
+// （通知一覧の中のアイコンはライムのままにする。下の「通知アイコンの色分け」を参照）
+.icon-button.star-icon.active {
+  color: vars.$orange;
+}
+
+// アンケートのグラフ
+.poll__chart {
+  background: color-mix(in srgb, vars.$light-blue 70%, black);
+
+  &.leading {
+    background: vars.$light-blue;
+  }
+}
+
+// プロフィールのヘッダー画像が無い場合の地
+.account__header__image {
+  background: vars.$dark;
+}
+
+// 通知アイコンの色分け。
+// お気に入り（.notification-group--favourite）とブースト（--reblog）は、
+// 上流の --color-text-favourite-highlight / --color-text-success トークンが
+// _base.scss のパレット差し替えによってそのままライム・ミントグリーンになるため
+// 上書き不要。フォロー（--follow）だけ --color-text-brand（ikadon ではオレンジ）に
+// なってしまうので、水色に差し替える。
+// v4.6 の通知一覧は notifications_v2 の .notification-group__icon が使われ、
+// 旧 .notification__message は存在しない。
+.notification-group--follow .notification-group__icon,
+.notification-group--follow-request .notification-group__icon {
+  color: vars.$light-blue;
+}
+
+// ---------------------------------------------------------------------------
+// layout-multiple-columns（上級者 UI）
+// ---------------------------------------------------------------------------
+
+.layout-multiple-columns {
+  // 全体の地はグレーのギザギザ
+  .ui {
+    background: vars.$gray-stripe;
+  }
+
+  // カラムは上だけ角丸、スクロール領域は下だけ角丸
+  .column-header,
+  .column-back-button {
+    border-radius: vars.$radius-outer vars.$radius-outer 0 0;
+  }
+
+  .column > .scrollable,
+  .getting-started,
+  .empty-column-indicator {
+    border-radius: 0 0 vars.$radius-outer vars.$radius-outer;
+  }
+
+  .regeneration-indicator {
+    border-radius: vars.$radius-outer;
+  }
+
+  .search__input {
+    border-radius: vars.$radius-outer;
+  }
+
+  // ドロワー
+  .drawer__header {
+    overflow: hidden;
+    border-radius: vars.$radius-outer;
+    background: image.$pink-jagged;
+
+    a:hover {
+      background: rgb(0 0 0 / 50%);
+      color: var(--color-white);
+    }
+  }
+
+  .drawer__tab {
+    color: var(--color-black);
+  }
+
+  .drawer__inner {
+    background: vars.$dark-stripe;
+  }
+
+  .drawer__inner__mastodon {
+    background: image.$ink bottom / contain no-repeat;
+
+    img {
+      display: none;
+    }
+  }
+
+  .drawer__pager {
+    border-radius: vars.$radius-outer;
+  }
+
+  .column-link:hover {
+    background: vars.$orange-stripe;
+  }
+
+  // 「使い方」カラム（/deck/getting-started）。
+  // navigation-panel と、その兄弟要素の LinkFooter（インスタンス名やバージョン表記）が
+  // 同じ .column の直下に並んでいる。navigation-panel だけに背景を当てると
+  // LinkFooter がグレーのギザギザ地に取り残されて読めなくなるため、
+  // 親の .column 側に背景と角丸を当てる。他のカラムは column-header /
+  // scrollable が既に自前の背景を持っているので、.column に背景を足しても
+  // 見た目上は上書きされて実害はない（:has() でこのカラムだけに絞る）。
+  .column:has(.navigation-panel) {
+    border-radius: vars.$radius-outer;
+    background: vars.$dark-stripe;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// layout-single-column（v4.6 の既定レイアウト）
+// ---------------------------------------------------------------------------
+
+// シンプル UI は構造上、地を単色にした方が収まりが良い。
+// PR #19 のデザインレビューでそう結論が出ている。
+.layout-single-column {
+  .ui {
+    background: vars.$dark;
+  }
+
+  // 左右のパネルと中央カラムをダークのギザギザで塗る
+  .columns-area__panels__pane__inner,
+  .navigation-panel,
+  .compose-panel {
+    background: vars.$dark-stripe;
+  }
+
+  // シングルカラムでは角を丸めない
+  .column-header,
+  .column-back-button,
+  .column > .scrollable,
+  .getting-started,
+  .search__input {
+    border-radius: 0;
+  }
+
+  .column-link--transparent {
+    border-radius: 0;
+
+    &.active {
+      color: vars.$orange;
+    }
+
+    &:hover {
+      color: var(--color-white);
+    }
+  }
 }
