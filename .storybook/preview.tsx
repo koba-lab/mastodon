@@ -23,7 +23,7 @@ import { mockHandlers, unhandledRequestHandler } from '@/testing/api';
 
 import { modes } from './modes';
 
-import '../app/javascript/styles/application.scss';
+import '../app/javascript/styles/ikadon.scss';
 import './styles.css';
 
 // Disabling locales in Storybook as it's breaking with Vite 8.

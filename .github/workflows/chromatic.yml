@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: pathcheck
-    if: github.repository == 'mastodon/mastodon' && needs.pathcheck.outputs.changed == 'true'
+    if: github.repository == 'koba-lab/mastodon' && needs.pathcheck.outputs.changed == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -53,12 +53,24 @@ jobs:
 
       - name: Build Storybook
         run: yarn build-storybook
+        env:
+          # ikatodon: Chromatic に上げるビルドは ikadon の Story だけにする。
+          # 上流 Story を含めると、撮影対象外でも前回ビルドの BROKEN ステータスを
+          # 引き継ぎ続け、UI Tests が恒久的に赤くなる
+          # （detail: docs/ikadon-theme.md の「VRT (Chromatic)」節）
+          IKADON_STORIES_ONLY: '1'
 
+      # ikatodon: ビルドを ikadon の Story だけに絞っているため、このステップの
+      # 合否（errorCount）がそのまま「ikadon の Story が壊れていないか」を表す。
+      # 視覚差分（changeCount）ではジョブを落とさない — その判定は Chromatic 側の
+      # commit status (UI Tests) に委ね、人間が Chromatic の Web UI で見て承認する
       - name: Run Chromatic
         uses: chromaui/action@07791f8243f4cb2698bf4d00426baf4b2d1cb7e0 # v13
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
           zip: true
           storybookBuildDir: 'storybook-static'
-          exitOnceUploaded: true # Exit immediately after upload
           autoAcceptChanges: 'main' # Auto-accept changes on main branch only
+          exitZeroOnChanges: true
+          # ikatodon: exitOnceUploaded は付けない。付けるとアップロード直後に
+          # exit code 0 で終了し、Story の破損（exit code 2）を検出できなくなる

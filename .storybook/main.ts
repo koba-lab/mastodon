@@ -3,7 +3,16 @@ import { resolve } from 'node:path';
 import type { StorybookConfig } from '@storybook/react-vite';
 
 const config: StorybookConfig = {
-  stories: ['../app/javascript/**/*.stories.@(js|jsx|mjs|ts|tsx)'],
+  // ikatodon: VRT (Chromatic) 用に、ikadon の Story だけをビルドに含めたい場合が
+  // ある。上流 Story も一緒にアップロードすると、撮影対象外にした Story が
+  // 前回ビルドの BROKEN ステータスを引き継ぎ続け、UI Tests が恒久的に赤くなる
+  // ため（detail: docs/ikadon-theme.md の「VRT (Chromatic)」節）。
+  // 未設定時は上流と完全に同じ挙動。
+  stories: [
+    process.env.IKADON_STORIES_ONLY
+      ? '../app/javascript/**/*.ikadon.stories.@(ts|tsx)'
+      : '../app/javascript/**/*.stories.@(js|jsx|mjs|ts|tsx)',
+  ],
   addons: [
     '@storybook/addon-docs',
     '@storybook/addon-a11y',
