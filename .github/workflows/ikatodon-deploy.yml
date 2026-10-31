@@ -2,8 +2,8 @@ name: Deploy ikatodon
 
 # 本番 Web サーバーへのデプロイ (issue #876)。
 #
-# 現状は Phase 1 (デプロイ対象の存在確認 + ssh 到達性確認) のみを実装している。
-# 実際の checkout・compose 起動・nginx 切替は後続の PR (Ansible mastodon / nginx role) で追加する。
+# 現状は Phase 2 (存在確認・ssh 到達性確認・checkout・.env.production 配布・pull) まで
+# 実装している。up -d・ヘルスチェック・nginx との切替は後続の PR (nginx role) で追加する。
 #
 # セルフホストランナーは使わない (このフォークはパブリックリポジトリで、フォークからの PR で
 # 任意コードがサーバー上で実行され得るため)。
@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify:
+  deploy:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version }}
@@ -104,3 +104,14 @@ jobs:
         run: |
           set -euo pipefail
           ansible all -m ping --private-key ~/.ssh/ikatodon_deploy --vault-password-file ~/.ansible_vault_pass
+
+      - name: Run the mastodon role (checkout, override, .env.production, pull)
+        working-directory: ikatodon/ansible
+        env:
+          IKATODON_ENV_PRODUCTION: ${{ secrets.IKATODON_ENV_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          ansible-playbook playbooks/deploy.yml \
+            --private-key ~/.ssh/ikatodon_deploy \
+            --vault-password-file ~/.ansible_vault_pass \
+            -e "ikatodon_version=${VERSION}"

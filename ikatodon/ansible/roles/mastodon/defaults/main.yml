@@ -1,0 +1,8 @@
+# 実機の稼働中コンテナに対して次のコマンドで確認し、group_vars/all.yml で上書きすること
+# （infrastructure.md 10節参照）。
+#
+#   docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' <稼働中コンテナ名>
+#
+mastodon_compose_project_name: CHANGEME_confirm_on_the_real_host
+
+mastodon_dir: /home/mastodon/live

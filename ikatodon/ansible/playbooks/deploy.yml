@@ -1,0 +1,14 @@
+---
+# デプロイ (= ロールバックも同じ)。ikatodon_version に前バージョンのタグ名を渡せば
+# ロールバックになる。専用の切り戻し経路は持たない (infrastructure.md 参照)。
+#
+#   ansible-playbook playbooks/deploy.yml -e "ikatodon_version=v4.6.5"
+#
+# serial: 1 で1台ずつ処理する。現状は checkout・override 配布・.env.production 配布・
+# pull までを実装している。up -d・ヘルスチェック・nginx 切替は後続の PR で追加する。
+
+- name: Deploy ikatodon
+  hosts: all
+  serial: 1
+  roles:
+    - mastodon
