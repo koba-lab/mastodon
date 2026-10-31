@@ -1,0 +1,17 @@
+// ikadon はライト/ダークの区別を持たない単一固定配色のテーマ。
+
+// 当時の ikadon にはこの概念が存在せず、グレーのギザギザ地に暗いコンテンツ領域という
+// 単一の見た目だけがあった。そのため外観設定（ライト/ダーク/自動）を切り替えても
+// 同じ絵になるよう、ライト側のトークンもダーク側へ委譲している。
+
+// 上流の app/javascript/styles/mastodon/theme/_light.scss とはこの点だけが異なる。
+
+@use 'dark';
+
+@mixin tokens {
+  @include dark.tokens;
+}
+
+@mixin contrast-overrides {
+  @include dark.contrast-overrides;
+}

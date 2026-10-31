@@ -1,0 +1,57 @@
+// ikadon 固有の SCSS 変数。
+// PR #19 (koba-lab/mastodon) の app/javascript/styles/ikadon/variables.scss から移植し、
+// 変数名を kebab-case へ変換した。
+
+// 色トークン（--color-*）で表現できるものは _base.scss / _dark.scss 側に持たせている。
+// ここに残すのは、トークンでは表現できないグラデーションと、
+// 個別セレクタでしか使わない一点物の色だけ。
+
+// ギザギザのストライプ（45度の縞）
+$gray-stripe: repeating-linear-gradient(
+  45deg,
+  #c9c7c5,
+  #c9c7c5 10px,
+  #bdbbb9 0,
+  #bdbbb9 20px
+);
+$pink-stripe: repeating-linear-gradient(
+  45deg,
+  #f1317f,
+  #f1317f 10px,
+  #de2c6f 0,
+  #de2c6f 20px
+);
+$orange-stripe: repeating-linear-gradient(
+  45deg,
+  #e76615,
+  #e76615 10px,
+  #fc7218 0,
+  #fc7218 20px
+);
+$dark-stripe: repeating-linear-gradient(
+  45deg,
+  #1f1f1f,
+  #1f1f1f 10px,
+  #252525 0,
+  #252525 20px
+);
+
+// 一点物のアクセント色
+$blue: #1613e6;
+$blue-gray: #4f8794; // カラムヘッダーのアクティブアイコン
+$light-blue: #1dc8ef; // フォロー通知・アンケートのグラフ
+$green: #21ea80; // ブースト通知
+$mint-green: #89c997;
+$yellow: #c9f21b; // お気に入り（星）
+$purple: #9600ff; // ボタンのホバー
+$orange: #fd751d; // アクセント
+$orange-strong: #fe6703; // フローティングボタン
+$gray: #c4c2c0; // ボーダー
+$dark: #272727; // シングルカラムの地
+
+// 角丸。外側15px に対し内側は5px にする
+// （PR #19 のデザインレビューで確定した比率）
+$radius-outer: 15px;
+$radius-inner: 5px;
+
+$transition: all 100ms ease-in;

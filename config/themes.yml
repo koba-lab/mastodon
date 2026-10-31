@@ -1,2 +1,2 @@
 default: styles/application.scss
-# ikadon: styles/ikadon.scss
+ikadon: styles/ikadon.scss
