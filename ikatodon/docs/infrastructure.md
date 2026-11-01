@@ -305,6 +305,45 @@ curl -s -o /dev/null -w '%{http_code}\n' 'https://ika.queloud.net/api/v1/account
 - [Fake sign-ups with 'Automated protocol deliverability probe': Countermeasures](https://javahippie.net/mastodon/security/2026/09/11/mastodon-signup-spam.html)
 - [mastodon-lab incident 010: automated registration abuse](https://github.com/thanksstevenkim/mastodon-lab/blob/main/incidents/010-automated-registration-abuse-boomprotocolprobe.md)
 
+### 4.4 確認済み — 起動時に nginx が落ちて Web サーバー1台が4日間止まっていた（2026-10-27〜11-01）
+
+**起きたこと**: 2026-10-27 の ConoHa のメンテナンスで Web サーバーが再起動された際、片方の
+Web サーバーだけ nginx が起動せず、11-01 に気づいて手動で起動するまでの約4日間、そのサーバーは
+リクエストを受けられなかった。もう1台は動いていたため、サイト全体は落ちていない。ただ、DNS で
+停止中のサーバーに振られた利用者は、接続できないか、もう1台へのフォールバックで遅くなって
+いたはず。
+
+**原因**（実測: `/var/log/nginx/error.log` と `/var/log/syslog`）: もう使っていない
+`test.ika.queloud.net` のサイト設定が `sites-enabled` に残っており、その中で Wasabi の
+ホスト名 `s3.us-west-1.wasabisys.com` を upstream に書いていた。nginx はホスト名を
+`nginx -t` の時点で名前解決するため、起動直後でまだ DNS が使えないと
+`host not found in upstream` で `ExecStartPre` の `nginx -t` が失敗し、無関係な
+`ika.queloud.net` を含めて nginx 全体が起動しなかった。
+
+```
+nginx: [emerg] host not found in upstream "s3.us-west-1.wasabisys.com" in /etc/nginx/sites-enabled/test.ika.queloud.net:138
+nginx: configuration file /etc/nginx/nginx.conf test failed
+systemd[1]: nginx.service: Failed with result 'exit-code'.
+```
+
+- `nginx.service` は `enabled` で、自動起動の設定に漏れは無かった
+- もう1台も同じ `test.ika.queloud.net` を有効にしていた。起動時に nginx より先に DNS が
+  使えるようになっていたため、たまたま助かっただけで、次の再起動では逆になり得た
+- `systemctl status` は `failed` のまま4日間誰も気づかなかった。nginx プロセスの死活監視が
+  無いことは 7節の監視の課題と同じ根を持つ
+
+**対処**（2026-11-01、2台とも）: `sites-enabled/test.ika.queloud.net` のシンボリックリンクを
+削除した（`sites-available` の実ファイルは残している）。あわせて
+`conflicting server name "default_server"` の warning も消えた。
+
+対処後に `sudo nginx -T | grep -nE 'proxy_pass|^\s*server\s'` で、upstream と `proxy_pass` が
+`127.0.0.1` と IP 直書きだけになり、起動時の名前解決に依存する箇所が無いことを確認した。
+
+**今後の注意**: nginx の設定に `proxy_pass` や `upstream` でホスト名を書くと、起動時の DNS の
+状態次第で nginx 全体が起動しなくなる。ホスト名が必要な場合は `resolver` と変数を使った
+`proxy_pass` で実行時解決にするか、IP で書くこと。使わなくなったサイト設定は
+`sites-enabled` から外しておくこと。
+
 ---
 
 ## 5. デプロイ
@@ -404,20 +443,21 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 
 ### 9.1 確認済み
 
-| #   | 問題                                                                                                                                                             |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している。実行できない                                                      |
-| 2   | 同 compose の `PRIVATE_IP` デフォルトが `0.0.0.0`。設定を抜くと PostgreSQL が全世界に開く                                                                        |
-| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                                                                                                |
-| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                     |
-| 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                  |
-| 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                   |
-| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている                                                                                                        |
-| 8   | イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する                                                                                     |
-| 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                       |
-| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                           |
-| 11  | `.env.production` にバックアップが無い                                                                                                                           |
-| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.2節） |
+| #   | 問題                                                                                                                                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している。実行できない                                                                                                |
+| 2   | 同 compose の `PRIVATE_IP` デフォルトが `0.0.0.0`。設定を抜くと PostgreSQL が全世界に開く                                                                                                                  |
+| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                                                                                                                                          |
+| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                                                               |
+| 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                                                            |
+| 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                                                             |
+| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている                                                                                                                                                  |
+| 8   | イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する                                                                                                                               |
+| 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                                                                 |
+| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                                                                     |
+| 11  | `.env.production` にバックアップが無い                                                                                                                                                                     |
+| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.2節）                                           |
+| 17  | 使っていない `test.ika.queloud.net` の設定にあった Wasabi のホスト名が原因で、再起動時に nginx が起動せず、Web サーバー1台が約4日間止まっていた。2026-11-01 に `sites-enabled` から外して対処済み（4.4節） |
 
 ### 9.2 要確認
 
