@@ -253,17 +253,7 @@ nginx の設定ファイルはホストにあり、このリポジトリでは�
 # API 経由の新規登録を遮断する（ikatodon/docs/infrastructure.md 4.3節）
 # GET /api/v1/accounts（アカウントの一括取得）は通す
 # Rails は末尾スラッシュを無視するため、/api/v1/accounts/ も同じく塞ぐ
-location = /api/v1/accounts {
-  default_type application/json;
-
-  if ($request_method = POST) {
-    return 403 '{"error":"このサーバーではアプリからの新規登録を受け付けていません。https://ika.queloud.net/auth/sign_up から登録してください。"}';
-  }
-
-  try_files $uri @proxy;
-}
-
-location = /api/v1/accounts/ {
+location ~ ^/api/v1/accounts/?$ {
   default_type application/json;
 
   if ($request_method = POST) {
@@ -274,11 +264,14 @@ location = /api/v1/accounts/ {
 }
 ```
 
-- `location =` の完全一致なので、`/api/v1/accounts/:id/follow` などの下位パスには影響しない。完全一致は
-  正規表現の location より優先されるため、既存設定の並び順にも左右されない
-- 末尾スラッシュ付き（`/api/v1/accounts/`）も Rails では同じ登録処理に届くため、2つ書いている。
-  API のルートは `format: false`（`config/routes/api.rb`）なので `.json` 付きの別名は無い。
-  スラッシュの重複やパーセントエンコードは nginx が location 照合の前に正規化する
+- `$` で終端を固定しているので、`/api/v1/accounts/:id/follow` などの下位パスには影響しない
+- 末尾スラッシュ付き（`/api/v1/accounts/`）も Rails では同じ登録処理に届くため、`/?` で両方を
+  受けている。API のルートは `format: false`（`config/routes/api.rb`）なので `.json` 付きの
+  別名は無い。スラッシュの重複やパーセントエンコードは nginx が location 照合の前に正規化する
+- 正規表現の location は書いた順に評価され、最初に一致したものが使われる。2026-11 時点の設定で
+  他の正規表現 location は `^/(emoji|packs|system/accounts/avatars|system/media_attachments/files)`
+  だけで、`/api/v1/accounts` とは重ならないため、置く位置は問わない。今後 `/api` に一致する
+  正規表現 location を足す場合は、これより後ろに置くこと
 - `try_files` の名前付き location（`@proxy`）は、既存の `location /` と同じものに合わせる
 - Mastodon のアプリは API エラーの `error` をそのまま表示するため、JSON で理由を返している
 - `if` の中は `return` だけなので、nginx の「if is evil」には当たらない
