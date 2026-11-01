@@ -212,6 +212,90 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 ⚠️ `nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残っている疑いがある（既知の問題
 #14）。`sudo nginx -T` で確認する。
 
+### 4.3 決定事項 — API 経由の新規登録を nginx で遮断する（2026-11-01）
+
+**決定**: `POST /api/v1/accounts`（アプリ・API からのアカウント作成）を nginx で 403 にする。
+Web の登録フォーム（`/auth/sign_up` → `POST /auth`）は従来どおり使える。上流コードには
+手を入れない（`CLAUDE.md` の最重要方針）ため、アプリ側ではなくホストの nginx で止める。
+
+**経緯**: 2026年9月ごろから、Mastodon インスタンス全般に自動の偽登録が来ている。イカトドンでも
+10月下旬から急増し、30日間の新規ユーザーが 559 件（前期比 +710%）になった。特徴は以下で、
+他インスタンスの報告と一致する。
+
+- ユーザー名が `bp` + 16桁の16進（例: `bp4be6f4d2bd7a9240`）
+- メールアドレスは icloud / au / ezweb / gmail などの実在の個人アドレスで、オーナーが確認
+  したところ無関係な第三者のものだった。誰も認証しない
+- 登録ごとに IP が異なる（住宅用プロキシ経由と報告されている）ため、IP 単位のレート制限が
+  効かない
+- サインアップソースが「Mastodon Web App」「Fediverse」「Web」など名前を変えた OAuth アプリ
+  で、ほぼ全件が API 経由
+- 目的は不明。実害は、知らない人に確認メールが送られ、SES の苦情率と送信元ドメインの評価が
+  下がること
+
+未認証アカウント自体は `Scheduler::UserCleanupScheduler` が確認メール送信から7日後に削除
+する（`UNCONFIRMED_ACCOUNTS_MAX_AGE_DAYS = 7`）ため、手動で消す必要はない。問題はメールが
+送られることの方で、それを止めるには登録そのものを入口で止めるしかない。
+
+**検討して採らなかった案**
+
+| 案                                           | 不採用の理由                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------ |
+| 承認制にする                                 | v4.6 では承認前に確認メールが送られるため、メール送信が止まらない        |
+| hCaptcha                                     | 確認リンクを踏んだ後に出るため、登録とメール送信を防げない               |
+| メールドメインブロック                       | 日本のキャリアドメインを塞ぐことになり、イカトドンの利用者層では使えない |
+| ユーザー名の DB 制約・アプリ名ブロックリスト | 独自パッチになる。攻撃側がパターンを変えれば効かなくなる                 |
+| 新規登録の一時停止                           | 正規の登録者まで止まる。API 遮断なら Web からの登録は残せる              |
+
+**設定**（Web サーバー2台の両方、`ika.queloud.net` の `server { listen 443 ... }` 内に置く。
+nginx の設定ファイルはホストにあり、このリポジトリでは管理していない）
+
+```nginx
+# API 経由の新規登録を遮断する（ikatodon/docs/infrastructure.md 4.3節）
+# GET /api/v1/accounts（アカウントの一括取得）は通す
+location = /api/v1/accounts {
+  default_type application/json;
+
+  if ($request_method = POST) {
+    return 403 '{"error":"このサーバーではアプリからの新規登録を受け付けていません。https://ika.queloud.net/auth/sign_up から登録してください。"}';
+  }
+
+  try_files $uri @proxy;
+}
+```
+
+- `location =` の完全一致なので、`/api/v1/accounts/:id/follow` などの下位パスには影響しない
+- `try_files` の名前付き location（`@proxy`）は、既存の `location /` と同じものに合わせる
+- Mastodon のアプリは API エラーの `error` をそのまま表示するため、JSON で理由を返している
+- `if` の中は `return` だけなので、nginx の「if is evil」には当たらない
+
+**反映と確認**
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+
+# 403 と JSON が返ること
+curl -s -w '\n%{http_code}\n' -X POST https://ika.queloud.net/api/v1/accounts
+
+# GET は通ること（403 以外が返る）
+curl -s -o /dev/null -w '%{http_code}\n' 'https://ika.queloud.net/api/v1/accounts?id[]=1'
+```
+
+反映後は、管理画面ダッシュボードの「新規ユーザー」と「サインアップソース」で、アプリ名
+経由の登録が止まったことを確認する。
+
+**影響**: 公式アプリなどアプリ内からの新規登録はできなくなり、Web から登録してもらう形に
+なる。既存ユーザーのログイン・アプリ利用（`/api/v1/apps` や OAuth）には影響しない。
+
+**見直す条件**: 上流 [PR #40690](https://github.com/mastodon/mastodon/pull/40690)（承認が
+済むまで確認メールの送信を保留するサーバー設定。2026-10-15 に `main` へマージ、v4.6.10 には
+未収録）が、追随するバージョンに入ったら、「承認制 + 確認メール保留」への切り替えを検討し、
+この `location` を外すか判断する。
+
+参考:
+
+- [Fake sign-ups with 'Automated protocol deliverability probe': Countermeasures](https://javahippie.net/mastodon/security/2026/09/11/mastodon-signup-spam.html)
+- [mastodon-lab incident 010: automated registration abuse](https://github.com/thanksstevenkim/mastodon-lab/blob/main/incidents/010-automated-registration-abuse-boomprotocolprobe.md)
+
 ---
 
 ## 5. デプロイ
