@@ -212,6 +212,138 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 ⚠️ `nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残っている疑いがある（既知の問題
 #14）。`sudo nginx -T` で確認する。
 
+### 4.3 決定事項 — API 経由の新規登録を nginx で遮断する（2026-11-01）
+
+**決定**: `POST /api/v1/accounts`（アプリ・API からのアカウント作成）を nginx で 403 にする。
+Web の登録フォーム（`/auth/sign_up` → `POST /auth`）は従来どおり使える。上流コードには
+手を入れない（`CLAUDE.md` の最重要方針）ため、アプリ側ではなくホストの nginx で止める。
+
+**経緯**: 2026年9月ごろから、Mastodon インスタンス全般に自動の偽登録が来ている。イカトドンでも
+10月下旬から急増し、30日間の新規ユーザーが 559 件（前期比 +710%）になった。特徴は以下で、
+他インスタンスの報告と一致する。
+
+- ユーザー名が `bp` + 16桁の16進（例: `bp4be6f4d2bd7a9240`）
+- メールアドレスは icloud / au / ezweb / gmail などの実在の個人アドレスで、オーナーが確認
+  したところ無関係な第三者のものだった。誰も認証しない
+- 登録ごとに IP が異なる（住宅用プロキシ経由と報告されている）ため、IP 単位のレート制限が
+  効かない
+- サインアップソースが「Mastodon Web App」「Fediverse」「Web」など名前を変えた OAuth アプリ
+  で、ほぼ全件が API 経由
+- 目的は不明。実害は、知らない人に確認メールが送られ、SES の苦情率と送信元ドメインの評価が
+  下がること
+
+未認証アカウント自体は `Scheduler::UserCleanupScheduler` が確認メール送信から7日後に削除
+する（`UNCONFIRMED_ACCOUNTS_MAX_AGE_DAYS = 7`）ため、手動で消す必要はない。問題はメールが
+送られることの方で、それを止めるには登録そのものを入口で止めるしかない。
+
+**検討して採らなかった案**
+
+| 案                                           | 不採用の理由                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------ |
+| 承認制にする                                 | v4.6 では承認前に確認メールが送られるため、メール送信が止まらない        |
+| hCaptcha                                     | 確認リンクを踏んだ後に出るため、登録とメール送信を防げない               |
+| メールドメインブロック                       | 日本のキャリアドメインを塞ぐことになり、イカトドンの利用者層では使えない |
+| ユーザー名の DB 制約・アプリ名ブロックリスト | 独自パッチになる。攻撃側がパターンを変えれば効かなくなる                 |
+| 新規登録の一時停止                           | 正規の登録者まで止まる。API 遮断なら Web からの登録は残せる              |
+
+**設定**（Web サーバー2台の両方、`ika.queloud.net` の `server { listen 443 ... }` 内に置く。
+nginx の設定ファイルはホストにあり、このリポジトリでは管理していない）
+
+```nginx
+# API 経由の新規登録を遮断する（ikatodon/docs/infrastructure.md 4.3節）
+# GET /api/v1/accounts（アカウントの一括取得）は通す
+# Rails は末尾スラッシュを無視するため、/api/v1/accounts/ も同じく塞ぐ
+location ~ ^/api/v1/accounts/?$ {
+  default_type application/json;
+
+  if ($request_method = POST) {
+    return 403 '{"error":"このサーバーではアプリからの新規登録を受け付けていません。https://ika.queloud.net/auth/sign_up から登録してください。"}';
+  }
+
+  try_files $uri @proxy;
+}
+```
+
+- `$` で終端を固定しているので、`/api/v1/accounts/:id/follow` などの下位パスには影響しない
+- 末尾スラッシュ付き（`/api/v1/accounts/`）も Rails では同じ登録処理に届くため、`/?` で両方を
+  受けている。API のルートは `format: false`（`config/routes/api.rb`）なので `.json` 付きの
+  別名は無い。スラッシュの重複やパーセントエンコードは nginx が location 照合の前に正規化する
+- 正規表現の location は書いた順に評価され、最初に一致したものが使われる。2026-11 時点の設定で
+  他の正規表現 location は `^/(emoji|packs|system/accounts/avatars|system/media_attachments/files)`
+  だけで、`/api/v1/accounts` とは重ならないため、置く位置は問わない。今後 `/api` に一致する
+  正規表現 location を足す場合は、これより後ろに置くこと
+- `try_files` の名前付き location（`@proxy`）は、既存の `location /` と同じものに合わせる
+- Mastodon のアプリは API エラーの `error` をそのまま表示するため、JSON で理由を返している
+- `if` の中は `return` だけなので、nginx の「if is evil」には当たらない
+
+**反映と確認**
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+
+# 両方とも 403 と JSON が返ること
+curl -s -w '\n%{http_code}\n' -X POST https://ika.queloud.net/api/v1/accounts
+curl -s -w '\n%{http_code}\n' -X POST https://ika.queloud.net/api/v1/accounts/
+
+# GET は通ること（403 以外が返る）
+curl -s -o /dev/null -w '%{http_code}\n' 'https://ika.queloud.net/api/v1/accounts?id[]=1'
+```
+
+反映後は、管理画面ダッシュボードの「新規ユーザー」と「サインアップソース」で、アプリ名
+経由の登録が止まったことを確認する。
+
+**影響**: 公式アプリなどアプリ内からの新規登録はできなくなり、Web から登録してもらう形に
+なる。既存ユーザーのログイン・アプリ利用（`/api/v1/apps` や OAuth）には影響しない。
+
+**見直す条件**: 上流 [PR #40690](https://github.com/mastodon/mastodon/pull/40690)（承認が
+済むまで確認メールの送信を保留するサーバー設定。2026-10-15 に `main` へマージ、v4.6.10 には
+未収録）が、追随するバージョンに入ったら、「承認制 + 確認メール保留」への切り替えを検討し、
+この `location` を外すか判断する。
+
+参考:
+
+- [Fake sign-ups with 'Automated protocol deliverability probe': Countermeasures](https://javahippie.net/mastodon/security/2026/09/11/mastodon-signup-spam.html)
+- [mastodon-lab incident 010: automated registration abuse](https://github.com/thanksstevenkim/mastodon-lab/blob/main/incidents/010-automated-registration-abuse-boomprotocolprobe.md)
+
+### 4.4 確認済み — 起動時に nginx が落ちて Web サーバー1台が4日間止まっていた（2026-10-27〜11-01）
+
+**起きたこと**: 2026-10-27 の ConoHa のメンテナンスで Web サーバーが再起動された際、片方の
+Web サーバーだけ nginx が起動せず、11-01 に気づいて手動で起動するまでの約4日間、そのサーバーは
+リクエストを受けられなかった。もう1台は動いていたため、サイト全体は落ちていない。ただ、DNS で
+停止中のサーバーに振られた利用者は、接続できないか、もう1台へのフォールバックで遅くなって
+いたはず。
+
+**原因**（実測: `/var/log/nginx/error.log` と `/var/log/syslog`）: もう使っていない
+`test.ika.queloud.net` のサイト設定が `sites-enabled` に残っており、その中で Wasabi の
+ホスト名 `s3.us-west-1.wasabisys.com` を upstream に書いていた。nginx はホスト名を
+`nginx -t` の時点で名前解決するため、起動直後でまだ DNS が使えないと
+`host not found in upstream` で `ExecStartPre` の `nginx -t` が失敗し、無関係な
+`ika.queloud.net` を含めて nginx 全体が起動しなかった。
+
+```
+nginx: [emerg] host not found in upstream "s3.us-west-1.wasabisys.com" in /etc/nginx/sites-enabled/test.ika.queloud.net:138
+nginx: configuration file /etc/nginx/nginx.conf test failed
+systemd[1]: nginx.service: Failed with result 'exit-code'.
+```
+
+- `nginx.service` は `enabled` で、自動起動の設定に漏れは無かった
+- もう1台も同じ `test.ika.queloud.net` を有効にしていた。起動時に nginx より先に DNS が
+  使えるようになっていたため、たまたま助かっただけで、次の再起動では逆になり得た
+- `systemctl status` は `failed` のまま4日間誰も気づかなかった。nginx プロセスの死活監視が
+  無いことは 7節の監視の課題と同じ根を持つ
+
+**対処**（2026-11-01、2台とも）: `sites-enabled/test.ika.queloud.net` のシンボリックリンクを
+削除した（`sites-available` の実ファイルは残している）。あわせて
+`conflicting server name "default_server"` の warning も消えた。
+
+対処後に `sudo nginx -T | grep -nE 'proxy_pass|^\s*server\s'` で、upstream と `proxy_pass` が
+`127.0.0.1` と IP 直書きだけになり、起動時の名前解決に依存する箇所が無いことを確認した。
+
+**今後の注意**: nginx の設定に `proxy_pass` や `upstream` でホスト名を書くと、起動時の DNS の
+状態次第で nginx 全体が起動しなくなる。ホスト名が必要な場合は `resolver` と変数を使った
+`proxy_pass` で実行時解決にするか、IP で書くこと。使わなくなったサイト設定は
+`sites-enabled` から外しておくこと。
+
 ---
 
 ## 5. デプロイ
@@ -311,20 +443,21 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 
 ### 9.1 確認済み
 
-| #   | 問題                                                                                                                                                             |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している。実行できない                                                      |
-| 2   | 同 compose の `PRIVATE_IP` デフォルトが `0.0.0.0`。設定を抜くと PostgreSQL が全世界に開く                                                                        |
-| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                                                                                                |
-| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                     |
-| 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                  |
-| 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                   |
-| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている                                                                                                        |
-| 8   | イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する                                                                                     |
-| 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                       |
-| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                           |
-| 11  | `.env.production` にバックアップが無い                                                                                                                           |
-| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.2節） |
+| #   | 問題                                                                                                                                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `ikatodon-db/deploy-postgres.yml` が存在しない `docker-compose.postgres16.yml` を参照している。実行できない                                                                                                |
+| 2   | 同 compose の `PRIVATE_IP` デフォルトが `0.0.0.0`。設定を抜くと PostgreSQL が全世界に開く                                                                                                                  |
+| 3   | post deployment migration を「1台目だけ新しい」状態で実行している                                                                                                                                          |
+| 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                                                               |
+| 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                                                            |
+| 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                                                             |
+| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている                                                                                                                                                  |
+| 8   | イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する                                                                                                                               |
+| 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                                                                 |
+| 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                                                                     |
+| 11  | `.env.production` にバックアップが無い                                                                                                                                                                     |
+| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.2節）                                           |
+| 17  | 使っていない `test.ika.queloud.net` の設定にあった Wasabi のホスト名が原因で、再起動時に nginx が起動せず、Web サーバー1台が約4日間止まっていた。2026-11-01 に `sites-enabled` から外して対処済み（4.4節） |
 
 ### 9.2 要確認
 
