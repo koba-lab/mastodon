@@ -252,7 +252,18 @@ nginx の設定ファイルはホストにあり、このリポジトリでは�
 ```nginx
 # API 経由の新規登録を遮断する（ikatodon/docs/infrastructure.md 4.3節）
 # GET /api/v1/accounts（アカウントの一括取得）は通す
+# Rails は末尾スラッシュを無視するため、/api/v1/accounts/ も同じく塞ぐ
 location = /api/v1/accounts {
+  default_type application/json;
+
+  if ($request_method = POST) {
+    return 403 '{"error":"このサーバーではアプリからの新規登録を受け付けていません。https://ika.queloud.net/auth/sign_up から登録してください。"}';
+  }
+
+  try_files $uri @proxy;
+}
+
+location = /api/v1/accounts/ {
   default_type application/json;
 
   if ($request_method = POST) {
@@ -263,7 +274,11 @@ location = /api/v1/accounts {
 }
 ```
 
-- `location =` の完全一致なので、`/api/v1/accounts/:id/follow` などの下位パスには影響しない
+- `location =` の完全一致なので、`/api/v1/accounts/:id/follow` などの下位パスには影響しない。完全一致は
+  正規表現の location より優先されるため、既存設定の並び順にも左右されない
+- 末尾スラッシュ付き（`/api/v1/accounts/`）も Rails では同じ登録処理に届くため、2つ書いている。
+  API のルートは `format: false`（`config/routes/api.rb`）なので `.json` 付きの別名は無い。
+  スラッシュの重複やパーセントエンコードは nginx が location 照合の前に正規化する
 - `try_files` の名前付き location（`@proxy`）は、既存の `location /` と同じものに合わせる
 - Mastodon のアプリは API エラーの `error` をそのまま表示するため、JSON で理由を返している
 - `if` の中は `return` だけなので、nginx の「if is evil」には当たらない
@@ -273,8 +288,9 @@ location = /api/v1/accounts {
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 
-# 403 と JSON が返ること
+# 両方とも 403 と JSON が返ること
 curl -s -w '\n%{http_code}\n' -X POST https://ika.queloud.net/api/v1/accounts
+curl -s -w '\n%{http_code}\n' -X POST https://ika.queloud.net/api/v1/accounts/
 
 # GET は通ること（403 以外が返る）
 curl -s -o /dev/null -w '%{http_code}\n' 'https://ika.queloud.net/api/v1/accounts?id[]=1'
