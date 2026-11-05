@@ -9,11 +9,11 @@ module Mastodon
     end
 
     def minor
-      6
+      7
     end
 
     def patch
-      10
+      5
     end
 
     def default_prerelease

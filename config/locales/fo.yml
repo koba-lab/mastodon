@@ -1752,7 +1752,6 @@ fo:
     next: Næsta
     older: Eldri
     prev: Fyrra
-    truncate: "&hellip;"
   polls:
     errors:
       already_voted: Tú hevur longu atkvøtt í hesi atkvøðugreiðsluni

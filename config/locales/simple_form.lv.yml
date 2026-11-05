@@ -292,6 +292,7 @@ lv:
       notification_emails:
         appeal: Kāds pārsūdz satura pārraudzītāja lēmumu
         digest: Sūtīt kopsavilkumu e-pastus
+        end_of_support: Pašreizējā Mastodon versija tuvojas atbalsta beigām
         favourite: Kāds izlasē pievienoja Tavu ierakstu
         follow: Kāds uzsāka Tev sekot
         follow_request: Kāds vēlas Tev sekot
