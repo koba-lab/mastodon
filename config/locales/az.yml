@@ -13,6 +13,7 @@ az:
       destroyed_msg: Moderasiya notu uğurla məhv edildi!
     accounts:
       delete: Veriləri sil
+      deletion_irreversible: Bu hesabın veriləri geri qaytarılmayacaq şəkildə silinib.
       destroyed_msg: "%{username} - verilərinin tezliklə silinməsi növbədədir"
       display_name: Ekran adı
       followers: İzləyicilər

@@ -64,9 +64,12 @@ de:
       custom: Angepasst
       delete: Daten löschen
       deleted: Gelöscht
+      deletion_irreversible: Diese Kontodaten wurden unwiderruflich gelöscht.
+      deletion_reversible_hint_html: Dieses Konto wurde zum Löschen vorgemerkt und die Daten werden am %{date} vollständig entfernt werden.
       demote: Zurückstufen
       destroyed_msg: Die Daten von %{username} befinden sich nun in der Warteschlange und werden in Kürze gelöscht
       disable: Einfrieren
+      disable_sign_in_token: Sicherheitscode für die Anmeldung vorübergehend deaktivieren
       disable_sign_in_token_auth: E-Mail-Token-Authentisierung deaktivieren
       disable_two_factor_authentication: Zwei-Faktor-Authentisierung (2FA) deaktivieren
       disabled: Eingefroren
@@ -76,6 +79,7 @@ de:
       email: E-Mail-Adresse
       email_status: Status der E-Mail-Adresse
       enable: Freischalten
+      enable_sign_in_token: Sicherheitscode für die Anmeldung aktivieren
       enable_sign_in_token_auth: E-Mail-Token-Authentisierung aktivieren
       enabled: Freigegeben
       enabled_msg: Konto von %{username} erfolgreich freigegeben
@@ -248,7 +252,7 @@ de:
         update_user_role: Rolle bearbeiten
         update_username_block: Regel für Profilnamen aktualisieren
       actions:
-        approve_appeal_html: "%{name} genehmigte den Einspruch gegen eine Moderationsentscheidung von %{target}"
+        approve_appeal_html: "%{name} genehmigte den Einspruch gegen eine Moderationsmaßnahme von %{target}"
         approve_user_html: "%{name} genehmigte die Registrierung von %{target}"
         assigned_to_self_report_html: "%{name} wies sich die Meldung %{target} selbst zu"
         change_email_user_html: "%{name} änderte die E-Mail-Adresse von %{target}"
@@ -291,10 +295,14 @@ de:
         enable_relay_html: "%{name} aktivierte das Relais %{target}"
         enable_sign_in_token_auth_user_html: "%{name} aktivierte die E-Mail-Token-Authentisierung für %{target}"
         enable_user_html: "%{name} aktivierte den Zugang für %{target}"
+        listable_tag_html: darf vorgeschlagen werden
         memorialize_account_html: "%{name} wandelte das Konto von %{target} in eine Gedenkseite um"
+        not_listable_tag_html: wird nicht vorgeschlagen
+        not_trendable_tag_html: erscheint nicht unter Trends
+        not_usable_tag_html: darf nicht verwendet werden
         promote_user_html: "%{name} beförderte %{target}"
         publish_terms_of_service_html: "%{name} aktualisierte die Nutzungsbedingungen"
-        reject_appeal_html: "%{name} lehnte den Einspruch gegen eine Moderationsentscheidung von %{target} ab"
+        reject_appeal_html: "%{name} lehnte den Einspruch gegen eine Moderationsmaßnahme von %{target} ab"
         reject_user_html: "%{name} hat die Registrierung von %{target} abgelehnt"
         remove_avatar_user_html: "%{name} entfernte das Profilbild von %{target}"
         reopen_report_html: "%{name} öffnete die Meldung %{target} wieder"
@@ -304,6 +312,7 @@ de:
         sensitive_account_html: "%{name} versah die Medien von %{target} mit einer Inhaltswarnung"
         silence_account_html: "%{name} schaltete das Konto von %{target} stumm"
         suspend_account_html: "%{name} sperrte das Konto von %{target}"
+        trendable_tag_html: darf unter Trends erscheinen
         unassigned_report_html: "%{name} entfernte die Zuweisung der Meldung %{target}"
         unblock_email_account_html: "%{name} entsperrte die E-Mail-Adresse von %{target}"
         unsensitive_account_html: "%{name} hob die Inhaltswarnung für Medien von %{target} auf"
@@ -316,8 +325,10 @@ de:
         update_ip_block_html: "%{name} änderte eine IP-Regel für %{target}"
         update_report_html: "%{name} überarbeitete die Meldung %{target}"
         update_status_html: "%{name} überarbeitete einen Beitrag von %{target}"
+        update_tag_html: "%{name} änderte %{target} zu: "
         update_user_role_html: "%{name} änderte die Rolle von %{target}"
         update_username_block_html: "%{name} aktualisierte eine Regel für Profilnamen mit %{target}"
+        usable_tag_html: darf verwendet werden;
       deleted_account: gelöschtes Konto
       empty: Protokolle nicht gefunden.
       filter_by_action: Nach Aktion filtern
@@ -499,7 +510,7 @@ de:
       resolved_dns_records_hint_html: Die Domain wird zu den folgenden MX-Domains aufgelöst, die für die Annahme von E-Mails zuständig sind. Das Sperren einer MX-Domain sperrt Anmeldungen aller E-Mail-Adressen, die dieselbe MX-Domain verwenden, auch wenn die sichtbare Domain anders lautet. <strong>Achte daher darauf, keine großen E-Mail-Anbieter versehentlich zu sperren.</strong>
       resolved_through_html: Durch %{domain} aufgelöst
       search: Suchen
-      title: Gesperrte E-Mail-Domains
+      title: E-Mail-Domains
     email_subscriptions:
       accounts:
         account: Konto
@@ -732,6 +743,8 @@ de:
       new:
         title: Neue IP-Regel erstellen
       no_ip_block_selected: Keine IP-Regeln wurden geändert, weil keine ausgewählt wurde(n)
+      reset: Zurücksetzen
+      search: Suchen
       title: IP-Regeln
     relationships:
       title: Beziehungen von %{acct}
@@ -1006,13 +1019,17 @@ de:
       critical_update: Kritisch — bitte zügig aktualisieren
       description: Es wird empfohlen, deine Mastodon-Installation auf dem aktuellen Stand zu halten, um von den neuesten Fehlerkorrekturen und Funktionen zu profitieren. Darüber hinaus ist es wichtig, Mastodon zeitnah zu aktualisieren, um Sicherheitslücken zu schließen. Aus diesen Gründen prüft Mastodon alle 30 Minuten auf Updates und du wirst deinen Einstellungen entsprechend per E-Mail informiert.
       documentation_link: Mehr erfahren
+      nearing_eol: Der aktuelle Branch wird ab dem %{date} nicht mehr unterstützt. Bitte ziehe eine Aktualisierung in Erwägung.
       release_notes: Versionshinweise
+      supported_until: Support endet am %{date}
       title: Verfügbare Updates
       type: Art
       types:
         major: Hauptversion
         minor: Nebenversion
         patch: Revision — Fehlerkorrekturen und einfach zu implementierende Änderungen
+      unsupported_branch: Der aktuelle Branch wird nicht mehr unterstützt. Bitte führe so bald wie möglich eine Aktualisierung durch.
+      unsupported_since: Nicht mehr unterstützt seit %{date}
       version: Version
     statuses:
       account: Autor*in
@@ -1278,6 +1295,15 @@ de:
     auto_close_registrations:
       body: Aufgrund fehlender Aktivität von Moderator*innen müssen neue Registrierungen auf %{instance} jetzt manuell genehmigt werden. Dies wurde automatisch umgestellt, damit %{instance} nicht als Plattform für Böswillige missbraucht werden kann. Du kannst jederzeit auf uneingeschränkte Registrierungen zurückwechseln.
       subject: Registrierungen auf %{instance} müssen ab jetzt manuell genehmigt werden (automatisch umgestellt)
+    end_of_support_out_of_support_warning:
+      body: Die derzeitige Mastodon-Version wird nicht mehr unterstützt. Bitte führe so bald wie möglich eine Aktualisierung durch!
+      subject: Mastodon %{branch} auf %{instance} wird nicht länger unterstützt!
+    end_of_support_three_months_warning:
+      body: Die derzeitige Mastodon-Version wird in 3 Monaten nicht mehr unterstützt. Bitte führe so bald wie möglich eine Aktualisierung auf einen neueren Branch durch.
+      subject: Mastodon %{branch} auf %{instance} wird in 3 Monaten nicht mehr unterstützt.
+    end_of_support_two_weeks_warning:
+      body: Die derzeitige Mastodon-Version wird in 2 Wochen nicht mehr unterstützt. Bitte führe so bald wie möglich eine Aktualisierung auf einen neueren Branch durch.
+      subject: Mastodon %{branch} auf %{instance} wird in 2 Wochen nicht mehr unterstützt.
     new_appeal:
       actions:
         delete_statuses: das Löschen der Beiträge
@@ -1576,6 +1602,7 @@ de:
       content: Wir bitten um Verzeihung, aber etwas ist bei uns schiefgegangen.
       title: Diese Seite enthält einen Fehler
     '503': Die Seite konnte wegen eines temporären Serverfehlers nicht angezeigt werden.
+    go_home: Zur Startseite
     noscript_html: Bitte aktiviere JavaScript, um das Webinterface von Mastodon zu verwenden. Alternativ kannst du auch eine der <a href="%{apps_path}">nativen Apps</a> für Mastodon verwenden.
   existing_username_validator:
     not_found: kann kein lokales Konto mit diesem Profilnamen finden
@@ -1672,6 +1699,7 @@ de:
       incompatible_type: Inkompatibel mit dem ausgewählten Importtyp
       invalid_csv_file: 'Ungültige CSV-Datei. Fehler: %{error}'
       invalid_json_file: 'Ungültige JSON-Datei. Fehler: %{error}'
+      no_data: Diese Datei enthält keinerlei Daten, die zu diesem Dateitypen passen
       over_rows_processing_limit: enthält mehr als %{count} Zeilen
       status_not_found_warning: Einige deiner Filter blenden bestimmte Beiträge aus, die diesem Server nicht bekannt sind. Diese Beiträge werden nicht automatisch gefiltert, wenn sie dem Server später bekannt werden.
       too_large: Datei ist zu groß
@@ -1915,6 +1943,7 @@ de:
     administration_emails: Benachrichtigungen per E-Mail an die Admins
     email_events: Benachrichtigungen per E-Mail
     email_events_hint: 'Bitte die Ereignisse auswählen, für die du Benachrichtigungen per E-Mail erhalten möchtest:'
+    moderation_emails: Moderation E-Mail-Benachrichtigungen
   number:
     human:
       decimal_units:
@@ -1939,7 +1968,7 @@ de:
     next: Weiter
     older: Älter
     prev: Zurück
-    truncate: "&hellip;"
+    truncate_html: "&hellip;"
   polls:
     errors:
       already_voted: An dieser Umfrage hast du bereits teilgenommen
@@ -2273,6 +2302,14 @@ de:
       further_actions_html: Solltest du das nicht gewesen sein, empfehlen wir dir, sofort %{action}, da dein Konto möglicherweise kompromittiert ist.
       subject: Zwei-Faktor-Authentisierung fehlgeschlagen
       title: Zwei-Faktor-Authentisierung fehlgeschlagen
+    sign_in_token:
+      change_password: dein Passwort zu ändern
+      details: 'Details zum Anmeldeversuch:'
+      explanation: 'Du hast dich nach längerer Zeit wieder in dein Konto angemeldet. Um sicherzugehen, dass du das warst, gib den unten aufgeführten Sicherheitscode bei der Anmeldung an:'
+      further_actions: 'Wenn du dich nicht angemeldet hast, ändere dein Passwort und aktiviere die Zwei-Faktor-Authentisierung für dein Konto:'
+      further_actions_html: Wenn du dich nicht angemeldet hast, empfehlen wir dir schnellstmöglich, %{action} und die Zwei-Faktor-Authentisierung für dein Konto zu aktivieren, um es abzusichern.
+      subject: Bitte bestätige deinen Anmeldeversuch
+      title: Anmeldeversuch
     suspicious_sign_in:
       change_password: dein Passwort zu ändern
       details: 'Hier sind die Details zu den Anmeldeversuchen:'
@@ -2362,8 +2399,12 @@ de:
       title: Willkommen an Bord, %{name}!
   users:
     follow_limit_reached: Du kannst nicht mehr als %{limit} Profilen folgen
+    generic_access_help_html: Falls du Probleme hast, auf dein Konto zuzugreifen, tritt bitte mit uns über die E-Mail %{email} in Kontakt
     go_to_sso_account_settings: Kontoeinstellungen des Identitätsanbieters aufrufen
+    inactive_sign_in_confirmation: Du hast dich nach längerer Zeit wieder in dein Konto angemeldet. Um einen unbefugten Zugriff zu erschweren, haben wir einen Sicherheitscode an deine E-Mail-Adresse verschickt.
+    inactive_sign_in_title: Sicherheitscode bestätigen
     invalid_otp_token: Ungültiger Code der Zwei-Faktor-Authentisierung (2FA)
+    invalid_sign_in_token: Ungültiger Sicherheitscode
     otp_lost_help_html: Wenn du sowohl die E-Mail-Adresse als auch das Passwort nicht mehr weißt, melde dich bitte bei uns unter %{email}
     rate_limited: Zu viele Authentisierungsversuche. Bitte versuche es später noch einmal.
     seamless_external_login: Du bist über einen externen Dienst angemeldet, daher sind Passwort- und E-Mail-Einstellungen nicht verfügbar.

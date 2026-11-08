@@ -67,9 +67,12 @@ he:
       custom: התאמה אישית
       delete: מחיקת נתונים
       deleted: מחוקים
+      deletion_irreversible: נתוני חשבון זה נמחקו באופן בלתי הפיך.
+      deletion_reversible_hint_html: חשבון זה מועמד למחיקה, והמידע האצור בו ימחק בתאריך %{date}.
       demote: הורדה בדרגה
       destroyed_msg: הנתונים של %{username} נכנסו לתור המחיקה וצפויים להימחק באופן מיידי
       disable: הקפאה
+      disable_sign_in_token: לבטל זמנית אתגר קוד אבטחה
       disable_sign_in_token_auth: ביטול הזדהות באמצעות אסימון דוא״ל
       disable_two_factor_authentication: ביטול הזדהות דו־שלבית
       disabled: מוקפא
@@ -79,6 +82,7 @@ he:
       email: דוא״ל
       email_status: מצב דוא״ל
       enable: ביטול הקפאה
+      enable_sign_in_token: אפשר אתגר קוד אבטחה
       enable_sign_in_token_auth: הפעלת אסימון הזדהות בדוא״ל
       enabled: מופעל
       enabled_msg: ביטול השעית החשבון של %{username} בוצע בהצלחה
@@ -295,7 +299,11 @@ he:
         enable_relay_html: "%{name} החיו את הממסר %{target}"
         enable_sign_in_token_auth_user_html: '%{name} אפשר/ה אימות בעזרת אסימון דוא"ל עבור %{target}'
         enable_user_html: "%{name} אפשר/ה כניסה עבור המשתמש %{target}"
+        listable_tag_html: ניתנות להצעה
         memorialize_account_html: "%{name} הפך/ה את חשבונו של %{target} לדף הנצחה"
+        not_listable_tag_html: לא תוצענה
+        not_trendable_tag_html: לא תופענה תחת נושאים חמים
+        not_usable_tag_html: לא שמישות
         promote_user_html: "%{name} העלה בדרגה את המשתמש %{target}"
         publish_terms_of_service_html: "%{name} פירסמו עדכון לתנאי השירות"
         reject_appeal_html: "%{name} דחו ערעור על החלטת הנהלת הקהילה מ-%{target}"
@@ -308,6 +316,7 @@ he:
         sensitive_account_html: "%{name} סימן/ה את המדיה של %{target} כרגיש"
         silence_account_html: "%{name} הגביל/ה את חשבונו של %{target}"
         suspend_account_html: "%{name} השעו את חשבונו של %{target}"
+        trendable_tag_html: עשויה להופיע תחת נושאים חמים
         unassigned_report_html: '%{name} דו"ח לא מוקצה %{target}'
         unblock_email_account_html: '%{name} הסיר/ה חסימה מחשבון הדוא"ל של %{target}'
         unsensitive_account_html: "%{name} ביטל/ה את סימון המדיה של %{target} כרגישה"
@@ -320,8 +329,10 @@ he:
         update_ip_block_html: "%{name} שינה כלל עבור IP %{target}"
         update_report_html: '%{name} עדכן/ה דו"ח %{target}'
         update_status_html: "%{name} עדכן/ה הודעה של %{target}"
+        update_tag_html: "%{name} שינו את העדפותיהם לגבי %{target} באופן הבא: "
         update_user_role_html: "%{name} שינה את התפקיד של %{target}"
         update_username_block_html: "%{name} עידכנו חוק לשמות משתמש המכילים %{target}"
+        usable_tag_html: ניתנת לשימוש;
       deleted_account: חשבון מחוק
       empty: לא נמצאו יומנים.
       filter_by_action: סינון לפי פעולה
@@ -453,7 +464,7 @@ he:
         preamble_html: יש לאשר את השעיית <strong>%{domain}</strong> ותתי-הכתובות של שם המתחם.
         remove_all_data: פעולה זו תסיר כל תוכן, מדיה ומידע הפרופילים של שם המתחם הזה מהשרת שלך.
         stop_communication: השרת שלך יפסיק לתקשר עם שרתים אלו.
-        title: נא לאשר חסימת מתחם של %{domain}
+        title: נא לאשר חסימת מתחם עבור %{domain}
         undo_relationships: הפעולה תבטל את כל יחסי העקיבה בין חשבונות מהשרתים האלו לבין שלך.
       created_msg: חסימת שרת בתהליך
       destroyed_msg: חסימת שרת בוטלה
@@ -703,14 +714,14 @@ he:
       moderation:
         all: הכל
         limited: מוגבלים
-        title: ניהול דיון
+        title: פיקוח תכנים
       moderation_notes:
-        create: הוספת הערות מנחה דיונים
+        create: הוספת הערות פיקוח תכנים
         created_msg: הודעת מנחה לגבי שרת נוצרה בהצלחה!
         description_html: צפייה והשארת הערות עבור מנחים אחרים או לעצמך לעתיד
         destroyed_msg: הודעת מנחה לגבי שרת נמחקה בהצלחה!
         placeholder: מידע לגבי שרת זה, פעולות שננקטו, או כל מידע אחר שיסייע לך להחליט כיצד למתן הודעות משרת זה בעתיד.
-        title: הודעות מנחה דיונים
+        title: הערות פיקוח תוכן
       private_comment: הערה פרטית
       public_comment: תגובה פומבית
       purge: טיהור
@@ -745,6 +756,8 @@ he:
       new:
         title: יצירת כלל IP
       no_ip_block_selected: שום כלל IP לא שונה כי שום כלל IP לא נבחר
+      reset: איפוס
+      search: חיפוש
       title: כללי IP
     relationships:
       title: היחסים של %{acct}
@@ -791,7 +804,7 @@ he:
         remote: כבר הודח בשרת שלו
       are_you_sure: 100% על בטוח?
       assign_to_self: הקצה אלי
-      assigned: מנחה מוקצה
+      assigned: מנחה ממונה
       by_target_domain: דומיין החשבון המדווח
       cancel: ביטול
       category: קטגוריה
@@ -801,7 +814,7 @@ he:
         none: ללא
       comment_description_html: 'על מנת לספק עוד מידע, %{name} כתב\ה:'
       confirm: אישור
-      confirm_action: נא לאשר פעולת משמעת לגבי חשבון %{acct}
+      confirm_action: נא לאשר פעולת פיקוח לגבי חשבון %{acct}
       created_at: מדווח
       delete_and_resolve: מחק תוכן
       forwarded: קודם
@@ -870,7 +883,7 @@ he:
         devops: DevOps
         email: דוא״ל
         invites: הזמנות
-        moderation: ניהול דיון
+        moderation: פיקוח תכנים
         special: מיוחדים
       delete: מחיקה
       description_html: באמצעות <strong>תפקידי משתמש</strong>, תוכלו להתאים אישית לאילו פונקציות ואזורים של מסטודון המשתמשים יוכלו לגשת
@@ -893,7 +906,7 @@ he:
         manage_announcements: ניהול הכרזות
         manage_announcements_description: מאפשר למשתמשים לנהל הכרזות של השרת
         manage_appeals: ניהול ערעורים
-        manage_appeals_description: מאפשר למשתמשים לסקור ערעורים כנגד פעולות ניהול דיון
+        manage_appeals_description: מאפשר למשתמשים לסקור ערעורים כנגד פעולות פיקוח הדיון
         manage_blocks: ניהול חסימות
         manage_blocks_description: מאפשר למשתמשים לחסום ספקי דוא"ל וכתובות IP
         manage_custom_emojis: ניהול סמלונים בהתאמה אישית
@@ -905,7 +918,7 @@ he:
         manage_invites: ניהול הזמנות
         manage_invites_description: מאפשר למשתמשים לעלעל ב ולבטל קישורי הזמנה
         manage_reports: ניהול דו"חות
-        manage_reports_description: מאפשר למשתמשים לסקור דו"חות ולבצע פעולות ניהול דיון בהתבסס עליהם
+        manage_reports_description: מאפשר למשתמשים לסקור דו"חות ולבצע פעולות פיקוח דיון בהתבסס עליהם
         manage_roles: ניהול תפקידים
         manage_roles_description: מאפשר למשתמשים לנהל ולמנות אחרים לתפקידים נמוכים יותר משלהם.
         manage_rules: ניהול כללים
@@ -946,7 +959,7 @@ he:
     settings:
       about:
         manage_rules: ניהול כללי שרת
-        preamble: תיאור מעמיק על דרכי ניהול השרת, ניהול הדיונים, ומקורות המימון שלו.
+        preamble: תיאור מעמיק על דרכי ניהול השרת, פיקוח הדיונים, ומקורות המימון שלו.
         rules_hint: קיים מקום ייעודי לחוקים שעל המשתמשים שלך לדבוק בהם.
         title: אודות
       allow_referrer_origin:
@@ -1007,7 +1020,7 @@ he:
           approved: נדרש אישור הרשמה
           none: אף אחד לא יכול להרשם
           open: כל אחד יכול להרשם
-        warning_hint: אנו ממליצים להפעיל דרישה לאישור ידני של הרשמה אלא אם אתם מאמינים שצוות הנחיית השיחות שלכם יוכל להסתדר בזריזות עם מפיצי תכנים פוגעניים או פרסומיים על בסיס קבוע.
+        warning_hint: אנו ממליצים להפעיל דרישה לאישור ידני של הרשמה אלא אם אתם מאמינים שצוות פיקוח השיחות שלכם יוכל להסתדר בזריזות עם מפיצי תכנים פוגעניים או פרסומיים על בסיס קבוע.
       security:
         authorized_fetch: לדרוש הזדהות מול שרתים בפדרציה
         authorized_fetch_hint: הדרישה להזדהות מול שרתים בפדרציה מאפשרת חסימה יותר יעילה ברמת המשתמש וברמת שרת. עם זאת, הדרישה באה עם מחיר של נפילת ביצועים, מקטינה את מעגל התפוצה של התשובות שלך, ועשויה ליצור אי תאימות מול שירותים אחרים בפדרציה. בנוסף, זה לא ימנע מצדדים החלטיים לקבל גישת קריאה להודעות ופרופילים ציבוריים.
@@ -1022,13 +1035,17 @@ he:
       critical_update: חשוב -- יש לעדכן במהירות
       description: מומלץ לשמור את התקנת המסטודון שלך עדכנית כדי להרוויח מהיכולות והתיקונים האחרונים. למעלה מכך, לעיתים קריטי לעדכן את מסטודון בהקדם כדי להמנע מפרצות אבטחה. מסיבות אלו, השרת יבדוק כל 30 דקות, ויודיע לך לפי העדפות הדואל שלך.
       documentation_link: למידע נוסף
+      nearing_eol: תמיכה עבור ענף גרסת התוכנה שרץ אצלך תסתיים בתאריך %{date}, יש לשקול שדרוג.
       release_notes: פרטי הגרסה
+      supported_until: התמיכה תסתיים בתאריך %{date}
       title: עדכונים זמינים
       type: סוג
       types:
         major: שחרור משמעותי (Major release)
         minor: שחרור משני (Minor release)
         patch: עדכון טלאי — תיקוני שקצים ושינויים קלים
+      unsupported_branch: ענף גרסת התוכנה שרץ אצלך אינו נתמך, יש לעדכן בהקדם האפשרי.
+      unsupported_since: לא נתמך מאז %{date}
       version: גרסה
     statuses:
       account: מחבר
@@ -1299,6 +1316,15 @@ he:
     auto_close_registrations:
       body: עקב חוסר פעילות מנחים, הרשמות אל %{instance} עברו אוטומטית למצב אישור ידני, כדי למנוע משרת %{instance} לשמש לכר פעילות לגורמים עוינים. ניתן תמיד לחזור להרשמה פתוחה.
       subject: הרשמות אל %{instance} הועברו אוטומטית לדרישה לאישור ידני
+    end_of_support_out_of_support_warning:
+      body: גרסת תוכנת מסטודון שרץ אצלך בשרת כבר איננה נתמכת. אנו ממליצים על שדרוג בהקדם האפשרי!
+      subject: מסטודון %{branch} המשמש על %{instance} איננו נתמך יותר!
+    end_of_support_three_months_warning:
+      body: גרסת תוכנת מסטודון שרץ אצלך בשרת תפסיק להתמך בעוד 3 חודשים. אנו ממליצים על שדרוג גרסא קודם לכן.
+      subject: תמיכה עבור מסטודון %{branch} המשמש על %{instance} תסתיים בעוד שלושה חודשים.
+    end_of_support_two_weeks_warning:
+      body: גרסת תוכנת מסטודון שרץ אצלך בשרת תפסיק להתמך בעוד שבועיים. אנו ממליצים על שדרוג גרסא קודם לכן.
+      subject: תמיכה עבור מסטודון %{branch} המשמש על %{instance} תסתיים בעוד שבועיים.
     new_appeal:
       actions:
         delete_statuses: כדי למחוק את הודעותיהם
@@ -1310,7 +1336,7 @@ he:
         suspend: כדי להשעות את חשבונם
       body: "%{target} מערערים על החלטת מנהלי הקהילה ב-%{action_taken_by} מתאריך %{date}, שהיה %{type}. הם כתבו:"
       next_steps: ניתן לאשר את הערער כדי להפוך את החלטת מנהלי הקהילה, או להתעלם ממנו.
-      subject: "%{username} מערערים על החלטת מנהלי הקהילה במופע %{instance}"
+      subject: "%{username} מערערים על החלטת מנהלי הקהילה בשרת %{instance}"
     new_critical_software_updates:
       body: יצא עדכון קריטי למסטודון, נא לעדכן את תוכנת מסטודון בהקדם האפשרי!
       subject: יצא עדכון קריטי למסטודון שעל %{instance}!
@@ -1598,6 +1624,7 @@ he:
       content: אנו מצטערות, אבל משהו השתבש בצד שלנו.
       title: דף זה אינו נכון
     '503': לא ניתן להציג דף זה עקב תקלת שרת זמנית.
+    go_home: הביתה
     noscript_html: על מנת להשתמש ביישום הווב של מסטודון, נא לאפשר שימוש בג'אווהסקריפט. לחילופין אפשר לנסות את אחת ה<a href="%{apps_path}">אפליקציות הילידיות</a> שלנו המתאימה לסביבתך.
   existing_username_validator:
     not_found: לא נמצא משתמש מקומי בשם זה
@@ -1701,6 +1728,7 @@ he:
       incompatible_type: אין תאימות עם סוג היבוא שנבחר
       invalid_csv_file: 'קובץ CSV שבור. שגיאה: %{error}'
       invalid_json_file: 'קובץ JSON שבור. שגיאה: %{error}'
+      no_data: קובץ זה אינו מכיל נתונים התואמים לסוג הייבוא הנתון
       over_rows_processing_limit: מכיל יותר מ-%{count} עמודות
       status_not_found_warning: חלק מהסננים שלך מסתירים הודעות ספציפיות שאינן מוכרות על ידי שרת זה. הודעות אלו לא יסוננו אוטומטית אם הן יתגלו על ידי השרת מאוחר יותר.
       too_large: קובץ גדול מדי
@@ -1960,6 +1988,7 @@ he:
     administration_emails: התראות לדוא"ל חשבון מנהל
     email_events: ארועים להתראות דוא"ל
     email_events_hint: 'בחר/י ארועים עבורים תרצה/י לקבל התראות:'
+    moderation_emails: התראות לדוא"ל חשבון מנחה
   number:
     human:
       decimal_units:
@@ -1983,7 +2012,7 @@ he:
     next: הבא
     older: ישן יותר
     prev: הקודם
-    truncate: "&hellip;"
+    truncate_html: "&hellip;"
   polls:
     errors:
       already_voted: כבר הצבעת בסקר זה
@@ -2323,6 +2352,14 @@ he:
       further_actions_html: אם הנסיון לא היה שלך, אנו ממליצים על %{action} באופן מיידי כדי שהחשבון לא יפול קורבן.
       subject: נכשל אימות בגורם שני
       title: אימות בגורם שני נכשל
+    sign_in_token:
+      change_password: שנו את סיסמתכם
+      details: 'הנה פרטי הנסיון:'
+      explanation: 'איתרנו ניסיון להיכנס לחשבון שלך לאחר זמן רב של חוסר פעילות. אם אלו אתם, אנא הזינו את קוד האבטחה למטה בדף האתגר:'
+      further_actions: 'אם זה לא היה נסיון שלך, יש להחליף את סיסמתך ולהפעיל אימות דו-גורמי בחשבון. תוכלו לעשות זאת כאן:'
+      further_actions_html: אם לא ניסית להתחבר, אנו ממליצים ביצוע %{action} מיידית והפעלת אימות דו גורמי על מנת לשמור על החשבון בטוח.
+      subject: נא לאשר את ניסיון ההתחברות
+      title: נסיון התחברות
     suspicious_sign_in:
       change_password: שינוי הסיסמא שלך
       details: 'הנה פרטי ההתחברות:'
@@ -2415,8 +2452,12 @@ he:
       title: ברוך/ה הבא/ה, %{name} !
   users:
     follow_limit_reached: לא תוכל לעקוב אחר יותר מ %{limit} אנשים
+    generic_access_help_html: בעיה בכניסה לחשבון? ניתן ליצור קשר עם %{email} לעזרה
     go_to_sso_account_settings: מעבר לאפיוני החשבון שלך בשרת הזהות
+    inactive_sign_in_confirmation: עבר זמן מה מאז ההתחברות האחרונה, אנו שולחים קוד אבטחה לכתובת הדואר האלקטרוני שלך כדי לאשר את זהותך.
+    inactive_sign_in_title: נא לאשר קוד אבטחה
     invalid_otp_token: קוד דו-שלבי שגוי
+    invalid_sign_in_token: קוד אבטחה לא קביל
     otp_lost_help_html: אם איבדת גישה לשניהם, ניתן ליצור קשר ב-%{email}
     rate_limited: יותר מדי ניסיונות אימות, נסו שוב מאוחר יותר.
     seamless_external_login: את.ה מחובר דרך שירות חיצוני, לכן אפשרויות הסיסמא והדוא"ל לא מאופשרות.
