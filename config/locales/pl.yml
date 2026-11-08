@@ -1871,7 +1871,6 @@ pl:
     next: Następna
     older: Starsze
     prev: Poprzednia
-    truncate: "&hellip;"
   polls:
     errors:
       already_voted: Już oddałeś(-aś) głos w tym głosowaniu

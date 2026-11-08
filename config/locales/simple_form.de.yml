@@ -272,6 +272,7 @@ de:
         setting_use_pending_items: Langsamer Modus
         severity: Einschränkung
         sign_in_token_attempt: Sicherheitscode
+        sign_in_token_resend: Sicherheitscode erneut senden
         title: Titel
         type: Typ
         username: Profilname
@@ -345,6 +346,7 @@ de:
       notification_emails:
         appeal: Jemand hat Einspruch gegen eine Maßnahme erhoben
         digest: Zusammenfassung senden
+        end_of_support: Die derzeitige Mastodon-Version wird bald nicht mehr unterstützt
         favourite: Jemand favorisierte meinen Beitrag
         follow: Ein neues Profil folgt mir
         follow_request: Jemand möchte mir folgen

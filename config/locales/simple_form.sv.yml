@@ -272,6 +272,7 @@ sv:
         setting_use_pending_items: Långsamt läge
         severity: Strikthet
         sign_in_token_attempt: Säkerhetskod
+        sign_in_token_resend: Skicka säkerhetskoden igen
         title: Rubrik
         type: Importtyp
         username: Användarnamn
@@ -345,6 +346,7 @@ sv:
       notification_emails:
         appeal: Någon överklagar ett moderatorbeslut
         digest: Skicka e-postsammandrag
+        end_of_support: Stödet för den nuvarande Mastodon-versionen kommer snart att upphöra
         favourite: Någon favoritmarkerar ditt inlägg
         follow: Någon följt dig
         follow_request: Någon begärt att följa dig
