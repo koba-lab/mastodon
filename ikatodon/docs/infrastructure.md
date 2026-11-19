@@ -198,6 +198,13 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 ### 4.1 今の構成（実測）
 
 - nginx はホストの systemd で動く。**Docker の外**。`user mastodon` で稼働。
+- バージョンは2台とも `nginx/1.14.0 (Ubuntu)`（Ubuntu 18.04 のパッケージ）。2台ともインター
+  ネットに直接公開されている（DNS ラウンドロビンで ConoHa のグローバル IP が返り、
+  `ika.queloud.net` の前段に Cloudflare は居ない）。
+- 有効なサイトは2台とも `default`（`listen 80` のみ）と `ika.queloud.net` の2つ。
+  `test.ika.queloud.net` は `sites-available` にあるが有効にしていない（4.4節）。
+- **HTTP/2 は 2026-11-19 から無効にしている**（NGINX2Root への暫定対処。4.5節）。修正版の
+  nginx へ移行するまで、`ika.queloud.net` は HTTP/1.1 で応答する。
 - `acme-challenge` upstream に、現役でない IP が2つ残っている（既知の問題 #7）。
 
 ゼロダウンタイムデプロイ（隣サーバーへのフォールバック、drain）の検討中の詳細は
@@ -209,8 +216,10 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 （オーナーによる実機確認）。`error_page` の第2引数が URI として解釈され `root` と二重連結
 されるためと見られる。
 
-⚠️ `nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残っている疑いがある（既知の問題
-#14）。`sudo nginx -T` で確認する。
+**確認済み**（既知の問題 #14。9.1節参照）: `nginx.conf` の `http` ブロックには
+`ssl_protocols TLSv1 TLSv1.1 TLSv1.2;` が残っている。ただし 443 で待ち受ける唯一の
+`server` である `ika.queloud.net` が `ssl_protocols TLSv1.2;` で上書きしているため、実際に
+有効なのは TLS 1.2 のみ（2026-11-19 確認）。実害は無いが、紛らわしいので整理しておきたい。
 
 ### 4.3 決定事項 — API 経由の新規登録を nginx で遮断する（2026-11-01）
 
@@ -344,6 +353,87 @@ systemd[1]: nginx.service: Failed with result 'exit-code'.
 `proxy_pass` で実行時解決にするか、IP で書くこと。使わなくなったサイト設定は
 `sites-enabled` から外しておくこと。
 
+### 4.5 決定事項 — NGINX2Root 対応で HTTP/2 を無効化（2026-11-19）
+
+**決定**: 2台とも `ika.queloud.net` の `listen` から `http2` を外し、HTTP/2 を無効にした。
+修正版の nginx へ移行するまでの**暫定対処**であり、恒久対策ではない。
+
+**経緯**: 2026-11-18、F5 / nginx がオープンソース版 nginx の脆弱性10件（通称
+「NGINX2Root」）を公表した。中心は次の2件で、いずれも CVSS 9.2、認証不要のリモートコード
+実行につながる。
+
+- CVE-2026-123007: HTTP/2 のメモリ破壊。1.9.5 から存在し、公開 PoC がある
+- CVE-2026-123633: HTTP/2 の use-after-free
+
+ほかに CVE-2026-123634（resolver）、CVE-2026-121810（HTTP/3）、CVE-2026-113425（mail
+proxy）、TLS 1.3 の無限ループなどが含まれる。修正版は nginx 1.30.7（stable）/ 1.31.9
+（mainline）。11-18 時点で Ubuntu / Debian からは修正済みパッケージが出ていない。
+
+**該当の判断**（2台の実際の設定から確認）
+
+| 脆弱性               | 判断       | 根拠                                                                                                               |
+| -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| HTTP/2 の RCE（2件） | **該当**   | `listen 443 ssl http2;` を設定していた                                                                             |
+| resolver             | 該当しない | `resolver` ディレクティブが無い。`proxy_pass` / `upstream` は IP 直書き（4.4節）                                   |
+| HTTP/3               | 該当しない | 1.14 には HTTP/3 の実装が無い                                                                                      |
+| mail proxy           | 該当しない | `nginx.conf` の `mail {}` はコメントアウトされている                                                               |
+| TLS 1.3 の無限ループ | 該当しない | 443 で待ち受ける唯一の `server`（`ika.queloud.net`）が `ssl_protocols TLSv1.2;` を指定しており、TLS 1.3 を使わない |
+
+10件すべてを個別に確認したわけではない。上の表に無いものは未確認として扱うこと。
+
+**設定**（Web サーバー2台の両方、`sites-available/ika.queloud.net`）
+
+```nginx
+# 変更前
+listen 443 ssl http2;
+listen [::]:443 ssl http2;
+
+# 変更後（NGINX2Root の暫定対処。ikatodon/docs/infrastructure.md 4.5節）
+listen 443 ssl;
+listen [::]:443 ssl;
+```
+
+- 変更前に `cp -p` で `ika.queloud.net.bak-202611191930` を残した（命名は
+  `.bak-YYYYMMDDHHMM`）
+- `sudo nginx -t && sudo systemctl reload nginx` で反映した
+
+**反映と確認**: 外部から2台それぞれに向けて、HTTP/2 を要求しても HTTP/1.1 で返ることを
+確認した。
+
+```bash
+# <IP> は各 Web サーバーのグローバル IP（ここには書かない）
+curl -sI --http2 --resolve ika.queloud.net:443:<IP> https://ika.queloud.net/
+# → 2台とも HTTP/1.1 200 OK
+```
+
+**影響**: 利用者側への影響は無い。クライアントは HTTP/1.1 にフォールバックする。
+
+**注意**
+
+- `sites-enabled` はシンボリックリンクなので、`grep -r` では中身を辿らず該当箇所を見落とす。
+  設定を検索するときは `grep -R`（または `sudo nginx -T`）を使うこと
+- これは暫定対処に過ぎない。Ubuntu 18.04 の nginx 1.14 に修正が届く見込みは無い（nginx.org
+  も bionic 向けのパッケージを既に提供していない）
+
+**恒久対策（検討中・未決定）**
+
+- 第一候補: nginx をコンテナで動かす。公式 nginx イメージを修正版のバージョンに固定し、
+  フォーク独自の compose override ファイル（上流に存在しないファイル）で起動する
+- 代替案: Ubuntu Pro（ESM）で修正パッケージを受け取る、または OS をアップグレードする
+- HTTP/2 は修正版へ移行してから戻す。新しい nginx では `listen` の `http2` パラメーターでは
+  なく `http2 on;` の書き方になる
+
+**残作業**: 11-18 以降に worker のクラッシュ（攻撃の痕跡になり得る）が無いか、2台のエラー
+ログを確認する。⚠️ 結果は未報告。
+
+```bash
+sudo zgrep -hE "exited on signal|signal 11" /var/log/nginx/error.log*
+```
+
+参考:
+
+- [nginx security advisories](https://nginx.org/en/security_advisories.html)
+
 ---
 
 ## 5. デプロイ
@@ -457,14 +547,16 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 | 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                                                                     |
 | 11  | `.env.production` にバックアップが無い                                                                                                                                                                     |
 | 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.2節）                                           |
+| 14  | `nginx.conf` の `http` ブロックに `ssl_protocols TLSv1 TLSv1.1 TLSv1.2;` が残っている。`ika.queloud.net` の `server` が `TLSv1.2` のみで上書きしているため実害は無いが、整理しておきたい（4.2節）          |
 | 17  | 使っていない `test.ika.queloud.net` の設定にあった Wasabi のホスト名が原因で、再起動時に nginx が起動せず、Web サーバー1台が約4日間止まっていた。2026-11-01 に `sites-enabled` から外して対処済み（4.4節） |
+| 18  | nginx 1.14 / Ubuntu 18.04 はサポートが終わっており、NGINX2Root を含むセキュリティ修正が届かない。2026-11-19 に HTTP/2 を無効にして暫定対処した（4.5節）                                                    |
+| 19  | `geo $allow_ip` の内容が2台で異なる（片方のサーバーだけ、`allow` の1行がコメントアウトされている）。効くのはメンテナンスモード中だけだが、揃えておく必要がある                                             |
 
 ### 9.2 要確認
 
 | #   | 疑い                                                                                                                                                    | 確認方法                                                                                            |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | 13  | 全台で同じ `bundle exec sidekiq` が動いていると `scheduler` が多重実行される可能性                                                                      | 稼働中コンテナの command を直接確認（10節）                                                         |
-| 14  | `nginx.conf` に `ssl_protocols TLSv1 TLSv1.1` が残る                                                                                                    | `sudo nginx -T`                                                                                     |
 | 15  | Redis ホストの `docker-compose.yml` が `ports: 6379:6379` でコンテナを直接公開している疑い（nginx 経由ではない）。Docker の publish は ufw を迂回し得る | Redis ホストで `docker compose config` の `ports` 設定を確認、`sudo ufw status`、外部からの疎通確認 |
 | 16  | GitHub-hosted runner から Web サーバーへ実際に SSH（22/tcp・鍵認証）が通るか。`ufw` が無効なことは到達性を保証しない                                    | 実際に workflow から接続して確認する（デプロイ自動化の実装時）                                      |
 
@@ -530,6 +622,10 @@ docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' 
 | 3    | デプロイ自動化（issue #876 本体）                            | 2    |
 | 4    | PITR（3 と並行可）                                           | 0    |
 | 5    | 監視の拡張（7節）                                            | 0    |
+| 6    | nginx を修正版へ移行（コンテナ化が候補。4.5節）              | —    |
+
+段階 6 は NGINX2Root の暫定対処（HTTP/2 無効化）を外すための作業で、他の段階を待たずに
+進めます。方式（コンテナ化 / Ubuntu Pro / OS アップグレード）は未決定です。
 
 セキュリティの解決策選定（8節）、Cloudflare 化の判断（トラック C）は、判断材料が揃って
 いないため段階に組み込んでいません。実施するタイミングであらためて検討します。
