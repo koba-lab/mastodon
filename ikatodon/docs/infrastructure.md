@@ -30,29 +30,30 @@ flowchart TB
         User[利用者]
     end
 
-    subgraph CF["Cloudflare（メディアのみ経由）"]
+    subgraph CF["Cloudflare"]
         CFProxy["files-ika.queloud.net<br/>（Cloudflare Edge IP、意図的に省略）"]
+        CFTunnel["ika.queloud.net<br/>（Tunnel、WAF、Redirect）"]
     end
 
     B2[(Backblaze B2<br/>メディアストレージ)]
 
-    subgraph ConoHa["ConoHa VPS（本体は Cloudflare 非経由）"]
+    subgraph ConoHa["ConoHa VPS（Web サーバーは SSH 以外を受け付けない）"]
         subgraph Host1["Webサーバー1<br/>（グローバルIP）"]
-            Nginx1["nginx (systemd)"]
+            Tunnel1["cloudflared（Docker）"]
             Web1["web :3000"]
             Stream1["streaming :4000"]
             Sidekiq1["sidekiq（ポート非公開）"]
-            Nginx1 --> Web1
-            Nginx1 --> Stream1
+            Tunnel1 --> Web1
+            Tunnel1 --> Stream1
         end
 
         subgraph Host2["Webサーバー2<br/>（グローバルIP）"]
-            Nginx2["nginx (systemd)"]
+            Tunnel2["cloudflared（Docker）"]
             Web2["web :3000"]
             Stream2["streaming :4000"]
             Sidekiq2["sidekiq（ポート非公開）"]
-            Nginx2 --> Web2
-            Nginx2 --> Stream2
+            Tunnel2 --> Web2
+            Tunnel2 --> Stream2
         end
 
         subgraph DBHost["DBサーバー"]
@@ -66,8 +67,9 @@ flowchart TB
         Priv["プライベート網（RFC1918）"]
     end
 
-    User -->|"ika.queloud.net<br/>DNS実測: ConoHa IP直"| Nginx1
-    User -->|"ika.queloud.net"| Nginx2
+    User -->|"ika.queloud.net"| CFTunnel
+    Tunnel1 -->|"外向きに接続"| CFTunnel
+    Tunnel2 -->|"外向きに接続"| CFTunnel
     User -->|"files-ika.queloud.net"| CFProxy --> B2
 
     Host1 -. "プライベート網" .- Priv
@@ -89,7 +91,9 @@ flowchart TB
     Stream2 --> Redis
 ```
 
-- 本体（`ika.queloud.net`）は Cloudflare を経由せず、ConoHa の IP がそのまま DNS に返る（実測）。
+- 本体（`ika.queloud.net`）は 2026-11-22 から Cloudflare Tunnel 経由（4.6節）。Web サーバーの
+  cloudflared が Cloudflare へ外向きに接続し、Web サーバーは 80 / 443 を開けていない。それまでは
+  各 Web サーバーの nginx が直接公開していた。
 - メディア（`files-ika.queloud.net`）のみ Cloudflare 経由で Backblaze B2 に向いている（実測・
   聞き取り）。メディアは移管済みでこのドキュメントの対象外。
 - 構成は **Web 2台・DB 1台・Redis 1台の計4台**。Redis は DB とは別の独立したホストで動いて
@@ -111,21 +115,21 @@ flowchart TB
 
 ### 2.1 確定した事実
 
-| 項目                                 | 事実                                                                                                                                                                                             | 根拠                               |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| Web サーバー                         | **2台**（グローバル IP は意図的に省略。パブリックリポジトリのため）                                                                                                                              | DNS 実測                           |
-| Cloudflare                           | 本体には噛んでいない（メディアのみ）                                                                                                                                                             | ConoHa の IP がそのまま DNS に返る |
-| プライベート網                       | Web / DB / Redis が同じプライベート網（RFC1918）に載っている（具体的なレンジは意図的に省略）                                                                                                     | 設定ファイル実測                   |
-| メディア                             | Backblaze B2（`S3_ENABLED=true`、`S3_ALIAS_HOST=files-ika.queloud.net`）                                                                                                                         | `.env.production` 実測             |
-| `public/system` のディスク上のデータ | オブジェクトストレージ移行前の**レガシー残骸**。参照されていない                                                                                                                                 | 聞き取り + `S3_ENABLED=true`       |
-| 静的ファイル配信                     | **アプリ（イメージ内）が配信できる**。Dockerfile が `RAILS_SERVE_STATIC_FILES="true"` を設定（`Dockerfile:38,54`、`config/application.rb:89`）。`.env.production` に無くてもイメージ側の値が効く | 実測                               |
-| **Elasticsearch**                    | **使っていない**（`.env.production` に設定なし）                                                                                                                                                 | 実測                               |
-| **New Relic**                        | **OTEL でアプリのトレース・メトリクスを送信中**（`OTEL_EXPORTER_OTLP_ENDPOINT`）                                                                                                                 | 実測                               |
-| **`ufw`**                            | **非アクティブ（無効）**                                                                                                                                                                         | 実測                               |
-| **Redis の認証**                     | **無し**（`REDIS_PASSWORD` は空）。⚠️ **到達範囲（プライベート網からのみか、外部からも届くか）は未確認**（9.2節 #15、10節参照）                                                                  | 聞き取り（認証無しの部分のみ）     |
-| `docker-compose.override.yml`        | 本家の `.gitignore` で除外（73行目）                                                                                                                                                             | 実測                               |
-| `.env.production`                    | 同じく除外（28行目）。各ホストに手置きで、**バックアップ無し**                                                                                                                                   | 実測                               |
-| バックアップ cron                    | **未確認**。playbook に定義があるだけで、その playbook は壊れている                                                                                                                              | —                                  |
+| 項目                                 | 事実                                                                                                                                                                                             | 根拠                           |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
+| Web サーバー                         | **2台**（グローバル IP は意図的に省略。パブリックリポジトリのため）                                                                                                                              | DNS 実測                       |
+| Cloudflare                           | 本体もメディアも経由する。本体は 2026-11-22 から Cloudflare Tunnel（4.6節）                                                                                                                      | DNS 実測                       |
+| プライベート網                       | Web / DB / Redis が同じプライベート網（RFC1918）に載っている（具体的なレンジは意図的に省略）                                                                                                     | 設定ファイル実測               |
+| メディア                             | Backblaze B2（`S3_ENABLED=true`、`S3_ALIAS_HOST=files-ika.queloud.net`）                                                                                                                         | `.env.production` 実測         |
+| `public/system` のディスク上のデータ | オブジェクトストレージ移行前の**レガシー残骸**。参照されていない                                                                                                                                 | 聞き取り + `S3_ENABLED=true`   |
+| 静的ファイル配信                     | **アプリ（イメージ内）が配信できる**。Dockerfile が `RAILS_SERVE_STATIC_FILES="true"` を設定（`Dockerfile:38,54`、`config/application.rb:89`）。`.env.production` に無くてもイメージ側の値が効く | 実測                           |
+| **Elasticsearch**                    | **使っていない**（`.env.production` に設定なし）                                                                                                                                                 | 実測                           |
+| **New Relic**                        | **OTEL でアプリのトレース・メトリクスを送信中**（`OTEL_EXPORTER_OTLP_ENDPOINT`）                                                                                                                 | 実測                           |
+| **`ufw`**                            | **非アクティブ（無効）**                                                                                                                                                                         | 実測                           |
+| **Redis の認証**                     | **無し**（`REDIS_PASSWORD` は空）。⚠️ **到達範囲（プライベート網からのみか、外部からも届くか）は未確認**（9.2節 #15、10節参照）                                                                  | 聞き取り（認証無しの部分のみ） |
+| `docker-compose.override.yml`        | 本家の `.gitignore` で除外（73行目）                                                                                                                                                             | 実測                           |
+| `.env.production`                    | 同じく除外（28行目）。各ホストに手置きで、**バックアップ無し**                                                                                                                                   | 実測                           |
+| バックアップ cron                    | **未確認**。playbook に定義があるだけで、その playbook は壊れている                                                                                                                              | —                              |
 
 ### 2.2 `CLAUDE.md` との整合
 
@@ -196,6 +200,9 @@ compose ファイルのテンプレート化・構成管理（Ansible）の検�
 ## 4. nginx
 
 ### 4.1 今の構成（実測）
+
+**2026-11-22 に2台とも停止し、自動起動も無効にした**（Cloudflare Tunnel へ移行。4.6節）。以下は
+停止した時点の構成で、4.2〜4.5節もこの nginx についての記録。
 
 - nginx はホストの systemd で動く。**Docker の外**。`user mastodon` で稼働。
 - バージョンは2台とも `nginx/1.14.0 (Ubuntu)`（Ubuntu 18.04 のパッケージ）。2台ともインター
@@ -415,16 +422,10 @@ curl -sI --http2 --resolve ika.queloud.net:443:<IP> https://ika.queloud.net/
 - これは暫定対処に過ぎない。Ubuntu 18.04 の nginx 1.14 に修正が届く見込みは無い（nginx.org
   も bionic 向けのパッケージを既に提供していない）
 
-**恒久対策（検討中・未決定）**
+**恒久対策**: nginx をやめ、Cloudflare Tunnel に置き換えた（4.6節）。
 
-- 第一候補: nginx をコンテナで動かす。公式 nginx イメージを修正版のバージョンに固定し、
-  フォーク独自の compose override ファイル（上流に存在しないファイル）で起動する
-- 代替案: Ubuntu Pro（ESM）で修正パッケージを受け取る、または OS をアップグレードする
-- HTTP/2 は修正版へ移行してから戻す。新しい nginx では `listen` の `http2` パラメーターでは
-  なく `http2 on;` の書き方になる
-
-**残作業**: 11-18 以降に worker のクラッシュ（攻撃の痕跡になり得る）が無いか、2台のエラー
-ログを確認する。⚠️ 結果は未報告。
+**残作業**: 11-18 から停止（11-22）までに worker のクラッシュ（攻撃の痕跡になり得る）が無いか、
+2台のエラーログを確認する。⚠️ 結果は未報告。
 
 ```bash
 sudo zgrep -hE "exited on signal|signal 11" /var/log/nginx/error.log*
@@ -433,6 +434,50 @@ sudo zgrep -hE "exited on signal|signal 11" /var/log/nginx/error.log*
 参考:
 
 - [nginx security advisories](https://nginx.org/en/security_advisories.html)
+
+### 4.6 決定事項 — Cloudflare Tunnel へ移行し、nginx を停止（2026-11-22）
+
+**決定**: Web サーバーの前段を nginx から Cloudflare Tunnel に置き換え、nginx を止めた。Web サーバーは
+外からの接続（80 / 443）を受け付けない。NGINX2Root（4.5節）の恒久対策。
+
+構成とその理由（nginx が担っていた処理の移し先、Host ヘッダー、クライアント IP の扱いなど）は
+[koba-lab/ikatodon-web](https://github.com/koba-lab/ikatodon-web) の `docs/architecture.md` に
+ある。Cloudflare 側の設定（トンネル、DNS、WAF、Redirect、ヘッダーの変換）は同リポジトリの
+Terraform で管理し、各 Web サーバーでは同リポジトリの `docker-compose.yml` で cloudflared を動かす。
+
+**経過**
+
+- 11-19: koba-lab/ikatodon-web を作り、トンネルとルールを用意した
+- 11-21: 2台で cloudflared を起動し、確認用ホスト名でトンネル経由の疎通を確かめた。本体の A レコード
+  を Terraform に取り込み、TTL を 60 秒に下げた
+- 11-22 11:41: 本体の DNS をトンネルを指す CNAME に切り替えた（koba-lab/ikatodon-web#17）
+- 11-22 昼: nginx への接続が止まったのを確かめて、nginx を止め、80 / 443 を閉じた
+- 11-22: 移行のためだけの設定（確認用ホスト名、DNS の切り替え用の変数）を消した（koba-lab/ikatodon-web#18）
+
+**切り替え後の確認**
+
+- 2台の Web サーバーから本体へ HTTP/2 で 200（HTTP/2 を無効にした nginx ではなく Cloudflare 経由）
+- テキストと画像の投稿（PC、スマホアプリ）、ストリーミング（リロードなしで反映）
+- クライアント IP: `/cdn-cgi/trace` の IP と `/auth/edit` のセッションの IP が一致
+- 連合: 2台とも `/inbox` への POST が 202
+- nginx へのアクセスは、切り替え前の 10 分あたり 1000〜1500 件から、11:50 台に 29 件 / 18 件になり、
+  `/inbox` は 0 件になった。残りはクローラー、IP を直接叩くスキャナー、開いたままのブラウザのタブ
+
+**サーバー側で行った変更**（2台とも）
+
+- nginx を停止し、自動起動を無効にした（`sudo systemctl disable --now nginx`）
+- Let's Encrypt の証明書の更新を止めた。`certbot.timer` を無効にし、crontab の
+  `certbot renew && service nginx restart` の行をコメントアウトした（`service nginx restart` は
+  無効にしたサービスでも起動させるため）。`/etc/cron.d/certbot` は systemd の環境では何もしないので
+  そのまま
+- ConoHa の接続許可ポートから Web（20/21/80/443）を外し、SSH だけにした
+- Docker の自動起動が有効なことを確かめた（cloudflared は `restart: always`）
+
+**持たなくなったもの**
+
+- メンテナンスモード（`geo $allow_ip`）。使う予定がないため移していない
+- API 経由の新規登録を遮断したときの JSON のエラーメッセージ（4.3節）。Cloudflare の WAF で独自の
+  レスポンスを返すには Pro プラン以上が要るため、Cloudflare 標準の 403 ページを返す
 
 ---
 
@@ -541,16 +586,17 @@ Mackerel を **Web 2台にも入れる**（DB には導入済み。⚠️ Web �
 | 4   | 「本家で必要とされる追加コマンド」がどこにも記録されていない                                                                                                                                               |
 | 5   | `restore.sh` が対話式で緊急時に自動実行できない                                                                                                                                                            |
 | 6   | Ansible の `docker_compose` モジュールは非推奨                                                                                                                                                             |
-| 7   | `acme-challenge` upstream に現役でない IP が2つ残っている                                                                                                                                                  |
+| 7   | ~~`acme-challenge` upstream に現役でない IP が2つ残っている~~ → nginx の停止で解消（2026-11-22、4.6節）                                                                                                    |
 | 8   | イメージタグを本家の `docker-compose.yml` に直接書いており毎リリース衝突する                                                                                                                               |
 | 9   | Docker の `json-file` ログに上限指定が無い                                                                                                                                                                 |
 | 10  | `ufw` が無効 / Redis に認証が無い / Docker ソケットのマウント（7.3節）                                                                                                                                     |
 | 11  | `.env.production` にバックアップが無い                                                                                                                                                                     |
-| 12  | `error_page` が `/home/mastodon/live/public/500.html` を URI として `root` と二重連結しており、実際に到達できないことを確認済み（オーナーによる実機確認。4.2節）                                           |
-| 14  | `nginx.conf` の `http` ブロックに `ssl_protocols TLSv1 TLSv1.1 TLSv1.2;` が残っている。`ika.queloud.net` の `server` が `TLSv1.2` のみで上書きしているため実害は無いが、整理しておきたい（4.2節）          |
+| 12  | ~~`error_page` が `500.html` に到達できない（4.2節）~~ → nginx の停止で解消（2026-11-22、4.6節）                                                                                                           |
+| 14  | ~~`nginx.conf` に `ssl_protocols TLSv1 TLSv1.1 TLSv1.2;` が残っている（4.2節）~~ → nginx の停止で解消（2026-11-22、4.6節）                                                                                 |
 | 17  | 使っていない `test.ika.queloud.net` の設定にあった Wasabi のホスト名が原因で、再起動時に nginx が起動せず、Web サーバー1台が約4日間止まっていた。2026-11-01 に `sites-enabled` から外して対処済み（4.4節） |
-| 18  | nginx 1.14 / Ubuntu 18.04 はサポートが終わっており、NGINX2Root を含むセキュリティ修正が届かない。2026-11-19 に HTTP/2 を無効にして暫定対処した（4.5節）                                                    |
-| 19  | `geo $allow_ip` の内容が2台で異なる（片方のサーバーだけ、`allow` の1行がコメントアウトされている）。効くのはメンテナンスモード中だけだが、揃えておく必要がある                                             |
+| 18  | ~~nginx 1.14 に NGINX2Root の修正が届かない（4.5節）~~ → nginx の停止で解消（2026-11-22、4.6節）。Ubuntu 18.04 のサポート切れは残る                                                                        |
+| 19  | ~~`geo $allow_ip` の内容が2台で異なる~~ → nginx の停止で解消（2026-11-22、4.6節）                                                                                                                          |
+| 20  | `tootctl media remove` の cron が Web サーバー2台の両方にある。DB とメディアのストレージは共有なので、1台で足りる                                                                                          |
 
 ### 9.2 要確認
 
